@@ -398,7 +398,7 @@ You can search online for the MNIST dataset or use any similar dataset of handwr
 To convert a directory of images into a dataset suitable for training, use:
 
 ```sh
-nrn encode img-dir --seed 42 --input mnist/ --output mnist.h5 --grayscale --shape 28
+nrn encode img-dir --seed 42 --input digits/ --output digits.h5 --grayscale --shape 28
 ```
 - The directory structure must be `<input-dir>/<class-name>/<image>.png` (e.g., `digits/7/img_001.png`).
 - `<class-name>` should be a digit from 0 to 9.
@@ -406,7 +406,7 @@ nrn encode img-dir --seed 42 --input mnist/ --output mnist.h5 --grayscale --shap
 - `--input` (`-i`) is the path to the root directory of images.
 - `--output` (`-o`) is the path to save the encoded dataset (HDF5 file).
 - `--grayscale` converts images to grayscale, reducing data size.
-- `--shape` (`-s`) resizes images to the given shape (28 for MNIST, default 64).
+- `--shape` (`-s`) resizes images to the given shape (28 to limit the number of features to 784).
 
 > [!NOTE]
 > The output HDF5 file contains two groups: `train` and `test`, each with `features` and `labels` datasets. The split is performed automatically and reproducibly with the chosen seed. Always use the same seed to reproduce the same split.
