@@ -470,7 +470,7 @@ After training, visualize the training history:
 nrn plot training-model-scaled-digits
 ```
 
->![NOTE]
+> [!NOTE]
 > Decision boundary visualization is not applicable for high-dimensional data like MNIST, so only loss and accuracy plots will be generated.
 
 ### Making Predictions
