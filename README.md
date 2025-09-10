@@ -4,7 +4,7 @@ This project is a personal educational initiative aimed at learning Rust and und
 
 As this is an educational project, if you notice any mistakes or have suggestions for clarification, please feel free to open an issue or otherwise provide constructive feedback. Your input is welcome and will help strengthen my understanding!
 
-Currently, the project implements feedforward neural networks, including both single-layer perceptron (SLP, also known as simple perceptron) and multi-layer perceptron (MLP). A single-layer perceptron is the simplest form of a neural network, consisting of an input layer directly connected to an output layer, with no hidden layers. A multi-layer perceptron extends this by adding one or more hidden layers between the input and output, allowing the network to model more complex relationships. Each neuron (except for the input nodes) uses a nonlinear activation function.
+Currently, the project implements feedforward neural networks, including both single-layer perceptron (SLP, also known as single-layer perceptron) and multi-layer perceptron (MLP). A single-layer perceptron is the simplest form of a neural network, consisting of an input layer directly connected to an output layer, with no hidden layers. A multi-layer perceptron extends this by adding one or more hidden layers between the input and output, allowing the network to model more complex relationships. Each neuron (except for the input nodes) uses a nonlinear activation function.
 
 The command-line interface (CLI) provides several commands to generate synthetic data, encode and scale datasets, train models, make predictions, and visualize training history. This project is a work in progress and serves as a learning platform rather than a production-ready tool.
 
@@ -59,7 +59,7 @@ Before diving into the tutorials, follow these steps to set up the project and e
 
 ### Prerequisites
 
-This project requires Rust **edition 2024**. If you do not have Rust installed, or if your version is older, you can get or update it from [rustup.rs](https://rustup.rs/). To check your version:
+This project requires Rust **edition 2024**. You can install or update it from [rustup.rs](https://rustup.rs/). To check your version:
   
 ```sh
 rustc --version
@@ -73,7 +73,7 @@ rustup update
 
 **HDF5** 
 
-The CLI uses HDF5 files for datasets and models. On some systems, you may need to install the HDF5 C library (e.g., `brew install hdf5` on macOS, `sudo apt-get install libhdf5-dev` on Ubuntu).
+The CLI uses the HDF5 format for datasets and models. On some systems, you may need to install the HDF5 C library (e.g., `brew install hdf5` on macOS, `sudo apt-get install libhdf5-dev` on Ubuntu).
 
 ### Clone the Repository
 
@@ -94,7 +94,7 @@ The compiled binary will be located in `target/release/nrn`.
 
 ### Run a Quick Test
 
-You can verify your installation by running the help command:
+You can verify your installation by running the following help command:
 
 ```sh
 target/release/nrn --help
@@ -198,7 +198,6 @@ nrn predict model-scaled-uniform-c2-f2-n200-seed1024 --scaler scaler-uniform-c2-
 ```
 - Use the trained model to make predictions on new data.
 - The `--scaler` option ensures the same scaling is applied as during training.
-- The `--input` option is optional: if not provided, the CLI will prompt you to enter the feature values directly in the terminal.
 
 **Interactive example:**
 
@@ -229,8 +228,6 @@ A Single-Layer Perceptron (SLP) is inherently limited to learning linear boundar
 
 To solve this problem, we need to add at least one hidden layer, turning our network into an MLP capable of learning non-linear decision boundaries.
 
-> For details about data scaling, training options, and prediction, please refer to the previous SLP example sections.
-
 #### 1. Generate a ring dataset
 
 ```sh
@@ -246,6 +243,8 @@ nrn synth --seed 1024 --distribution ring --samples 400 --features 2 --clusters 
 
 #### 2. Scale the dataset
 
+Scales the features using z-score normalization and visualizes the scaled data.
+
 ```sh
 nrn scale ring-c2-f2-n400-seed1024 z-score --plot
 ```
@@ -254,8 +253,6 @@ nrn scale ring-c2-f2-n400-seed1024 z-score --plot
 - `scaled-ring-c2-f2-n400-seed1024.png`: visualization of the scaled data.
 - `scaler-ring-c2-f2-n400-seed1024.json`: scaling parameters (mean, std; required for prediction).
 
-- Scales the features using z-score normalization and visualizes the scaled data.
-- See the SLP example for more details about scaling.
 
 #### Example of scaled data visualization:
 
@@ -270,9 +267,9 @@ nrn train scaled-ring-c2-f2-n400-seed1024 --layers 32,32 --epochs 30000
 - `model-scaled-ring-c2-f2-n400-seed1024.h5`: trained MLP model (required for prediction).
 - `training-model-scaled-ring-c2-f2-n400-seed1024.h5`: training history (for analysis and visualization).
 
-- Trains an MLP with two hidden layers of 32 neurons each (you can adjust the number and size of hidden layers as needed).
-- The CLI automatically detects the architecture: `[2] -> 32-relu -> 32-relu -> 1-sigmoid`.
-- Hidden layers use the ReLU activation function, as explained in the [Activation Functions](#activation-functions) section above.
+Trains an MLP with two hidden layers of 32 neurons each (you can adjust the number and size of hidden layers as needed).
+The CLI automatically detects the architecture: `[2] -> 32-relu -> 32-relu -> 1-sigmoid`. 
+Hidden layers use the ReLU activation function, as explained in the [Activation Functions](#activation-functions) section above.
 
 #### 4. Visualize training history (loss, accuracy, decision boundary)
 
