@@ -386,8 +386,6 @@ Predictions for [0.9694462, 2.0005205]
 |> 0: 0.00%
 ```
 
-- The output shows the probability for each class. The class with the highest percentage is the predicted class.
-
 ## License
 
 This project is licensed under the [Apache License 2.0](LICENSE).
