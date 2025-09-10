@@ -8,7 +8,19 @@ Currently, the project implements feedforward neural networks, including both si
 
 The command-line interface (CLI) provides several commands to generate synthetic data, encode and scale datasets, train models, make predictions, and visualize training history. This project is a work in progress and serves as a learning platform rather than a production-ready tool.
 
-## Activation Functions
+## Table of Contents
+
+- [Concepts](#concepts)
+    - [Activation Functions](#activation-functions)
+    - [Gradient Clipping](#gradient-clipping)
+    - [Data Scaling and Normalization](#data-scaling-and-normalization)
+- [Tutorials](#tutorials)
+    - [Tutorial: SLP on Linearly Separable Data](#tutorial-slp-on-linearly-separable-data)
+    - [Tutorial: MLP on Non-Linear Data](#tutorial-mlp-on-non-linear-data)
+
+## Concepts
+
+### Activation Functions
 
 The CLI automatically selects the activation function for each layer based on the network architecture:
 
@@ -16,28 +28,23 @@ The CLI automatically selects the activation function for each layer based on th
 - **Sigmoid** is used for the output layer if there is only one output neuron (binary classification or regression between 0 and 1). It maps input values to the range (0, 1) and introduces non-linearity to the network.
 - **Softmax** is used for the output layer if there are multiple output neurons (multi-class classification). It converts a vector of values into a probability distribution, where the sum of all outputs is 1.
 
-## Gradient Clipping
+### Gradient Clipping
 
 To prevent the problem of exploding gradients during training, this project implements gradient clipping using the L2 norm. During each training step, before updating the weights and biases, the gradients for each layer are clipped if their combined L2 norm exceeds a specified maximum value (`max_norm`). This ensures that the updates remain stable and helps the network converge more reliably.
 
 The `max_norm` value can be set as a parameter during training. Gradient clipping is automatically applied to all layers at each update step.
 
-## Examples
+## Tutorials
+
+Before running the following commands, change to the `tutorials` directory to ensure correct file path handling:
+
+```sh
+cd tutorials
+```
 
 ### Solving a Linearly Separable Problem with an SLP (Uniform Clusters Dataset)
 
 Below is a typical workflow using the CLI to generate a synthetic dataset, visualize it, scale the data, train a single-layer perceptron (SLP), visualize training metrics, and make predictions.
-
-#### 0. Change to the examples directory
-
-Before running the following commands, change to the `examples` directory to ensure correct file path handling:
-
-```sh
-cd examples
-```
-
-> [!IMPORTANT]
-> All subsequent commands should be run from the `examples/` directory. This avoids file not found errors or incorrect file paths.
 
 #### 1. Generate a synthetic dataset (2 uniform clusters) and visualize
 
@@ -52,7 +59,7 @@ nrn synth --seed 1024 --distribution uniform --samples 200 --features 2 --cluste
 
 **Example of generated dataset:**
 
-![Synthetic dataset: 2 uniform clusters](examples/uniform-c2-f2-n200-seed1024.png)
+![Synthetic dataset: 2 uniform clusters](tutorials/uniform-c2-f2-n200-seed1024.png)
 
 #### 2. Scale the dataset and visualize the scaled data
 
@@ -79,7 +86,7 @@ This command generates several new files:
 
 *Be attentive to the scale: after normalization, the clusters may look similar to the original, which is expected and a sign that the scaling preserved the structure of the data.*
 
-![Scaled synthetic dataset: z-score](examples/scaled-uniform-c2-f2-n200-seed1024.png)
+![Scaled synthetic dataset: z-score](tutorials/scaled-uniform-c2-f2-n200-seed1024.png)
 
 #### 3. Train a Single-Layer Perceptron (SLP)
 
@@ -132,15 +139,15 @@ This command generates several files in the `examples/` directory:
 
 *The loss curve shows how the model's error decreases during training, indicating learning progress and convergence.*
 
-![Loss curve](examples/loss-training-model-scaled-uniform-c2-f2-n200-seed1024.png)
+![Loss curve](tutorials/loss-training-model-scaled-uniform-c2-f2-n200-seed1024.png)
 
 *The accuracy curve shows the proportion of correct predictions during training (train accuracy) and on the validation/test set (test accuracy). Comparing both helps to assess model performance and detect overfitting (train accuracy much higher than test accuracy) or underfitting (both low).* 
 
-![Accuracy curve](examples/accuracy-training-model-scaled-uniform-c2-f2-n200-seed1024.png)
+![Accuracy curve](tutorials/accuracy-training-model-scaled-uniform-c2-f2-n200-seed1024.png)
 
 *The decision boundary animation shows how the model's classification regions evolve during training. It helps to visually understand how the network learns to separate the clusters and how quickly the boundary stabilizes. This is especially useful for 2D datasets to interpret the model's learning dynamics.*
 
-![Decision boundary animation](examples/training-model-scaled-uniform-c2-f2-n200-seed1024.gif)
+![Decision boundary animation](tutorials/training-model-scaled-uniform-c2-f2-n200-seed1024.gif)
 
 #### 5. Make predictions
 
@@ -176,7 +183,7 @@ In this section, we demonstrate how to use a Multi-Layer Perceptron (MLP) to sol
 
 A Single-Layer Perceptron (SLP) is inherently limited to learning linear boundaries and will fail on this type of data. This limitation is clearly visible when training an SLP on the ring dataset:
 
-![SLP decision boundary on ring dataset](examples/slp-training-model-scaled-ring-c2-f2-n400-seed1024.gif)
+![SLP decision boundary on ring dataset](tutorials/slp-training-model-scaled-ring-c2-f2-n400-seed1024.gif)
 
 To solve this problem, we need to add at least one hidden layer, turning our network into an MLP capable of learning non-linear decision boundaries.
 
@@ -192,7 +199,7 @@ nrn synth --seed 1024 --distribution ring --samples 400 --features 2 --clusters 
 
 #### Example of generated dataset:
 
-![Synthetic dataset: 2 concentric rings](examples/ring-c2-f2-n400-seed1024.png)
+![Synthetic dataset: 2 concentric rings](tutorials/ring-c2-f2-n400-seed1024.png)
 
 #### 2. Scale the dataset
 
@@ -205,7 +212,7 @@ nrn scale ring-c2-f2-n400-seed1024 z-score --plot
 
 #### Example of scaled data visualization:
 
-![Scaled ring dataset: z-score](examples/scaled-ring-c2-f2-n400-seed1024.png)
+![Scaled ring dataset: z-score](tutorials/scaled-ring-c2-f2-n400-seed1024.png)
 
 #### 3. Train a Multi-Layer Perceptron (MLP)
 
@@ -238,10 +245,10 @@ nrn plot training-model-scaled-ring-c2-f2-n400-seed1024 --dataset scaled-ring-c2
 
 **Example output:**
 
-![Loss curve](examples/loss-training-model-scaled-ring-c2-f2-n400-seed1024.png)
+![Loss curve](tutorials/loss-training-model-scaled-ring-c2-f2-n400-seed1024.png)
 
-![Accuracy curve](examples/accuracy-training-model-scaled-ring-c2-f2-n400-seed1024.png)
+![Accuracy curve](tutorials/accuracy-training-model-scaled-ring-c2-f2-n400-seed1024.png)
 
 *The decision boundary animation shows how the MLP learns a non-linear separation adapted to the ring structure. This visualization demonstrates the power of MLPs for non-linear problems.*
 
-![MLP decision boundary animation](examples/training-model-scaled-ring-c2-f2-n400-seed1024.gif)
+![MLP decision boundary animation](tutorials/training-model-scaled-ring-c2-f2-n400-seed1024.gif)
