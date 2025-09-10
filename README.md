@@ -389,7 +389,7 @@ Predictions for [0.9694462, 2.0005205]
 
 ## Going Further: Handwritten Digit Recognition
 
-The MNIST dataset is a classic benchmark for evaluating neural networks on handwritten digit recognition. With the CLI, you can easily prepare, train, and evaluate a model on MNIST-like image data.
+The MNIST dataset is a classic benchmark for evaluating neural networks on handwritten digit recognition. With the CLI, you can easily prepare, train a model, and make prediction on MNIST-like image data.
 
 You can search online for the MNIST dataset or use any similar dataset of handwritten digits organized in directories by class (png files).
 
