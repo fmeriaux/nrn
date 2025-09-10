@@ -1,4 +1,4 @@
-# Neuron Network CLI
+# Neural Network CLI
 
 This project is a personal educational initiative aimed at learning Rust and understanding the fundamentals of neural networks. The main goal is to explore how neural networks work by implementing them from scratch in Rust, while also gaining hands-on experience with the language and its ecosystem.
 
@@ -23,6 +23,7 @@ The command-line interface (CLI) provides several commands to generate synthetic
     - [Tutorial: SLP on Linearly Separable Data](#tutorial-slp-on-linearly-separable-data)
     - [Tutorial: MLP on Non-Linear Data](#tutorial-mlp-on-non-linear-data)
     - [Tutorial: MLP on Multi-Class Non-Linear Data](#tutorial-mlp-on-multi-class-non-linear-data)
+- [Going Further: MNIST Use Case](#going-further-handwritten-digit-recognition)
 
 ## Concepts
 
@@ -384,6 +385,124 @@ Predictions for [0.9694462, 2.0005205]
 |> 2: 99.63%
 |> 1: 0.37%
 |> 0: 0.00%
+```
+
+## Going Further: Handwritten Digit Recognition
+
+The MNIST dataset is a classic benchmark for evaluating neural networks on handwritten digit recognition. With the CLI, you can easily prepare, train, and evaluate a model on MNIST-like image data.
+
+You can search online for the MNIST dataset or use any similar dataset of handwritten digits organized in directories by class (png files).
+
+### Encoding Images
+
+To convert a directory of images into a dataset suitable for training, use:
+
+```sh
+nrn encode img-dir --seed 42 --input mnist/ --output mnist.h5 --grayscale --shape 28
+```
+- The directory structure must be `<input-dir>/<class-name>/<image>.png` (e.g., `digits/7/img_001.png`).
+- `<class-name>` should be a digit from 0 to 9.
+- `--seed` is required and ensures reproducible shuffling.
+- `--input` (`-i`) is the path to the root directory of images.
+- `--output` (`-o`) is the path to save the encoded dataset (HDF5 file).
+- `--grayscale` converts images to grayscale, reducing data size.
+- `--shape` (`-s`) resizes images to the given shape (28 for MNIST, default 64).
+
+> [!NOTE]
+> The output HDF5 file contains two groups: `train` and `test`, each with `features` and `labels` datasets. The split is performed automatically and reproducibly with the chosen seed. Always use the same seed to reproduce the same split.
+
+To encode a single image for prediction:
+
+```sh
+nrn encode img --input digit.png --output digit.h5 --grayscale --shape 28
+```
+- `--input` (`-i`): path to the image file to encode.
+- `--output` (`-o`): path to save the encoded image (HDF5 file).
+- `--grayscale`: convert to grayscale.
+- `--shape` (`-s`): resize to the specified shape (28 for MNIST).
+
+> [!TIP]
+> The encoded image file can be used for prediction with the `predict` command (see below).
+
+### Preprocessing
+
+After encoding, scale the dataset using min-max normalization:
+
+```sh
+nrn scale mnist min-max
+```
+- This creates a scaled dataset (e.g., `scaled-digits.h5`) and a scaler file (e.g., `scaler-digits.json`).
+- Always use the scaler file generated from the training dataset for all predictions.
+
+For information on scaling methods, refer to the [Data Scaling and Normalization](#data-scaling-and-normalization) section above.
+
+### Recommended Architecture
+
+For MNIST, a typical architecture is:
+
+```
+[784] -> 128-relu -> 128-relu -> 10-softmax
+```
+- **784**: Each 28x28 image is flattened into a vector of 784 features.
+- **128-relu**: Two hidden layers with 128 neurons each and ReLU activation.
+- **10-softmax**: Output layer with 10 neurons (digits 0-9), using Softmax for multi-class classification.
+
+Train the model with:
+
+```sh
+nrn train scaled-digits --layers 128,128 --epochs 1000
+```
+- Training on the full MNIST dataset requires significant RAM and CPU/GPU resources.
+- For quick tests, use a subset of the data.
+
+You can re-train a previous model by providing the model file, in this case skip the `--layers` option:
+
+```sh
+nrn train scaled-digits --model model-scaled-digits --epochs 1000
+```
+
+The model file will be updated with the new weights after training.
+
+### Visualizing Training
+After training, visualize the training history:
+
+```sh
+nrn plot training-model-scaled-digits
+```
+
+>![NOTE]
+> Decision boundary visualization is not applicable for high-dimensional data like MNIST, so only loss and accuracy plots will be generated.
+
+### Making Predictions
+
+To predict the digit from a new image:
+
+1. Encode the image:
+   ```sh
+   nrn encode img --input digit.png --output digit.h5 --grayscale --shape 28
+   ```
+2. Predict using the trained model and the scaler from the original training dataset:
+   ```sh
+   nrn predict model-scaled-digits --scaler scaler-digits.json -i digit.h5
+   ```
+- The scaler **must** be the one generated from the original training dataset to ensure consistent preprocessing.
+- The output will show the probability for each digit (0-9); the highest value is the predicted class.
+
+**Example output:**
+```sh
+/// Neural network loaded ([784] -> 128-relu -> 128-relu -> 10-softmax)
+/// Scaler loaded (min-max)
+Predictions for [0.0, 0.0, ..., 0.0]:
+|> 0: 0.01%
+|> 1: 0.02%
+|> 2: 0.03%
+|> 3: 0.01%
+|> 4: 0.01%
+|> 5: 0.01%
+|> 6: 0.01%
+|> 7: 99.90%
+|> 8: 0.00%
+|> 9: 0.00%
 ```
 
 ## License
