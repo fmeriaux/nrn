@@ -22,6 +22,7 @@ The command-line interface (CLI) provides several commands to generate synthetic
 - [Tutorials](#tutorials)
     - [Tutorial: SLP on Linearly Separable Data](#tutorial-slp-on-linearly-separable-data)
     - [Tutorial: MLP on Non-Linear Data](#tutorial-mlp-on-non-linear-data)
+    - [Tutorial: MLP on Multi-Class Non-Linear Data](#tutorial-mlp-on-multi-class-non-linear-data)
 
 ## Concepts
 
@@ -288,6 +289,104 @@ nrn plot training-model-scaled-ring-c2-f2-n400-seed1024 --dataset scaled-ring-c2
 *The decision boundary animation shows how the MLP learns a non-linear separation adapted to the ring structure. This visualization demonstrates the power of MLPs for non-linear problems.*
 
 ![MLP decision boundary animation](tutorials/training-model-scaled-ring-c2-f2-n400-seed1024.gif)
+
+## Tutorial: MLP on Multi-Class Non-Linear Data
+
+This tutorial demonstrates how to use a Multi-Layer Perceptron (MLP) to solve a non-linear multi-class classification problem. We will generate a synthetic dataset consisting of three concentric rings (three clusters/classes), which cannot be separated by linear boundaries. This example highlights the use of the **Softmax** activation function in the output layer for multi-class classification.
+
+> For background on normalization, MLP architecture, and activation functions, refer to the [Concepts](#concepts) section above.
+
+#### 1. Generate a ring dataset with three clusters
+
+```sh
+nrn synth --seed 1024 --distribution ring --samples 600 --features 2 --clusters 3 --plot
+```
+**Output files:**
+- `ring-c3-f2-n600-seed1024.h5`: generated synthetic dataset (required for next steps).
+- `ring-c3-f2-n600-seed1024.png`: dataset visualization (only if two features).
+
+> [!NOTE]
+> The number of clusters is set to 3 to illustrate multi-class classification. You can adjust the number of samples as needed.
+
+**Example of generated dataset:**
+
+![Synthetic dataset: 3 concentric rings](tutorials/ring-c3-f2-n600-seed1024.png)
+
+#### 2. Scale the dataset
+
+Normalize the features using z-score normalization and visualize the scaled data:
+
+```sh
+nrn scale ring-c3-f2-n600-seed1024 z-score --plot
+```
+**Output files:**
+- `scaled-ring-c3-f2-n600-seed1024.h5`: scaled dataset, ready for training.
+- `scaled-ring-c3-f2-n600-seed1024.png`: visualization of the scaled data.
+- `scaler-ring-c3-f2-n600-seed1024.json`: scaling parameters (mean, std; required for prediction).
+
+**Example of scaled data visualization:**
+
+![Scaled ring dataset: z-score](tutorials/scaled-ring-c3-f2-n600-seed1024.png)
+
+#### 3. Train a Multi-Layer Perceptron (MLP)
+
+```sh
+nrn train scaled-ring-c3-f2-n600-seed1024 --layers 32,32 --epochs 150000
+```
+**Output files:**
+- `model-scaled-ring-c3-f2-n600-seed1024.h5`: trained MLP model (required for prediction).
+- `training-model-scaled-ring-c3-f2-n600-seed1024.h5`: training history (for analysis and visualization).
+
+> [!NOTE]
+> The number of epochs is set to 150,000 to ensure proper convergence on this more complex multi-class problem. You may adjust this value depending on your hardware and the desired training duration.
+
+The CLI automatically detects the architecture: `[2] -> 32-relu -> 32-relu -> 3-softmax`. The output layer uses the **Softmax** activation function, which is appropriate for multi-class classification problems. Each output neuron corresponds to one class, and the output values represent the probability for each class.
+
+#### 4. Visualize training history (loss, accuracy, decision boundary)
+
+```sh
+nrn plot training-model-scaled-ring-c3-f2-n600-seed1024 --dataset scaled-ring-c3-f2-n600-seed1024 -f 50
+```
+**Output files:**
+- `training-model-scaled-ring-c3-f2-n600-seed1024.gif`: decision boundary animation (only for 2D datasets).
+- `loss-training-model-scaled-ring-c3-f2-n600-seed1024.png`: loss curve.
+- `accuracy-training-model-scaled-ring-c3-f2-n600-seed1024.png`: accuracy curve.
+
+> [!NOTE]
+> The `-f 50` option increases the number of frames in the decision boundary animation, allowing you to better visualize the evolution of the model during training and to make fuller use of the training history.
+
+![Loss curve](tutorials/loss-training-model-scaled-ring-c3-f2-n600-seed1024.png)
+
+![Accuracy curve](tutorials/accuracy-training-model-scaled-ring-c3-f2-n600-seed1024.png)
+
+*The decision boundary animation shows how the MLP learns to separate the three classes. The Softmax output enables the network to model complex, non-linear, multi-class boundaries.*
+
+![MLP decision boundary animation](tutorials/training-model-scaled-ring-c3-f2-n600-seed1024.gif)
+
+#### 5. Make predictions
+
+```sh
+nrn predict model-scaled-ring-c3-f2-n600-seed1024 --scaler scaler-ring-c3-f2-n600-seed1024
+```
+- The model outputs a probability for each class (thanks to Softmax). The predicted class is the one with the highest probability.
+- You can provide new data interactively or via an HDF5 file (see previous tutorials for details).
+
+**Example output:**
+
+```sh
+/// Neural network loaded ([2] -> 32-relu -> 32-relu -> 3-softmax)
+/// Scaler loaded (z-score)
+Input[0]:
+7
+Input[1]:
+9
+Predictions for [0.9694462, 2.0005205]
+|> 2: 99.63%
+|> 1: 0.37%
+|> 0: 0.00%
+```
+
+- The output shows the probability for each class. The class with the highest percentage is the predicted class.
 
 ## License
 
