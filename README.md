@@ -22,11 +22,13 @@ To prevent the problem of exploding gradients during training, this project impl
 
 The `max_norm` value can be set as a parameter during training. Gradient clipping is automatically applied to all layers at each update step.
 
-## Example Usage
+## Examples
+
+### Solving a Linearly Separable Problem with an SLP (Uniform Clusters Dataset)
 
 Below is a typical workflow using the CLI to generate a synthetic dataset, visualize it, scale the data, train a single-layer perceptron (SLP), visualize training metrics, and make predictions.
 
-### 0. Change to the examples directory
+#### 0. Change to the examples directory
 
 Before running the following commands, change to the `examples` directory to ensure correct file path handling:
 
@@ -37,7 +39,7 @@ cd examples
 > [!IMPORTANT]
 > All subsequent commands should be run from the `examples/` directory. This avoids file not found errors or incorrect file paths.
 
-### 1. Generate a synthetic dataset (2 uniform clusters) and visualize
+#### 1. Generate a synthetic dataset (2 uniform clusters) and visualize
 
 ```sh
 nrn synth --seed 1024 --distribution uniform --samples 200 --features 2 --clusters 2 --plot
@@ -52,7 +54,7 @@ nrn synth --seed 1024 --distribution uniform --samples 200 --features 2 --cluste
 
 ![Synthetic dataset: 2 uniform clusters](examples/uniform-c2-f2-n200-seed1024.png)
 
-### 2. Scale the dataset and visualize the scaled data
+#### 2. Scale the dataset and visualize the scaled data
 
 Normalizing (scaling) the features of your dataset is important because neural networks are sensitive to the scale of input data. Features with different scales can negatively impact the convergence speed and stability of training, and may cause the model to give more importance to features with larger values. Normalization ensures that all features contribute equally to the learning process and helps the optimizer perform better.
 
@@ -79,7 +81,7 @@ This command generates several new files:
 
 ![Scaled synthetic dataset: z-score](examples/scaled-uniform-c2-f2-n200-seed1024.png)
 
-### 3. Train a Single-Layer Perceptron (SLP)
+#### 3. Train a Single-Layer Perceptron (SLP)
 
 ```sh
 nrn train scaled-uniform-c2-f2-n200-seed1024 --epochs 3000
@@ -107,7 +109,7 @@ nrn train scaled-uniform-c2-f2-n200-seed1024 --epochs 3000
 - The training history is saved as `training-model-scaled-uniform-c2-f2-n200-seed1024.h5` (contains the evolution of loss and accuracy during training, used for analysis and visualization).
 - The CLI reports the final loss, training accuracy, and test accuracy.
 
-### 4. Visualize training history (loss, accuracy, decision boundary)
+#### 4. Visualize training history (loss, accuracy, decision boundary)
 
 ```sh
 nrn plot training-model-scaled-uniform-c2-f2-n200-seed1024 --dataset scaled-uniform-c2-f2-n200-seed1024
@@ -140,7 +142,7 @@ This command generates several files in the `examples/` directory:
 
 ![Decision boundary animation](examples/training-model-scaled-uniform-c2-f2-n200-seed1024.gif)
 
-### 5. Make predictions
+#### 5. Make predictions
 
 ```sh
 nrn predict model-scaled-uniform-c2-f2-n200-seed1024 --scaler scaler-uniform-c2-f2-n200-seed1024
@@ -167,3 +169,79 @@ Predictions for [-0.23714493, -1.3086028]
 - The entered values are automatically normalized (here, [-0.23714493, -1.3086028]).
 - The result displays the probability for each class; the predicted class is the one with the highest percentage.
 - To predict multiple examples at once, you can provide an HDF5 file with the `--input` option (only `.h5` files are supported).
+
+### Solving a Non-Linear Problem with an MLP (Ring Dataset)
+
+In this section, we demonstrate how to use a Multi-Layer Perceptron (MLP) to solve a non-linear classification problem. We'll generate a synthetic dataset consisting of two concentric rings (also known as the "ring" or "circles" dataset), which cannot be separated by a linear decision boundary.
+
+A Single-Layer Perceptron (SLP) is inherently limited to learning linear boundaries and will fail on this type of data. This limitation is clearly visible when training an SLP on the ring dataset:
+
+![SLP decision boundary on ring dataset](examples/slp-training-model-scaled-ring-c2-f2-n400-seed1024.gif)
+
+To solve this problem, we need to add at least one hidden layer, turning our network into an MLP capable of learning non-linear decision boundaries.
+
+> For details about data scaling, training options, and prediction, please refer to the previous SLP example sections.
+
+#### 1. Generate a ring dataset
+
+```sh
+nrn synth --seed 1024 --distribution ring --samples 400 --features 2 --clusters 2 --plot
+```
+- Generates a dataset with two concentric rings (2D, 2 classes, 400 samples) and visualizes it.
+- Output files: `ring-c2-f2-n400-seed1024.h5` (dataset), `ring-c2-f2-n400-seed1024.png` (plot).
+
+#### Example of generated dataset:
+
+![Synthetic dataset: 2 concentric rings](examples/ring-c2-f2-n400-seed1024.png)
+
+#### 2. Scale the dataset
+
+```sh
+nrn scale ring-c2-f2-n400-seed1024 z-score --plot
+```
+- Scales the features using z-score normalization and visualizes the scaled data.
+- Output files: `scaled-ring-c2-f2-n400-seed1024.h5`, `scaled-ring-c2-f2-n400-seed1024.png`, `scaler-ring-c2-f2-n400-seed1024.json`.
+- See the SLP example for more details about scaling.
+
+#### Example of scaled data visualization:
+
+![Scaled ring dataset: z-score](examples/scaled-ring-c2-f2-n400-seed1024.png)
+
+#### 3. Train a Multi-Layer Perceptron (MLP)
+
+```sh
+nrn train scaled-ring-c2-f2-n400-seed1024 --layers 32,32 --epochs 30000
+```
+- Trains an MLP with two hidden layers of 32 neurons each (you can adjust the number and size of hidden layers as needed).
+- The CLI automatically detects the architecture: `[2] -> 32-relu -> 32-relu -> 1-sigmoid`.
+- Hidden layers use the ReLU activation function, as explained in the [Activation Functions](#activation-functions) section above.
+- Example output:
+
+```
+/// Dataset loaded (2 features, 320 training samples, 80 test samples)
+/// Neural network initialized ([2] -> 32-relu -> 32-relu -> 1-sigmoid)
+*** Training -- 30000 epochs, learning rate: 0.001
+*** History -- 3000 checkpoints will be recorded, one every 10 epochs
+>> Training completed -- Loss: 0.2091194 -- Train Accuracy: 100 -- Test Accuracy: 100
+>> Model saved at model-scaled-ring-c2-f2-n400-seed1024 (HDF5)
+>> Training history saved at training-model-scaled-ring-c2-f2-n400-seed1024 (HDF5)
+```
+- For more information about training options, see the SLP example above.
+
+#### 4. Visualize training history and decision boundary
+
+```sh
+nrn plot training-model-scaled-ring-c2-f2-n400-seed1024 --dataset scaled-ring-c2-f2-n400-seed1024
+```
+- Plots the training history (loss, accuracy) and the non-linear decision boundary learned by the MLP. 
+
+
+**Example output:**
+
+![Loss curve](examples/loss-training-model-scaled-ring-c2-f2-n400-seed1024.png)
+
+![Accuracy curve](examples/accuracy-training-model-scaled-ring-c2-f2-n400-seed1024.png)
+
+*The decision boundary animation shows how the MLP learns a non-linear separation adapted to the ring structure. This visualization demonstrates the power of MLPs for non-linear problems.*
+
+![MLP decision boundary animation](examples/training-model-scaled-ring-c2-f2-n400-seed1024.gif)
