@@ -1,0 +1,8 @@
+/target
+secrets/
+.idea/
+*.png
+*.gif
+*.hdf5
+*.h5
+.DS_Store
