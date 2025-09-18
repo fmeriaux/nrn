@@ -1,6 +1,6 @@
 use fs::read_dir;
 use image::imageops::FilterType::Nearest;
-use image::io::Reader as ImageReader;
+use image::ImageReader;
 use ndarray::Array1;
 use std::collections::BTreeMap;
 use std::error::Error;
