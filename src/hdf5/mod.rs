@@ -1,4 +1,4 @@
-use crate::core::activation::ActivationMethod;
+use crate::core::activations::ActivationRegistry;
 use crate::core::neuron_network::{NeuronLayer, NeuronNetwork};
 use crate::core::training_history::TrainingHistory;
 use crate::synth::{Dataset, SplitDataset};
@@ -37,7 +37,7 @@ impl NeuronNetwork {
             group
                 .new_attr::<VarLenUnicode>()
                 .create("activation")?
-                .write_scalar(&layer.activation.to_string().parse::<VarLenUnicode>()?)?;
+                .write_scalar(&layer.activation.name().parse::<VarLenUnicode>()?)?;
 
             group
                 .new_dataset_builder()
@@ -56,7 +56,11 @@ impl NeuronNetwork {
     /// Reads a neural network from an HDF5 group.
     /// # Arguments
     /// - `group`: The HDF5 group to read the network from.
-    fn load_from_group(group: &Group) -> Result<Self, Box<dyn Error>> {
+    /// - `activation_registry`: A registry mapping activation function names to their implementations.
+    fn load_from_group(
+        group: &Group,
+        activation_registry: &ActivationRegistry,
+    ) -> Result<Self, Box<dyn Error>> {
         let mut layers = Vec::new();
 
         loop {
@@ -65,11 +69,16 @@ impl NeuronNetwork {
                 Ok(layer_group) => {
                     let weights: Array2<f32> = layer_group.dataset("weights")?.read()?;
                     let bias: Array1<f32> = layer_group.dataset("bias")?.read()?;
-                    let activation: ActivationMethod = layer_group
+
+                    let activation_name: String = layer_group
                         .attr("activation")?
                         .read_scalar::<VarLenUnicode>()?
                         .as_str()
-                        .parse::<ActivationMethod>()?;
+                        .to_string();
+
+                    let activation = activation_registry
+                        .get(&activation_name)
+                        .ok_or(format!("Unknown activation function: {}", activation_name))?;
 
                     layers.push(NeuronLayer {
                         weights,
@@ -99,9 +108,13 @@ impl NeuronNetwork {
     /// Loads a neural network from an HDF5 file.
     /// # Arguments
     /// - `file`: The path to the file to load the network from.
-    pub fn load<P: AsRef<Path>>(file: P) -> Result<Self, Box<dyn Error>> {
+    /// - `activation_registry`: A registry mapping activation function names to their implementations.
+    pub fn load<P: AsRef<Path>>(
+        file: P,
+        activation_registry: &ActivationRegistry,
+    ) -> Result<Self, Box<dyn Error>> {
         let file = File::open(file.as_ref().with_extension(EXTENSION))?;
-        Ok(NeuronNetwork::load_from_group(&file)?)
+        Ok(NeuronNetwork::load_from_group(&file, activation_registry)?)
     }
 }
 
@@ -146,7 +159,11 @@ impl TrainingHistory {
     /// Loads the training history from an HDF5 file.
     /// # Arguments
     /// - `file`: The path to the file to load the history from.
-    pub fn load<P: AsRef<Path>>(file: P) -> Result<Self, Box<dyn Error>> {
+    /// - `activation_registry`: A registry mapping activation function names to their implementations.
+    pub fn load<P: AsRef<Path>>(
+        file: P,
+        activation_registry: &ActivationRegistry,
+    ) -> Result<Self, Box<dyn Error>> {
         let file = File::open(file.as_ref().with_extension(EXTENSION))?;
 
         let interval: usize = file.attr("interval")?.read_scalar()?;
@@ -165,7 +182,10 @@ impl TrainingHistory {
             let checkpoint_name = format!("checkpoint{}", model.len());
             match model_group.group(&checkpoint_name) {
                 Ok(checkpoint_group) => {
-                    model.push(NeuronNetwork::load_from_group(&checkpoint_group)?);
+                    model.push(NeuronNetwork::load_from_group(
+                        &checkpoint_group,
+                        &activation_registry,
+                    )?);
                 }
                 Err(_) => break,
             }

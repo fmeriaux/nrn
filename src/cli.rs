@@ -1,7 +1,7 @@
 use crate::commands::Command;
 use crate::commands::Command::*;
 use crate::commands::EncodeCommand::{Img, ImgDir};
-use crate::core::activation::ActivationMethod::{ReLU, Sigmoid, Softmax};
+use crate::core::activations::{Activation, ActivationRegistry, ReLU, Sigmoid, Softmax};
 use crate::core::encoder::{encode_image, extract_categories};
 use crate::core::neuron_network::{NeuronLayerSpec, NeuronNetwork, accuracy, log_loss};
 use crate::core::scaling::Scaler;
@@ -15,11 +15,21 @@ use colored::Colorize;
 use ndarray::Array1;
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::prelude::StdRng;
+use once_cell::sync::Lazy;
 use std::cmp::Ordering::Equal;
 use std::fs::read_dir;
 use std::io::stdin;
 use std::iter::once;
 use std::path::Path;
+use std::sync::Arc;
+
+static ACTIVATION_REGISTRY: Lazy<ActivationRegistry> = Lazy::new(|| {
+    ActivationRegistry::new(vec![
+        Arc::new(ReLU) as Arc<dyn Activation>,
+        Arc::new(Sigmoid) as Arc<dyn Activation>,
+        Arc::new(Softmax) as Arc<dyn Activation>,
+    ])
+});
 
 fn load_dataset(filename: &str) -> Result<SplitDataset, Box<dyn std::error::Error>> {
     let dataset = SplitDataset::load(filename)?;
@@ -98,12 +108,12 @@ fn create_output_layer(max_label: usize) -> NeuronLayerSpec {
     if max_label > 1 {
         NeuronLayerSpec {
             neurons: max_label + 1,
-            activation: Softmax,
+            activation: Arc::new(Softmax),
         }
     } else {
         NeuronLayerSpec {
             neurons: 1,
-            activation: Sigmoid,
+            activation: Arc::new(Sigmoid),
         }
     }
 }
@@ -117,7 +127,7 @@ fn initialize_model(input_size: usize, layer_specs: &Vec<NeuronLayerSpec>) -> Ne
 }
 
 fn load_model(filename: &str) -> Result<NeuronNetwork, Box<dyn std::error::Error>> {
-    let model = NeuronNetwork::load(filename)?;
+    let model = NeuronNetwork::load(filename, &ACTIVATION_REGISTRY)?;
 
     display_initialization!("Neural network loaded ({})", model.summary().yellow());
 
@@ -138,7 +148,7 @@ fn save_model(filename: &str, model: &NeuronNetwork) -> Result<(), Box<dyn std::
 }
 
 fn load_training_history(filename: &str) -> Result<TrainingHistory, Box<dyn std::error::Error>> {
-    let history = TrainingHistory::load(filename)?;
+    let history = TrainingHistory::load(filename, &ACTIVATION_REGISTRY)?;
 
     assert!(
         history.model.len() > 2,
@@ -363,7 +373,7 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn std::error::Error>>
                 .into_iter()
                 .map(|neurons| NeuronLayerSpec {
                     neurons,
-                    activation: ReLU,
+                    activation: Arc::new(ReLU),
                 })
                 .chain(once(create_output_layer(train.max_label())))
                 .collect();

@@ -1,9 +1,9 @@
-use crate::core::activation::ActivationMethod;
-use crate::core::initialization::InitializationMethod;
 use crate::synth::Dataset;
 use ndarray::{Array1, Array2, Axis};
 use ndarray_rand::rand_distr::num_traits::real::Real;
 use std::iter::once;
+use std::sync::Arc;
+use crate::core::activations::Activation;
 
 /// Represents a single layer in a neural network, containing weights and biases.
 ///
@@ -15,7 +15,7 @@ use std::iter::once;
 pub struct NeuronLayer {
     pub weights: Array2<f32>,
     pub bias: Array1<f32>,
-    pub activation: ActivationMethod,
+    pub activation: Arc<dyn Activation>,
 }
 
 /// Represents a neural network composed of multiple layers of neurons.
@@ -42,7 +42,7 @@ pub struct Gradients {
 /// - `activation`: The activation method used for the neurons in this layer.
 pub struct NeuronLayerSpec {
     pub neurons: usize,
-    pub activation: ActivationMethod,
+    pub activation: Arc<dyn Activation>,
 }
 
 /// Returns the last activation from a vector of activations.
@@ -141,7 +141,7 @@ impl NeuronLayer {
             "Neurons and inputs must be greater than zero."
         );
 
-        let initialization = InitializationMethod::from_activation(&spec.activation);
+        let initialization = spec.activation.get_initializer();
         let (weights, bias) = initialization.apply((spec.neurons, inputs));
         NeuronLayer {
             weights,
@@ -239,7 +239,7 @@ impl NeuronNetwork {
             .chain(
                 self.specs()
                     .iter()
-                    .map(|spec| format!("{}-{}", spec.neurons, spec.activation)),
+                    .map(|spec| format!("{}-{}", spec.neurons, spec.activation.name())),
             )
             .collect::<Vec<String>>()
             .join(" -> ")

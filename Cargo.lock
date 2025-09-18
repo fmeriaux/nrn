@@ -819,6 +819,7 @@ dependencies = [
  "indicatif",
  "ndarray",
  "ndarray-rand",
+ "once_cell",
  "plotters",
  "png",
  "serde",
