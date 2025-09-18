@@ -13,6 +13,10 @@ impl Activation for Sigmoid {
         input.mapv(|x| 1.0 / (1.0 + (-x).exp()))
     }
 
+    fn derivative(&self, activations: &Array2<f32>, _: &Array2<f32>) -> Array2<f32> {
+        activations.mapv(|s| s * (1.0 - s))
+    }
+
     fn get_initializer(&self) -> Box<dyn Initializer> {
         Box::new(XavierUniform)
     }

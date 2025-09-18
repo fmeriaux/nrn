@@ -1,6 +1,6 @@
 use crate::core::activations::Activation;
 use crate::core::initialization::{Initializer, XavierUniform};
-use ndarray::{Array2, Axis};
+use ndarray::Array2;
 
 pub struct Softmax;
 
@@ -10,10 +10,23 @@ impl Activation for Softmax {
     }
 
     fn apply(&self, input: &Array2<f32>) -> Array2<f32> {
-        let max = input.fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-        let exp_output = input.mapv(|val| (val - max).exp());
-        let sum = exp_output.sum_axis(Axis(0));
-        exp_output / sum
+        let mut result = input.clone();
+
+        for mut col in result.columns_mut() {
+            // Numerical stability, subtract max value from each element
+            let max_val = *col.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+            col.mapv_inplace(|x| (x - max_val).exp());
+
+            // Normalize to get probabilities
+            col /= col.sum();
+        }
+
+        result
+    }
+
+    fn derivative(&self, activations: &Array2<f32>, targets: &Array2<f32>) -> Array2<f32> {
+        let batch_size = activations.ncols() as f32;
+        (activations - targets) / batch_size
     }
 
     fn get_initializer(&self) -> Box<dyn Initializer> {

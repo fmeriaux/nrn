@@ -1,9 +1,9 @@
+use crate::core::activations::Activation;
 use crate::synth::Dataset;
 use ndarray::{Array1, Array2, Axis};
 use ndarray_rand::rand_distr::num_traits::real::Real;
 use std::iter::once;
 use std::sync::Arc;
-use crate::core::activations::Activation;
 
 /// Represents a single layer in a neural network, containing weights and biases.
 ///
@@ -359,9 +359,11 @@ impl NeuronNetwork {
             gradients.insert(0, Gradients { dw, db });
 
             if i > 1 {
-                dz = &self.layers[i - 1].weights.t().dot(&dz)
-                    * previous_activations
-                    * (1.0 - previous_activations);
+                let next_layer = &self.layers[i - 1];
+                dz = next_layer.weights.t().dot(&dz)
+                    * next_layer
+                        .activation
+                        .derivative(previous_activations, expectations);
             }
         }
 

@@ -13,6 +13,10 @@ impl Activation for ReLU {
         input.mapv(|x| x.max(0.0))
     }
 
+    fn derivative(&self, activations: &Array2<f32>, _: &Array2<f32>) -> Array2<f32> {
+        activations.mapv(|x| if x > 0.0 { 1.0 } else { 0.0 })
+    }
+
     fn get_initializer(&self) -> Box<dyn Initializer> {
         Box::new(HeUniform)
     }
