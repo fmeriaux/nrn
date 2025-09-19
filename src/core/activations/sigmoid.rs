@@ -1,11 +1,13 @@
 use crate::core::activations::Activation;
 use crate::core::initialization::{Initializer, XavierUniform};
 use ndarray::Array2;
+use once_cell::sync::Lazy;
+use std::sync::Arc;
 
 pub struct Sigmoid;
 
 impl Activation for Sigmoid {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "sigmoid"
     }
 
@@ -21,3 +23,5 @@ impl Activation for Sigmoid {
         Box::new(XavierUniform)
     }
 }
+
+pub static SIGMOID: Lazy<Arc<Sigmoid>> = Lazy::new(|| Arc::new(Sigmoid));

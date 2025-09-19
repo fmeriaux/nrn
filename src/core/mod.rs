@@ -1,6 +1,6 @@
-pub mod neuron_network;
-pub mod training_history;
-pub mod scaling;
+pub mod activations;
 pub mod encoder;
-mod initialization;
-pub(crate) mod activations;
+pub mod initialization;
+pub mod neuron_network;
+pub mod scaling;
+pub mod training_history;

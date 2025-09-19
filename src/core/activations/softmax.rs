@@ -1,11 +1,13 @@
+use std::sync::Arc;
 use crate::core::activations::Activation;
 use crate::core::initialization::{Initializer, XavierUniform};
 use ndarray::Array2;
+use once_cell::sync::Lazy;
 
 pub struct Softmax;
 
 impl Activation for Softmax {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "softmax"
     }
 
@@ -33,3 +35,5 @@ impl Activation for Softmax {
         Box::new(XavierUniform)
     }
 }
+
+pub static SOFTMAX: Lazy<Arc<Softmax>> = Lazy::new(|| Arc::new(Softmax));

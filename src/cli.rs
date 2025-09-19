@@ -1,7 +1,7 @@
 use crate::commands::Command;
 use crate::commands::Command::*;
 use crate::commands::EncodeCommand::{Img, ImgDir};
-use crate::core::activations::{Activation, ActivationRegistry, ReLU, Sigmoid, Softmax};
+use crate::core::activations::{Activation, ActivationRegistry, RELU, SIGMOID, SOFTMAX};
 use crate::core::encoder::{encode_image, extract_categories};
 use crate::core::neuron_network::{NeuronLayerSpec, NeuronNetwork, accuracy, log_loss};
 use crate::core::scaling::Scaler;
@@ -24,11 +24,13 @@ use std::path::Path;
 use std::sync::Arc;
 
 static ACTIVATION_REGISTRY: Lazy<ActivationRegistry> = Lazy::new(|| {
-    ActivationRegistry::new(vec![
-        Arc::new(ReLU) as Arc<dyn Activation>,
-        Arc::new(Sigmoid) as Arc<dyn Activation>,
-        Arc::new(Softmax) as Arc<dyn Activation>,
-    ])
+    let activations: Vec<Arc<dyn Activation>> = vec![
+        RELU.clone(),
+        SIGMOID.clone(),
+        SOFTMAX.clone(),
+    ];
+
+    ActivationRegistry::new(activations)
 });
 
 fn load_dataset(filename: &str) -> Result<SplitDataset, Box<dyn std::error::Error>> {
@@ -108,12 +110,12 @@ fn create_output_layer(max_label: usize) -> NeuronLayerSpec {
     if max_label > 1 {
         NeuronLayerSpec {
             neurons: max_label + 1,
-            activation: Arc::new(Softmax),
+            activation: SOFTMAX.clone(),
         }
     } else {
         NeuronLayerSpec {
             neurons: 1,
-            activation: Arc::new(Sigmoid),
+            activation: SIGMOID.clone(),
         }
     }
 }
@@ -373,7 +375,7 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn std::error::Error>>
                 .into_iter()
                 .map(|neurons| NeuronLayerSpec {
                     neurons,
-                    activation: Arc::new(ReLU),
+                    activation: RELU.clone(),
                 })
                 .chain(once(create_output_layer(train.max_label())))
                 .collect();

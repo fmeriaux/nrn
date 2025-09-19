@@ -1,11 +1,13 @@
 use crate::core::activations::Activation;
 use crate::core::initialization::{HeUniform, Initializer};
 use ndarray::Array2;
+use once_cell::sync::Lazy;
+use std::sync::Arc;
 
 pub struct ReLU;
 
 impl Activation for ReLU {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "relu"
     }
 
@@ -21,3 +23,5 @@ impl Activation for ReLU {
         Box::new(HeUniform)
     }
 }
+
+pub static RELU: Lazy<Arc<ReLU>> = Lazy::new(|| Arc::new(ReLU));

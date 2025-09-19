@@ -2,9 +2,9 @@ mod relu;
 mod sigmoid;
 mod softmax;
 
-pub use relu::ReLU;
-pub use sigmoid::Sigmoid;
-pub use softmax::Softmax;
+pub use relu::RELU;
+pub use sigmoid::SIGMOID;
+pub use softmax::SOFTMAX;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -14,7 +14,7 @@ use ndarray::Array2;
 /// Represents an activation function applicable to neural network layers.
 pub trait Activation: Send + Sync {
     /// Returns the canonical name of the activation function.
-    fn name(&self) -> &str;
+    fn name(&self) -> &'static str;
 
     /// Applies the activation function element-wise to the input matrix.
     ///
