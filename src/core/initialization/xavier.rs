@@ -1,6 +1,8 @@
 use crate::core::initialization::{Initializer, uniform_distribution};
 use ndarray::{Array1, Array2};
 use ndarray_rand::rand_distr::Uniform;
+use once_cell::sync::Lazy;
+use std::sync::Arc;
 
 pub struct XavierUniform;
 
@@ -10,3 +12,5 @@ impl Initializer for XavierUniform {
         uniform_distribution(shape, &Uniform::new(-limit, limit))
     }
 }
+
+pub static XAVIER_UNIFORM: Lazy<Arc<XavierUniform>> = Lazy::new(|| Arc::new(XavierUniform));

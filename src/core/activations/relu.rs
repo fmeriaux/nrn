@@ -1,5 +1,5 @@
 use crate::core::activations::Activation;
-use crate::core::initialization::{HeUniform, Initializer};
+use crate::core::initialization::{HE_UNIFORM, Initializer};
 use ndarray::Array2;
 use once_cell::sync::Lazy;
 use std::sync::Arc;
@@ -19,8 +19,8 @@ impl Activation for ReLU {
         activations.mapv(|x| if x > 0.0 { 1.0 } else { 0.0 })
     }
 
-    fn get_initializer(&self) -> Box<dyn Initializer> {
-        Box::new(HeUniform)
+    fn get_initializer(&self) -> Arc<dyn Initializer> {
+        HE_UNIFORM.clone()
     }
 }
 

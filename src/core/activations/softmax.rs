@@ -1,8 +1,8 @@
-use std::sync::Arc;
 use crate::core::activations::Activation;
-use crate::core::initialization::{Initializer, XavierUniform};
+use crate::core::initialization::{Initializer, XAVIER_UNIFORM};
 use ndarray::Array2;
 use once_cell::sync::Lazy;
+use std::sync::Arc;
 
 pub struct Softmax;
 
@@ -31,8 +31,8 @@ impl Activation for Softmax {
         (activations - targets) / batch_size
     }
 
-    fn get_initializer(&self) -> Box<dyn Initializer> {
-        Box::new(XavierUniform)
+    fn get_initializer(&self) -> Arc<dyn Initializer> {
+        XAVIER_UNIFORM.clone()
     }
 }
 

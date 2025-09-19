@@ -1,8 +1,8 @@
 mod he;
 mod xavier;
 
-pub use he::HeUniform;
-pub use xavier::XavierUniform;
+pub use he::HE_UNIFORM;
+pub use xavier::XAVIER_UNIFORM;
 
 use ndarray::{Array1, Array2};
 use ndarray_rand::rand_distr::Uniform;

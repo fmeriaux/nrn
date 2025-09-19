@@ -1,5 +1,5 @@
 use crate::core::activations::Activation;
-use crate::core::initialization::{Initializer, XavierUniform};
+use crate::core::initialization::{Initializer, XAVIER_UNIFORM};
 use ndarray::Array2;
 use once_cell::sync::Lazy;
 use std::sync::Arc;
@@ -19,8 +19,8 @@ impl Activation for Sigmoid {
         activations.mapv(|s| s * (1.0 - s))
     }
 
-    fn get_initializer(&self) -> Box<dyn Initializer> {
-        Box::new(XavierUniform)
+    fn get_initializer(&self) -> Arc<dyn Initializer> {
+        XAVIER_UNIFORM.clone()
     }
 }
 

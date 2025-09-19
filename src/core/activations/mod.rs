@@ -57,7 +57,7 @@ pub trait Activation: Send + Sync {
     ///
     /// This can be used to initialize the parameters of layers associated with this activation
     /// (e.g., for certain parametrized activation functions).
-    fn get_initializer(&self) -> Box<dyn Initializer>;
+    fn get_initializer(&self) -> Arc<dyn Initializer>;
 }
 
 /// A registry to store and manage activation functions.
