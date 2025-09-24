@@ -1,5 +1,5 @@
 use crate::core::neuron_network::NeuronNetwork;
-use crate::synth::Dataset;
+use crate::core::data::Dataset;
 use gif::{Encoder, Frame, Repeat};
 use ndarray::{Array1, Array2};
 use plotters::chart::ChartBuilder;
@@ -113,7 +113,7 @@ fn draw_data(
 
         if let Some(model) = model {
             let (grid_points, inputs) = make_grid_and_inputs(min, max, 500);
-            let predictions = model.predict(&inputs);
+            let predictions = model.predict(inputs.view());
 
             let decision_boundary: Vec<(f32, f32)> = grid_points
                 .iter()

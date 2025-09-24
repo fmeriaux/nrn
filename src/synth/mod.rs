@@ -1,9 +1,10 @@
-use std::error::Error;
-use std::fmt;
+use crate::core::data::{Dataset, SplitDataset};
 use ndarray::{Array1, Array2, Axis, s};
 use ndarray_rand::rand::rngs::StdRng;
 use ndarray_rand::rand::seq::SliceRandom;
 use ndarray_rand::rand::{Rng, SeedableRng};
+use std::error::Error;
+use std::fmt;
 
 mod generators;
 
@@ -21,26 +22,6 @@ impl fmt::Display for DistributionType {
             DistributionType::Ring => write!(f, "ring"),
         }
     }
-}
-/// A dataset containing features and labels for clustering tasks.
-///
-/// # Properties
-/// - `features`: A 2D array where each row represents a sample and each column represents a feature.
-/// - `labels`: A 1D array where each element corresponds to the label of the sample in the same row of `features`.
-#[derive(Debug)]
-pub struct Dataset {
-    pub features: Array2<f32>,
-    pub labels: Array1<f32>,
-}
-
-/// A structure representing a split dataset into training and testing sets.
-/// # Properties
-/// - `train`: A `Dataset` containing the training samples.
-/// - `test`: A `Dataset` containing the testing samples.
-#[derive(Debug)]
-pub struct SplitDataset {
-    pub train: Dataset,
-    pub test: Dataset,
 }
 
 /// Initializes the features and labels for a dataset.
@@ -107,7 +88,8 @@ impl Dataset {
         indices.shuffle(rng);
 
         let shuffled_features = features.select(Axis(0), &indices);
-        let shuffled_labels = Array1::from(indices.iter().map(|&i| labels[i]).collect::<Vec<f32>>());
+        let shuffled_labels =
+            Array1::from(indices.iter().map(|&i| labels[i]).collect::<Vec<f32>>());
 
         Dataset {
             features: shuffled_features.to_owned(),
@@ -120,26 +102,26 @@ impl Dataset {
     /// - `rng`: A mutable reference to a random number generator for shuffling.
     /// - `images`: A vector of images represented as 1D arrays of pixel values.
     /// - `labels`: A vector of labels corresponding to each image.
-    pub fn from_image_vec<R : Rng>(
+    pub fn from_image_vec<R: Rng>(
         rng: &mut R,
         images: Vec<Array1<u8>>,
         labels: Vec<usize>,
     ) -> Result<Self, Box<dyn Error>> {
-        assert!(!images.is_empty(), "Images vector must not be empty to create a dataset");
+        assert!(
+            !images.is_empty(),
+            "Images vector must not be empty to create a dataset"
+        );
 
         let features: Array2<f32> = Array2::from_shape_vec(
             (images.len(), images[0].len()),
             images.into_iter().flatten().map(|x| x as f32).collect(),
         )?;
 
-        let labels: Array1<f32> = Array1::from_shape_vec(
-            labels.len(),
-            labels.into_iter().map(|x| x as f32).collect(),
-        )?;
+        let labels: Array1<f32> =
+            Array1::from_shape_vec(labels.len(), labels.into_iter().map(|x| x as f32).collect())?;
 
         Ok(Dataset::shuffled(rng, &features, &labels))
     }
-
 
     /// Creates a new synthetic dataset based on the specified distribution type.
     /// # Arguments
@@ -297,23 +279,8 @@ impl Dataset {
             let end = start + samples_per_cluster;
             features.slice_mut(s![start..end, ..]).assign(&points);
         }
-        
+
         Dataset::shuffled(&mut rng, &features, &labels)
-    }
-
-    /// Returns the number of samples in the dataset.
-    pub fn n_samples(&self) -> usize {
-        self.labels.len()
-    }
-
-    /// Returns the number of features in the dataset.
-    pub fn n_features(&self) -> usize {
-        self.features.ncols()
-    }
-
-    /// Returns the maximum label value in the dataset.
-    pub fn max_label(&self) -> usize {
-        self.labels.fold(0, |max, &label| max.max(label as usize))
     }
 
     /// Splits the dataset into training and testing sets according to the given ratio.
@@ -345,7 +312,7 @@ impl SplitDataset {
     pub fn groups(&self) -> Vec<(&str, &Dataset)> {
         vec![("train", &self.train), ("test", &self.test)]
     }
-    
+
     /// Unsplits the `SplitDataset` back into a single `Dataset`.
     pub fn unsplit(self) -> Dataset {
         let mut features = self.train.features.to_owned();

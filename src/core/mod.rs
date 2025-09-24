@@ -1,6 +1,7 @@
+pub mod initializations;
 pub mod activations;
+pub mod scalers;
+pub mod data;
 pub mod encoder;
-pub mod initialization;
 pub mod neuron_network;
-pub mod scaling;
 pub mod training_history;

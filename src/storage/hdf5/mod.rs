@@ -1,7 +1,7 @@
 use crate::core::activations::ActivationRegistry;
 use crate::core::neuron_network::{NeuronLayer, NeuronNetwork};
 use crate::core::training_history::TrainingHistory;
-use crate::synth::{Dataset, SplitDataset};
+use crate::core::data::{Dataset, SplitDataset};
 use hdf5_metno::types::VarLenUnicode;
 use hdf5_metno::{File, Group};
 use ndarray::{Array1, Array2};

@@ -4,10 +4,10 @@ mod cli;
 mod commands;
 mod core;
 mod progression;
-mod synth;
 mod plot;
 mod log;
-mod hdf5;
+mod storage;
+mod synth;
 
 use crate::commands::Command;
 

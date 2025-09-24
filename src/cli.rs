@@ -2,21 +2,23 @@ use crate::commands::Command;
 use crate::commands::Command::*;
 use crate::commands::EncodeCommand::{Img, ImgDir};
 use crate::core::activations::{Activation, ActivationRegistry, RELU, SIGMOID, SOFTMAX};
+use crate::core::data::{Dataset, SplitDataset};
 use crate::core::encoder::{encode_image, extract_categories};
-use crate::core::neuron_network::{NeuronLayerSpec, NeuronNetwork, accuracy, log_loss};
-use crate::core::scaling::Scaler;
+use crate::core::neuron_network::{accuracy, log_loss, NeuronLayerSpec, NeuronNetwork};
+use crate::core::scalers::{Scaler, ScalerMethod};
 use crate::core::training_history::TrainingHistory;
-use crate::hdf5::{load_inputs, save_inputs};
 use crate::plot::DecisionBoundaryView;
 use crate::progression::Progression;
-use crate::synth::{Dataset, SplitDataset};
+use crate::storage::hdf5::{load_inputs, save_inputs};
+use crate::storage::scalers::ScalerRecord;
 use crate::{display_info, display_initialization, display_success, display_warning, plot};
 use colored::Colorize;
 use ndarray::Array1;
-use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::prelude::StdRng;
+use ndarray_rand::rand::SeedableRng;
 use once_cell::sync::Lazy;
 use std::cmp::Ordering::Equal;
+use std::error::Error;
 use std::fs::read_dir;
 use std::io::stdin;
 use std::iter::once;
@@ -24,16 +26,13 @@ use std::path::Path;
 use std::sync::Arc;
 
 static ACTIVATION_REGISTRY: Lazy<ActivationRegistry> = Lazy::new(|| {
-    let activations: Vec<Arc<dyn Activation>> = vec![
-        RELU.clone(),
-        SIGMOID.clone(),
-        SOFTMAX.clone(),
-    ];
+    let activations: Vec<Arc<dyn Activation>> =
+        vec![RELU.clone(), SIGMOID.clone(), SOFTMAX.clone()];
 
     ActivationRegistry::new(activations)
 });
 
-fn load_dataset(filename: &str) -> Result<SplitDataset, Box<dyn std::error::Error>> {
+fn load_dataset(filename: &str) -> Result<SplitDataset, Box<dyn Error>> {
     let dataset = SplitDataset::load(filename)?;
 
     display_initialization!(
@@ -47,7 +46,7 @@ fn load_dataset(filename: &str) -> Result<SplitDataset, Box<dyn std::error::Erro
 }
 
 /// Saves the dataset to a file with the specified filename.
-fn save_dataset(dataset: &SplitDataset, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn save_dataset(dataset: &SplitDataset, filename: &str) -> Result<(), Box<dyn Error>> {
     dataset.save(&filename)?;
 
     display_success!(
@@ -60,8 +59,9 @@ fn save_dataset(dataset: &SplitDataset, filename: &str) -> Result<(), Box<dyn st
     Ok(())
 }
 
-fn save_scaler(scaler: &Scaler, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
-    scaler.save(filename)?;
+fn save_scaler(scaler: ScalerMethod, filename: &str) -> Result<(), Box<dyn Error>> {
+    let record: ScalerRecord = scaler.into();
+    record.save(filename)?;
 
     display_success!(
         "{} at {} {}",
@@ -73,13 +73,10 @@ fn save_scaler(scaler: &Scaler, filename: &str) -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-fn load_scaler(filename: &str) -> Result<Scaler, Box<dyn std::error::Error>> {
-    let scaler = Scaler::load(filename)?;
+fn load_scaler(filename: &str) -> Result<ScalerMethod, Box<dyn Error>> {
+    let scaler: ScalerMethod = ScalerRecord::load(filename)?.into();
 
-    display_initialization!(
-        "Scaler loaded ({})",
-        scaler.to_method().to_string().yellow()
-    );
+    display_initialization!("Scaler loaded ({})", scaler.name().yellow());
 
     Ok(scaler)
 }
@@ -90,7 +87,7 @@ fn plot_dataset(
     dataset: &Dataset,
     width: u32,
     height: u32,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn Error>> {
     if dataset.n_features() == 2 {
         plot::of_data(&filename, &dataset, width, height)?;
         display_success!(
@@ -128,7 +125,7 @@ fn initialize_model(input_size: usize, layer_specs: &Vec<NeuronLayerSpec>) -> Ne
     model
 }
 
-fn load_model(filename: &str) -> Result<NeuronNetwork, Box<dyn std::error::Error>> {
+fn load_model(filename: &str) -> Result<NeuronNetwork, Box<dyn Error>> {
     let model = NeuronNetwork::load(filename, &ACTIVATION_REGISTRY)?;
 
     display_initialization!("Neural network loaded ({})", model.summary().yellow());
@@ -136,7 +133,7 @@ fn load_model(filename: &str) -> Result<NeuronNetwork, Box<dyn std::error::Error
     Ok(model)
 }
 
-fn save_model(filename: &str, model: &NeuronNetwork) -> Result<(), Box<dyn std::error::Error>> {
+fn save_model(filename: &str, model: &NeuronNetwork) -> Result<(), Box<dyn Error>> {
     model.save(filename)?;
 
     display_success!(
@@ -149,7 +146,7 @@ fn save_model(filename: &str, model: &NeuronNetwork) -> Result<(), Box<dyn std::
     Ok(())
 }
 
-fn load_training_history(filename: &str) -> Result<TrainingHistory, Box<dyn std::error::Error>> {
+fn load_training_history(filename: &str) -> Result<TrainingHistory, Box<dyn Error>> {
     let history = TrainingHistory::load(filename, &ACTIVATION_REGISTRY)?;
 
     assert!(
@@ -166,10 +163,7 @@ fn load_training_history(filename: &str) -> Result<TrainingHistory, Box<dyn std:
     Ok(history)
 }
 
-fn save_training_history(
-    filename: &str,
-    history: &TrainingHistory,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn save_training_history(filename: &str, history: &TrainingHistory) -> Result<(), Box<dyn Error>> {
     history.save(filename)?;
 
     display_success!(
@@ -182,7 +176,7 @@ fn save_training_history(
     Ok(())
 }
 
-pub(crate) fn handle(command: Command) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
     match command {
         // 🗂️ DATASET GENERATION
         Synth {
@@ -330,18 +324,18 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn std::error::Error>>
         } => {
             let mut split_dataset = load_dataset(&filename)?;
 
-            let scaler = Scaler::fit_from_name(&scaling, &split_dataset.train.features);
-            split_dataset.scale(&scaler);
+            let scaler = scaling.fit(split_dataset.train.features.view());
+            split_dataset.scale_inplace(&scaler);
 
             display_success!(
                 "{} with {}",
                 "Dataset scaled".bright_green(),
-                scaling.to_string().yellow()
+                scaler.name().yellow()
             );
 
             save_dataset(&split_dataset, &format!("scaled-{}", filename))?;
             save_scaler(
-                &scaler,
+                scaler,
                 &format!("scaler-{}", filename.trim_end_matches(".h5")),
             )?;
 
@@ -409,12 +403,12 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn std::error::Error>>
 
             for epoch in progression.iter() {
                 let train_activations =
-                    model.train(&train_inputs, &train_expectations, learning_rate, max_norm);
+                    model.train(train_inputs, train_expectations.view(), learning_rate, max_norm);
 
                 if let Some(ref mut history) = history {
                     let epoch_number = epoch + 1;
                     if epoch_number % history.interval == 0 || epoch_number == epochs {
-                        let test_activations = model.predict(&test_inputs);
+                        let test_activations = model.predict(test_inputs);
 
                         history.checkpoint(
                             &model,
@@ -430,13 +424,13 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn std::error::Error>>
             display_success!(
                 "{} -- Loss: {} -- Train Accuracy: {} -- Test Accuracy: {}",
                 "Training completed".bright_green(),
-                log_loss(&model.predict(&train_inputs), &train_expectations)
+                log_loss(&model.predict(train_inputs), &train_expectations)
                     .to_string()
                     .yellow(),
-                accuracy(&model.predict(&train_inputs), &train_expectations)
+                accuracy(&model.predict(train_inputs), &train_expectations)
                     .to_string()
                     .yellow(),
-                accuracy(&model.predict(&test_inputs), &test_expectations)
+                accuracy(&model.predict(test_inputs), &test_expectations)
                     .to_string()
                     .yellow()
             );
@@ -458,7 +452,7 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn std::error::Error>>
         } => {
             let model = load_model(&model)?;
 
-            let scaler: Option<Scaler> = scaler.iter().find_map(|s| load_scaler(s).ok());
+            let scaler: Option<ScalerMethod> = scaler.iter().find_map(|s| load_scaler(s).ok());
 
             let mut input = if let Some(input_file) = input_file {
                 let input = load_inputs(&input_file)?;
@@ -497,11 +491,12 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn std::error::Error>>
                 Array1::from_vec(inputs)
             };
 
+
             if let Some(ref scaler) = scaler {
-                input = scaler.apply(&input);
+                scaler.apply_single_inplace(input.view_mut());
             }
 
-            let predictions = model.predict_single(&input);
+            let predictions = model.predict_single(input.view());
 
             let mut result: Vec<(usize, f32)> = if predictions.len() == 1 {
                 vec![(0, 1.0 - predictions[0]), (1, predictions[0])]

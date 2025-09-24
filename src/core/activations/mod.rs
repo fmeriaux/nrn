@@ -1,3 +1,10 @@
+//! Activation functions module.
+//!
+//! This module defines the `Activation` trait and provides a registry for activation functions used in neural networks.
+//! It enables extensibility by allowing new activation functions to be added without modifying the core logic.
+//! Each activation implements a common interface for forward and backward passes, and can be registered for dynamic lookup.
+//! Typical activations include ReLU, Sigmoid, and Softmax, but the design supports custom user-defined activations as well.
+
 mod relu;
 mod sigmoid;
 mod softmax;
@@ -8,10 +15,9 @@ pub use softmax::SOFTMAX;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::core::initialization::Initializer;
-use ndarray::Array2;
+use crate::core::initializations::Initialization;
+use ndarray::{Array2, ArrayView2};
 
-/// Represents an activation function applicable to neural network layers.
 pub trait Activation: Send + Sync {
     /// Returns the canonical name of the activation function.
     fn name(&self) -> &'static str;
@@ -19,15 +25,13 @@ pub trait Activation: Send + Sync {
     /// Applies the activation function element-wise to the input matrix.
     ///
     /// # Arguments
-    ///
     /// * `input` - A 2D array of pre-activation values (logits) from the linear layer.
     ///
     /// # Returns
-    ///
     /// A 2D array of the same dimensions containing activated outputs.
     ///
     /// This non-linear transformation enables the network to model complex patterns.
-    fn apply(&self, input: &Array2<f32>) -> Array2<f32>;
+    fn apply(&self, input: ArrayView2<f32>) -> Array2<f32>;
 
     /// Computes the derivative of the activation function for backpropagation.
     ///
@@ -51,13 +55,13 @@ pub trait Activation: Send + Sync {
     /// gradient propagated from the next layer.
     /// In the case of softmax (or other complex activations), the derivative may be computed differently
     /// using the targets, reflecting the special form of the gradient when combined with loss functions.
-    fn derivative(&self, activations: &Array2<f32>, targets: &Array2<f32>) -> Array2<f32>;
+    fn derivative(&self, activations: ArrayView2<f32>, targets: ArrayView2<f32>) -> Array2<f32>;
 
-    /// Provides an initializer instance linked to this activation.
+    /// Provides an initialization method linked to this activation.
     ///
     /// This can be used to initialize the parameters of layers associated with this activation
     /// (e.g., for certain parametrized activation functions).
-    fn get_initializer(&self) -> Arc<dyn Initializer>;
+    fn initialization(&self) -> Arc<dyn Initialization>;
 }
 
 /// A registry to store and manage activation functions.

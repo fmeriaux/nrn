@@ -1,6 +1,5 @@
 use crate::core::activations::Activation;
-use crate::synth::Dataset;
-use ndarray::{Array1, Array2, Axis};
+use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
 use ndarray_rand::rand_distr::num_traits::real::Real;
 use std::iter::once;
 use std::sync::Arc;
@@ -48,11 +47,11 @@ pub struct NeuronLayerSpec {
 /// Returns the last activation from a vector of activations.
 /// # Panics
 /// - When the `activations` vector is empty.
-pub(crate) fn last_activation(activations: &Vec<Array2<f32>>) -> Array2<f32> {
+pub(crate) fn last_activation(activations: &[Array2<f32>]) -> Array2<f32> {
     activations
         .last()
-        .cloned()
         .expect("Ensure activations is not empty.")
+        .to_owned()
 }
 
 /// Computes the log loss between predictions and expectations.
@@ -90,28 +89,6 @@ pub(crate) fn accuracy(predictions: &Array2<f32>, expectations: &Array2<f32>) ->
     correct / total_samples * 100.0
 }
 
-impl Dataset {
-    pub fn to_model_shape(&self) -> (Array2<f32>, Array2<f32>) {
-        let inputs: Array2<f32> = self.features.t().to_owned();
-
-        let max_label = self.max_label();
-
-        let expectations: Array2<f32> = if max_label > 1 {
-            // If labels are not binary, we need to one-hot encode them
-            let mut one_hot = Array2::zeros((max_label + 1, self.n_samples()));
-            for (i, &label) in self.labels.iter().enumerate() {
-                one_hot[[label as usize, i]] = 1.0;
-            }
-            one_hot
-        } else {
-            // If labels are binary, we can use them directly
-            self.labels.to_owned().insert_axis(Axis(0))
-        };
-
-        (inputs, expectations)
-    }
-}
-
 impl Gradients {
     /// Clips the gradients to a maximum norm, using the L2 norm.
     /// # Arguments
@@ -141,8 +118,11 @@ impl NeuronLayer {
             "Neurons and inputs must be greater than zero."
         );
 
-        let initialization = spec.activation.get_initializer();
-        let (weights, bias) = initialization.apply((spec.neurons, inputs));
+        let (weights, bias) = spec
+            .activation
+            .initialization()
+            .apply((spec.neurons, inputs));
+
         NeuronLayer {
             weights,
             bias,
@@ -175,7 +155,7 @@ impl NeuronLayer {
         let broadcasted_bias: Array2<f32> = self.bias.view().insert_axis(Axis(1)).to_owned();
 
         self.activation
-            .apply(&(self.weights.dot(inputs) + &broadcasted_bias))
+            .apply((self.weights.dot(inputs) + &broadcasted_bias).view())
     }
 
     /// Returns the number of neurons in this layer.
@@ -250,7 +230,7 @@ impl NeuronNetwork {
     /// - When the number of rows in `inputs` does not match the number of columns in the weights of the first layer.
     /// # Arguments
     /// - `inputs`: A 2D array representing the inputs to the network.
-    fn forward(&self, inputs: &Array2<f32>) -> Vec<Array2<f32>> {
+    fn forward(&self, inputs: ArrayView2<f32>) -> Vec<Array2<f32>> {
         assert_eq!(
             inputs.nrows(),
             self.layers[0].weights.ncols(),
@@ -268,7 +248,7 @@ impl NeuronNetwork {
     /// Predicts the output of the network given the inputs, returning the final activations.
     /// # Arguments
     /// - `inputs`: A 2D array representing the inputs to the network.
-    pub fn predict(&self, inputs: &Array2<f32>) -> Array2<f32> {
+    pub fn predict(&self, inputs: ArrayView2<f32>) -> Array2<f32> {
         let activations = self.forward(inputs);
         last_activation(&activations)
     }
@@ -276,9 +256,9 @@ impl NeuronNetwork {
     /// Predicts the output of the network given a single input vector, returning the final activation.
     /// # Arguments
     /// - `input`: A 1D array representing a single input vector to the network.
-    pub fn predict_single(&self, input: &Array1<f32>) -> Array1<f32> {
-        let inputs = input.clone().insert_axis(Axis(1));
-        self.predict(&inputs).column(0).to_owned()
+    pub fn predict_single(&self, input: ArrayView1<f32>) -> Array1<f32> {
+        let inputs = input.insert_axis(Axis(1));
+        self.predict(inputs).column(0).to_owned()
     }
 
     /// Trains the network using the provided inputs and expectations, updating the weights and biases.
@@ -292,8 +272,8 @@ impl NeuronNetwork {
     /// - `max_norm`: The maximum norm to clip the gradients to, preventing exploding gradients.
     pub fn train(
         &mut self,
-        inputs: &Array2<f32>,
-        expectations: &Array2<f32>,
+        inputs: ArrayView2<f32>,
+        expectations: ArrayView2<f32>,
         learning_rate: f32,
         max_norm: f32,
     ) -> Array2<f32> {
@@ -323,8 +303,8 @@ impl NeuronNetwork {
     /// - `max_norm`: The maximum norm to clip the gradients to, preventing exploding gradients.
     fn update(
         &mut self,
-        activations: &Vec<Array2<f32>>,
-        expectations: &Array2<f32>,
+        activations: &[Array2<f32>],
+        expectations: ArrayView2<f32>,
         learning_rate: f32,
         max_norm: f32,
     ) {
@@ -342,17 +322,17 @@ impl NeuronNetwork {
     /// - `expectations`: A 2D array representing the expected outputs for the inputs.
     fn backward(
         &self,
-        activations: &Vec<Array2<f32>>,
-        expectations: &Array2<f32>,
+        activations: &[Array2<f32>],
+        expectations: ArrayView2<f32>,
     ) -> Vec<Gradients> {
         let m = expectations.ncols() as f32;
 
-        let mut dz = activations.last().unwrap() - expectations;
+        let mut dz = last_activation(activations) - expectations;
 
         let mut gradients = Vec::with_capacity(activations.len() - 1);
 
         for i in (1..self.layers.len() + 1).rev() {
-            let previous_activations = &activations[i - 1];
+            let previous_activations = activations[i - 1].view();
             let dw = dz.dot(&previous_activations.t()) / m;
             let db = dz.sum_axis(Axis(1)) / m;
 

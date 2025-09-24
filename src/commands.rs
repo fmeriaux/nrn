@@ -1,7 +1,23 @@
-use crate::core::scaling::ScalingMethod;
+use crate::core::scalers::{MinMaxScaler, ScalerMethod, ZScoreScaler};
 use crate::synth::DistributionType;
 use clap::builder::PossibleValue;
 use clap::{Subcommand, ValueEnum};
+use ndarray::ArrayView2;
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum ScalingOption {
+    MinMax,
+    ZScore,
+}
+
+impl ScalingOption {
+    pub fn fit(&self, data: ArrayView2<f32>) -> ScalerMethod {
+        match self {
+            ScalingOption::MinMax => ScalerMethod::MinMax(MinMaxScaler::default().fit(data)),
+            ScalingOption::ZScore => ScalerMethod::ZScore(ZScoreScaler::default().fit(data)),
+        }
+    }
+}
 
 impl ValueEnum for DistributionType {
     fn value_variants<'a>() -> &'a [Self] {
@@ -12,19 +28,6 @@ impl ValueEnum for DistributionType {
         match self {
             DistributionType::Uniform => Some(PossibleValue::new("uniform")),
             DistributionType::Ring => Some(PossibleValue::new("ring")),
-        }
-    }
-}
-
-impl ValueEnum for ScalingMethod {
-    fn value_variants<'a>() -> &'a [Self] {
-        &[ScalingMethod::MinMax, ScalingMethod::ZScore]
-    }
-
-    fn to_possible_value(&self) -> Option<PossibleValue> {
-        match self {
-            ScalingMethod::MinMax => Some(PossibleValue::new("min-max")),
-            ScalingMethod::ZScore => Some(PossibleValue::new("z-score")),
         }
     }
 }
@@ -80,7 +83,7 @@ pub enum Command {
         dataset: String,
 
         /// Specify the scaling method to apply to the dataset
-        scaling: ScalingMethod,
+        scaling: ScalingOption,
 
         /// Indicates whether to visualize the scaled dataset
         #[arg(long, default_value_t = false)]

@@ -1,3 +1,17 @@
+//! Initialization strategies module.
+//!
+//! This module defines the `Initialization` trait that encapsulates how weights and biases
+//! should be initialized in neural network layers.
+//! Proper initialization is critical for stable training and fast convergence,
+//! preventing issues like vanishing or exploding gradients.
+//!
+//! Several common initialization schemes are supported, such as Xavier (Glorot) uniform, and He uniform,
+//! both tuned to the layer size and compatible with different activation functions.
+//!
+//! Implementations generate random weights shaped according to the layer dimensions,
+//! and zero-initialized biases by default.
+//! This design allows swapping initialization methods easily depending on the network architecture and task.
+
 mod he;
 mod xavier;
 
@@ -8,11 +22,7 @@ use ndarray::{Array1, Array2};
 use ndarray_rand::rand_distr::Uniform;
 use ndarray_rand::RandomExt;
 
-/// Defines a strategy for initializing weights and biases in a neural network.
-///
-/// Proper initialization is crucial to ensure stable and efficient training,
-/// avoiding problems like vanishing or exploding gradients.
-pub trait Initializer: Send + Sync {
+pub trait Initialization: Send + Sync {
     /// Generates initial weights and biases according to the initialization method.
     ///
     /// # Arguments
