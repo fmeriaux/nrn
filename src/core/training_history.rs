@@ -1,4 +1,5 @@
-use crate::core::neuron_network::{NeuronNetwork, accuracy, log_loss};
+use crate::core::model::NeuronNetwork;
+use crate::core::neuron_network::{accuracy, log_loss};
 use ndarray::Array2;
 
 /// Training history to store the state of the model, loss, and accuracy at each interval for visualization and analysis.

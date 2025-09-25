@@ -1,48 +1,8 @@
-use crate::core::activations::Activation;
+use crate::core::model::{NeuronLayer, NeuronLayerSpec, NeuronNetwork};
+use crate::core::training::Gradients;
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
 use ndarray_rand::rand_distr::num_traits::real::Real;
 use std::iter::once;
-use std::sync::Arc;
-
-/// Represents a single layer in a neural network, containing weights and biases.
-///
-/// # Properties
-/// - `weights`: A 2D array representing the weights of the neurons in this layer.
-/// - `bias`: A 1D array representing the biases for each neuron in this layer.
-/// - `activation`: The activation method used for the neurons in this layer.
-#[derive(Clone)]
-pub struct NeuronLayer {
-    pub weights: Array2<f32>,
-    pub bias: Array1<f32>,
-    pub activation: Arc<dyn Activation>,
-}
-
-/// Represents a neural network composed of multiple layers of neurons.
-///
-/// # Properties
-/// - `layers`: A vector of `NeuronLayer` instances, each representing a layer in the network.
-#[derive(Clone)]
-pub struct NeuronNetwork {
-    pub layers: Vec<NeuronLayer>,
-}
-
-/// Represents the gradients computed during backpropagation for a single layer.
-/// # Properties
-/// - `dw`: A 2D array representing the gradients of the weights.
-/// - `db`: A 1D array representing the gradients of the biases.
-pub struct Gradients {
-    pub dw: Array2<f32>,
-    pub db: Array1<f32>,
-}
-
-/// Represents the specifications for a neuron layer in a neural network.
-/// # Properties
-/// - `neurons`: The number of neurons in this layer.
-/// - `activation`: The activation method used for the neurons in this layer.
-pub struct NeuronLayerSpec {
-    pub neurons: usize,
-    pub activation: Arc<dyn Activation>,
-}
 
 /// Returns the last activation from a vector of activations.
 /// # Panics
@@ -87,22 +47,6 @@ pub(crate) fn accuracy(predictions: &Array2<f32>, expectations: &Array2<f32>) ->
         .count() as f32;
 
     correct / total_samples * 100.0
-}
-
-impl Gradients {
-    /// Clips the gradients to a maximum norm, using the L2 norm.
-    /// # Arguments
-    /// - `max_norm`: The maximum norm to clip the gradients to.
-    fn clip(&mut self, max_norm: f32) {
-        let dw_norm = self.dw.iter().map(|x| x.powi(2)).sum::<f32>();
-        let db_norm = self.db.iter().map(|x| x.powi(2)).sum::<f32>();
-        let norm = (dw_norm + db_norm).sqrt();
-        if norm > max_norm {
-            let scale = max_norm / norm;
-            self.dw.mapv_inplace(|x| x * scale);
-            self.db.mapv_inplace(|x| x * scale);
-        }
-    }
 }
 
 impl NeuronLayer {

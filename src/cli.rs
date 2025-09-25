@@ -1,36 +1,28 @@
 use crate::commands::Command;
 use crate::commands::Command::*;
 use crate::commands::EncodeCommand::{Img, ImgDir};
-use crate::core::activations::{Activation, ActivationRegistry, RELU, SIGMOID, SOFTMAX};
+use crate::core::activations::{ RELU, SIGMOID, SOFTMAX};
 use crate::core::data::{Dataset, SplitDataset};
 use crate::core::encoder::{encode_image, extract_categories};
-use crate::core::neuron_network::{accuracy, log_loss, NeuronLayerSpec, NeuronNetwork};
+use crate::core::model::{NeuronLayerSpec, NeuronNetwork};
+use crate::core::neuron_network::{accuracy, log_loss};
 use crate::core::scalers::{Scaler, ScalerMethod};
 use crate::core::training_history::TrainingHistory;
 use crate::plot::DecisionBoundaryView;
 use crate::progression::Progression;
-use crate::storage::hdf5::{load_inputs, save_inputs};
+use crate::storage::data::{load_inputs, save_inputs};
 use crate::storage::scalers::ScalerRecord;
 use crate::{display_info, display_initialization, display_success, display_warning, plot};
 use colored::Colorize;
 use ndarray::Array1;
 use ndarray_rand::rand::prelude::StdRng;
 use ndarray_rand::rand::SeedableRng;
-use once_cell::sync::Lazy;
 use std::cmp::Ordering::Equal;
 use std::error::Error;
 use std::fs::read_dir;
 use std::io::stdin;
 use std::iter::once;
 use std::path::Path;
-use std::sync::Arc;
-
-static ACTIVATION_REGISTRY: Lazy<ActivationRegistry> = Lazy::new(|| {
-    let activations: Vec<Arc<dyn Activation>> =
-        vec![RELU.clone(), SIGMOID.clone(), SOFTMAX.clone()];
-
-    ActivationRegistry::new(activations)
-});
 
 fn load_dataset(filename: &str) -> Result<SplitDataset, Box<dyn Error>> {
     let dataset = SplitDataset::load(filename)?;
@@ -126,7 +118,7 @@ fn initialize_model(input_size: usize, layer_specs: &Vec<NeuronLayerSpec>) -> Ne
 }
 
 fn load_model(filename: &str) -> Result<NeuronNetwork, Box<dyn Error>> {
-    let model = NeuronNetwork::load(filename, &ACTIVATION_REGISTRY)?;
+    let model = NeuronNetwork::load(filename)?;
 
     display_initialization!("Neural network loaded ({})", model.summary().yellow());
 
@@ -147,7 +139,7 @@ fn save_model(filename: &str, model: &NeuronNetwork) -> Result<(), Box<dyn Error
 }
 
 fn load_training_history(filename: &str) -> Result<TrainingHistory, Box<dyn Error>> {
-    let history = TrainingHistory::load(filename, &ACTIVATION_REGISTRY)?;
+    let history = TrainingHistory::load(filename)?;
 
     assert!(
         history.model.len() > 2,
@@ -402,8 +394,12 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
             let progression = Progression::new(epochs, "Training");
 
             for epoch in progression.iter() {
-                let train_activations =
-                    model.train(train_inputs, train_expectations.view(), learning_rate, max_norm);
+                let train_activations = model.train(
+                    train_inputs,
+                    train_expectations.view(),
+                    learning_rate,
+                    max_norm,
+                );
 
                 if let Some(ref mut history) = history {
                     let epoch_number = epoch + 1;
@@ -490,7 +486,6 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
 
                 Array1::from_vec(inputs)
             };
-
 
             if let Some(ref scaler) = scaler {
                 scaler.apply_single_inplace(input.view_mut());

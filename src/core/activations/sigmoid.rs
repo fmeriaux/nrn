@@ -4,7 +4,7 @@
 //! The sigmoid function maps input values to the (0, 1) range, making it suitable for binary classification tasks and as an output activation in neural networks.
 //! It is defined as `f(x) = 1 / (1 + exp(-x))`. The sigmoid function is smooth and differentiable, but can suffer from vanishing gradients for large input values.
 
-use crate::core::activations::Activation;
+use crate::core::activations::{Activation, ActivationProvider};
 use crate::core::initializations::{Initialization, XAVIER_UNIFORM};
 use ndarray::{Array2, ArrayView2};
 use once_cell::sync::Lazy;
@@ -40,3 +40,4 @@ impl Activation for Sigmoid {
 
 /// Static instance of the Sigmoid activation wrapped in an `Arc` for shared use.
 pub static SIGMOID: Lazy<Arc<Sigmoid>> = Lazy::new(|| Arc::new(Sigmoid));
+inventory::submit!(ActivationProvider(|| SIGMOID.clone()));

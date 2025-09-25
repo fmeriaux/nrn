@@ -4,7 +4,9 @@
 //! It enables extensibility by allowing new activation functions to be added without modifying the core logic.
 //! Each activation implements a common interface for forward and backward passes, and can be registered for dynamic lookup.
 //! Typical activations include ReLU, Sigmoid, and Softmax, but the design supports custom user-defined activations as well.
-
+//!
+//! All built-in activations are registered using the `inventory` crate, allowing for easy discovery and use.
+//!
 mod relu;
 mod sigmoid;
 mod softmax;
@@ -12,7 +14,6 @@ mod softmax;
 pub use relu::RELU;
 pub use sigmoid::SIGMOID;
 pub use softmax::SOFTMAX;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::core::initializations::Initialization;
@@ -64,48 +65,34 @@ pub trait Activation: Send + Sync {
     fn initialization(&self) -> Arc<dyn Initialization>;
 }
 
-/// A registry to store and manage activation functions.
-///
-/// It maps activation function names to their respective implementations,
-/// allowing easy lookup and reuse throughout the neural network code.
-pub struct ActivationRegistry {
-    map: HashMap<String, Arc<dyn Activation>>,
-}
+/// Registration struct for activation implementations.
+/// This allows dynamic discovery and use of different activation functions
+pub struct ActivationProvider(pub fn() -> Arc<dyn Activation>);
 
-impl ActivationRegistry {
-    /// Creates a new `ActivationRegistry` from an iterable of activations.
+inventory::collect!(ActivationProvider);
+
+impl ActivationProvider {
+    /// Retrieves an activation implementation by its name.
     ///
     /// # Arguments
-    ///
-    /// * `activations` - An iterable collection of activation functions wrapped in `Arc`.
-    ///
-    /// # Returns
-    ///
-    /// A new registry mapping activation names to activation instances.
-    ///
-    pub fn new<I>(activations: I) -> Self
-    where
-        I: IntoIterator<Item = Arc<dyn Activation>>,
-    {
-        let map: HashMap<String, Arc<dyn Activation>> = activations
-            .into_iter()
-            .map(|a| (a.name().to_string(), a))
-            .collect();
-
-        ActivationRegistry { map }
-    }
-
-    /// Retrieves an activation function from the registry by name.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The name of the activation function to retrieve.
+    /// * `name` - The canonical name of the activation function to retrieve.
     ///
     /// # Returns
+    /// An `Option` containing the `Arc` to the activation if found, or `None` if not found.
     ///
-    /// An `Option` containing a cloned `Arc` to the activation if found, or `None` otherwise.
-    ///
-    pub fn get(&self, name: &str) -> Option<Arc<dyn Activation>> {
-        self.map.get(name).cloned()
+    /// # Example
+    /// ```
+    /// if let Some(activation) = ActivationProvider::get_by_name("relu") {
+    ///     // Use the activation
+    /// }
+    /// ```
+    pub fn get_by_name(name: &str) -> Option<Arc<dyn Activation>> {
+        for provider in inventory::iter::<ActivationProvider> {
+            let activation = provider.0();
+            if activation.name() == name {
+                return Some(activation.clone());
+            }
+        }
+        None
     }
 }

@@ -4,7 +4,7 @@
 //! ReLU is widely used in neural networks for its simplicity and effectiveness in introducing non-linearity.
 //! It outputs the input directly if it is positive; otherwise, it outputs zero. This helps mitigate the vanishing gradient problem and accelerates convergence during training.
 
-use crate::core::activations::Activation;
+use crate::core::activations::{Activation, ActivationProvider};
 use crate::core::initializations::{HE_UNIFORM, Initialization};
 use ndarray::{Array2, ArrayView2};
 use once_cell::sync::Lazy;
@@ -41,3 +41,4 @@ impl Activation for ReLU {
 
 /// Static instance of the ReLU activation wrapped in an `Arc` for shared use.
 pub static RELU: Lazy<Arc<ReLU>> = Lazy::new(|| Arc::new(ReLU));
+inventory::submit!(ActivationProvider(|| RELU.clone()));

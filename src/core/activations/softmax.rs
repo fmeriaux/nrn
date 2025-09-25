@@ -6,7 +6,7 @@
 //! The implementation includes a numerical stability trick by subtracting the maximum value before exponentiation, which prevents overflow and improves reliability.
 //! The derivative is implemented for use with cross-entropy loss, returning the gradient needed for backpropagation.
 
-use crate::core::activations::Activation;
+use crate::core::activations::{Activation, ActivationProvider, SIGMOID};
 use crate::core::initializations::{Initialization, XAVIER_UNIFORM};
 use ndarray::{Array2, ArrayView2};
 use once_cell::sync::Lazy;
@@ -55,3 +55,4 @@ impl Activation for Softmax {
 
 /// Static instance of the Softmax activation wrapped in an `Arc` for shared use.
 pub static SOFTMAX: Lazy<Arc<Softmax>> = Lazy::new(|| Arc::new(Softmax));
+inventory::submit!(ActivationProvider(|| SIGMOID.clone()));
