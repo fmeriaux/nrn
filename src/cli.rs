@@ -1,27 +1,27 @@
-use crate::commands::Command;
 use crate::commands::Command::*;
 use crate::commands::EncodeCommand::{Img, ImgDir};
+use crate::commands::{Command, DistributionOption};
 use crate::encoder::{encode_image, extract_categories};
 use crate::plot::DecisionBoundaryView;
 use crate::progression::Progression;
-use crate::synth::DatasetExt;
 use crate::{display_info, display_initialization, display_success, display_warning, plot};
 use colored::Colorize;
 use ndarray::{Array1, ArrayView2};
-use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::prelude::StdRng;
+use ndarray_rand::rand::SeedableRng;
 use nrn::accuracies::{Accuracy, BINARY_ACCURACY, MULTI_CLASS_ACCURACY};
 use nrn::activations::{RELU, SIGMOID, SOFTMAX};
 use nrn::data::{Dataset, SplitDataset};
-use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
+use nrn::loss_functions::{LossFunction, CROSS_ENTROPY_LOSS};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::{Optimizer, StochasticGradientDescent};
 use nrn::scalers::{Scaler, ScalerMethod};
 use nrn::training::History;
-use nrn_storage::data::{SplitDatasetExt, load_inputs, save_inputs};
+use nrn_storage::data::{load_inputs, save_inputs, SplitDatasetExt};
 use nrn_storage::model::NeuralNetworkExt;
 use nrn_storage::scalers::ScalerRecord;
 use nrn_storage::training::HistoryExt;
+use nrn_synth::{DatasetGenerator, RingDataset, UniformDataset};
 use std::cmp::Ordering::Equal;
 use std::error::Error;
 use std::fs::read_dir;
@@ -197,15 +197,24 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
             plot,
         } => {
             // 🗂️ GENERATE THE DATASET
-            let dataset = Dataset::new(
-                &distribution,
-                seed,
-                samples,
-                features,
-                clusters,
-                feature_min,
-                feature_max,
-            );
+            let generator: Arc<dyn DatasetGenerator> = match distribution {
+                DistributionOption::Uniform => Arc::new(UniformDataset {
+                    n_samples: samples,
+                    n_features: features,
+                    n_clusters: clusters,
+                    feature_min,
+                    feature_max,
+                }),
+                DistributionOption::Ring => Arc::new(RingDataset {
+                    n_samples: samples,
+                    n_features: features,
+                    n_clusters: clusters,
+                    feature_min,
+                    feature_max,
+                }),
+            };
+
+            let dataset = generator.generate(seed);
 
             let split_dataset = dataset.split(train_ratio);
 

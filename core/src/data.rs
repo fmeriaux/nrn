@@ -1,5 +1,8 @@
 use crate::scalers::Scaler;
-use ndarray::{s, Array1, Array2, ArrayView2, Axis};
+use ndarray::{Array1, Array2, ArrayView2, Axis, s};
+use ndarray_rand::rand::Rng;
+use ndarray_rand::rand::prelude::SliceRandom;
+use std::error::Error;
 
 /// A dataset containing features and labels for clustering tasks.
 pub struct Dataset {
@@ -110,6 +113,74 @@ impl Dataset {
         let train = slice(0, n_train);
         let test = slice(n_train, n_samples);
         SplitDataset { train, test }
+    }
+
+    /// Shuffles the dataset features and labels in unison using a random number generator.
+    /// See [`shuffle_inplace`](Self::shuffle_inplace) for details.
+    pub fn shuffled<R: Rng>(rng: &mut R, features: &Array2<f32>, labels: &Array1<f32>) -> Self {
+        assert_eq!(
+            features.nrows(),
+            labels.len(),
+            "Features and labels must have the same number of samples"
+        );
+
+        let mut dataset = Dataset {
+            features: features.to_owned(),
+            labels: labels.to_owned(),
+        };
+        dataset.shuffle_inplace(rng);
+        dataset
+    }
+
+    /// Shuffles the dataset features and labels in unison using a random number generator.
+    /// Shuffles can be useful to ensure that the data is randomly ordered before splitting into training
+    /// # Arguments
+    /// - `rng`: A mutable reference to a random number generator.
+    /// # Details
+    /// - The method generates a vector of indices corresponding to the number of samples in the dataset
+    /// - It shuffles these indices using the provided random number generator.
+    /// - It then reorders both the `features` and `labels` arrays according to
+    /// the shuffled indices, ensuring that the correspondence between features and labels is maintained.
+    pub fn shuffle_inplace<R: Rng>(&mut self, rng: &mut R) {
+        let mut indices: Vec<usize> = (0..self.features.nrows()).collect();
+        indices.shuffle(rng);
+
+        let shuffled_features = self.features.select(Axis(0), &indices);
+        let shuffled_labels = Array1::from(
+            indices
+                .iter()
+                .map(|&i| self.labels[i])
+                .collect::<Vec<f32>>(),
+        );
+
+        self.features = shuffled_features.to_owned();
+        self.labels = shuffled_labels;
+    }
+
+    /// Creates a new dataset from a vector of images and their corresponding labels.
+    /// # Arguments
+    /// - `rng`: A mutable reference to a random number generator for shuffling.
+    /// - `images`: A vector of images represented as 1D arrays of pixel values.
+    /// - `labels`: A vector of labels corresponding to each image.
+    pub fn from_image_vec<R: Rng>(
+        rng: &mut R,
+        images: Vec<Array1<u8>>,
+        labels: Vec<usize>,
+    ) -> Result<Self, Box<dyn Error>> {
+        assert!(
+            !images.is_empty(),
+            "Images vector must not be empty to create a dataset"
+        );
+
+        let features: Array2<f32> = Array2::from_shape_vec(
+            (images.len(), images[0].len()),
+            images.into_iter().flatten().map(|x| x as f32).collect(),
+        )?;
+
+        let labels: Array1<f32> =
+            Array1::from_shape_vec(labels.len(), labels.into_iter().map(|x| x as f32).collect())?;
+
+        Ok(Dataset::shuffled(rng, &features, &labels))
     }
 }
 

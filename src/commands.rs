@@ -1,8 +1,7 @@
-use nrn::scalers::{MinMaxScaler, ScalerMethod, ZScoreScaler};
-use crate::synth::DistributionType;
-use clap::builder::PossibleValue;
 use clap::{Subcommand, ValueEnum};
 use ndarray::ArrayView2;
+use nrn::scalers::{MinMaxScaler, ScalerMethod, ZScoreScaler};
+use std::fmt;
 
 #[derive(ValueEnum, Clone, Debug)]
 pub enum ScalingOption {
@@ -19,15 +18,17 @@ impl ScalingOption {
     }
 }
 
-impl ValueEnum for DistributionType {
-    fn value_variants<'a>() -> &'a [Self] {
-        &[DistributionType::Uniform, DistributionType::Ring]
-    }
+#[derive(ValueEnum, Clone, Debug)]
+pub enum DistributionOption {
+    Uniform,
+    Ring,
+}
 
-    fn to_possible_value(&self) -> Option<PossibleValue> {
+impl fmt::Display for DistributionOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DistributionType::Uniform => Some(PossibleValue::new("uniform")),
-            DistributionType::Ring => Some(PossibleValue::new("ring")),
+            DistributionOption::Uniform => write!(f, "uniform"),
+            DistributionOption::Ring => write!(f, "ring"),
         }
     }
 }
@@ -42,7 +43,7 @@ pub enum Command {
 
         /// Type of distribution to use for generating data
         #[arg(short, long)]
-        distribution: DistributionType,
+        distribution: DistributionOption,
 
         /// Number of samples to generate
         #[arg(short = 'n', long, default_value_t = 100)]

@@ -5,8 +5,7 @@ mod commands;
 mod progression;
 mod plot;
 mod log;
-mod synth;
-pub mod encoder;
+mod encoder;
 
 use crate::commands::Command;
 

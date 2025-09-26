@@ -11,11 +11,13 @@ path = "src/main.rs"
 members = [
     "core",
     "storage",
+    "synth"
 ]
 
 [dependencies]
 nrn = { path = "./core" }
 nrn-storage = { path = "./storage" }
+nrn-synth = { path = "./synth" }
 clap = { version = "4.5.40", features = ["derive"] }
 colored = "3.0.0"
 gif = "0.13.1"

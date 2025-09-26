@@ -1113,6 +1113,7 @@ dependencies = [
  "ndarray-rand",
  "nrn",
  "nrn-storage",
+ "nrn-synth",
  "plotters",
  "png 0.18.0",
 ]
@@ -1126,6 +1127,15 @@ dependencies = [
  "nrn",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "nrn-synth"
+version = "0.1.0"
+dependencies = [
+ "ndarray",
+ "ndarray-rand",
+ "nrn",
 ]
 
 [[package]]
