@@ -4,11 +4,12 @@ use crate::commands::EncodeCommand::{Img, ImgDir};
 use crate::core::accuracies::{Accuracy, BINARY_ACCURACY, MULTI_CLASS_ACCURACY};
 use crate::core::activations::{RELU, SIGMOID, SOFTMAX};
 use crate::core::data::{Dataset, SplitDataset};
-use crate::core::encoder::{encode_image, extract_categories};
 use crate::core::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use crate::core::model::{NeuralNetwork, NeuronLayerSpec};
+use crate::core::optimizers::{Optimizer, StochasticGradientDescent};
 use crate::core::scalers::{Scaler, ScalerMethod};
-use crate::core::training::TrainingHistory;
+use crate::core::training::History;
+use crate::encoder::{encode_image, extract_categories};
 use crate::plot::DecisionBoundaryView;
 use crate::progression::Progression;
 use crate::storage::data::{load_inputs, save_inputs};
@@ -24,7 +25,7 @@ use std::fs::read_dir;
 use std::io::stdin;
 use std::iter::once;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 fn load_dataset(filename: &str) -> Result<SplitDataset, Box<dyn Error>> {
     let dataset = SplitDataset::load(filename)?;
@@ -148,8 +149,8 @@ fn save_model(filename: &str, model: &NeuralNetwork) -> Result<(), Box<dyn Error
     Ok(())
 }
 
-fn load_training_history(filename: &str) -> Result<TrainingHistory, Box<dyn Error>> {
-    let history = TrainingHistory::load(filename)?;
+fn load_training_history(filename: &str) -> Result<History, Box<dyn Error>> {
+    let history = History::load(filename)?;
 
     assert!(
         history.model.len() > 2,
@@ -165,7 +166,7 @@ fn load_training_history(filename: &str) -> Result<TrainingHistory, Box<dyn Erro
     Ok(history)
 }
 
-fn save_training_history(filename: &str, history: &TrainingHistory) -> Result<(), Box<dyn Error>> {
+fn save_training_history(filename: &str, history: &History) -> Result<(), Box<dyn Error>> {
     history.save(filename)?;
 
     display_success!(
@@ -361,6 +362,8 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
             max_norm,
         } => {
             let loss_function: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
+            let optimizer: Arc<Mutex<dyn Optimizer>> =
+                Arc::new(Mutex::new(StochasticGradientDescent::new(learning_rate)));
 
             let SplitDataset { train, test } = load_dataset(&dataset)?;
 
@@ -371,7 +374,6 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
             let (test_inputs, test_targets) = test.to_model_shape();
             let train_targets = train_targets.view();
             let test_targets = test_targets.view();
-
 
             let layer_specs: Vec<NeuronLayerSpec> = hidden_layers
                 .unwrap_or_default()
@@ -389,8 +391,7 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
                 .unwrap_or_else(|| initialize_model(train_inputs.nrows(), &layer_specs));
 
             // 👨‍🎓 TRAINING LOOP
-            let mut history: Option<TrainingHistory> =
-                TrainingHistory::by_interval(checkpoint_interval, epochs);
+            let mut history: Option<History> = History::by_interval(checkpoint_interval, epochs);
 
             display_info!(
                 "{} -- {} epochs, learning rate: {}",
@@ -400,18 +401,21 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
             );
 
             // Closure to record the training history at each checkpoint
-            let record_history = |model: &NeuralNetwork, history: &mut TrainingHistory, train_predictions: ArrayView2<f32>| {
-                let test_predictions = model.predict(test_inputs);
-                history.checkpoint(
-                    model,
-                    &loss_function,
-                    &accuracy,
-                    train_predictions,
-                    train_targets,
-                    test_predictions.view(),
-                    test_targets,
-                );
-            };
+            let record_history =
+                |model: &NeuralNetwork,
+                 history: &mut History,
+                 train_predictions: ArrayView2<f32>| {
+                    let test_predictions = model.predict(test_inputs);
+                    history.checkpoint(
+                        model,
+                        &loss_function,
+                        &accuracy,
+                        train_predictions,
+                        train_targets,
+                        test_predictions.view(),
+                        test_targets,
+                    );
+                };
 
             if let Some(ref mut history) = history {
                 display_info!(
@@ -431,7 +435,7 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
                     train_inputs,
                     train_targets,
                     &loss_function,
-                    learning_rate,
+                    &optimizer,
                     max_norm,
                 );
 
@@ -609,7 +613,10 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
                 for step in progression.iter() {
                     let step_number = step + 1;
 
-                    if step_number == 1 || step_number % interval == 0 || step_number == history.model.len() {
+                    if step_number == 1
+                        || step_number % interval == 0
+                        || step_number == history.model.len()
+                    {
                         decision_boundaries.add_frame(&history.model[step])?;
                     }
                 }

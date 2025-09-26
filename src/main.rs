@@ -8,6 +8,7 @@ mod plot;
 mod log;
 mod storage;
 mod synth;
+pub mod encoder;
 
 use crate::commands::Command;
 

@@ -1,8 +1,9 @@
 use crate::core::accuracies::Accuracy;
 use crate::core::loss_functions::LossFunction;
 use crate::core::model::{NeuralNetwork, NeuronLayer, last_activation};
+use crate::core::optimizers::Optimizer;
 use ndarray::{Array1, Array2, ArrayView2, Axis};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Represents the gradients computed during backpropagation for a single layer.
 pub struct Gradients {
@@ -28,79 +29,14 @@ impl Gradients {
     }
 }
 
-/// Training history to store the state of the model, loss, and accuracy at each interval for visualization and analysis.
-pub struct TrainingHistory {
-    /// The interval (in epochs) at which checkpoints are recorded.
-    pub interval: usize,
-    /// The recorded states of the model at each checkpoint.
-    pub model: Vec<NeuralNetwork>,
-    /// The recorded loss values at each checkpoint.
-    pub loss: Vec<f32>,
-    /// The recorded training accuracy values at each checkpoint.
-    pub train_accuracy: Vec<f32>,
-    /// The recorded test accuracy values at each checkpoint.
-    pub test_accuracy: Vec<f32>,
-}
-
-impl TrainingHistory {
-    /// Creates a new `TrainingHistory` instance with a specified interval and an epoch count.
-    /// When the `interval` is zero, it will return `None`.
-    /// # Arguments
-    /// - `interval`: The number of epochs between each checkpoint.
-    /// - `epochs`: The total number of epochs for the training process.
-    pub fn by_interval(interval: usize, epochs: usize) -> Option<Self> {
-        let capacity = epochs
-            .checked_div(interval)
-            .map(|step| if step > 0 { step } else { 1 });
-
-        capacity
-            // Add one to include the initial state before training starts
-            .map(|capacity| capacity + 1)
-            // Initialize vectors with the calculated capacity
-            .map(|capacity| TrainingHistory {
-                interval,
-                model: Vec::with_capacity(capacity),
-                loss: Vec::with_capacity(capacity),
-                train_accuracy: Vec::with_capacity(capacity),
-                test_accuracy: Vec::with_capacity(capacity),
-            })
-    }
-
-    /// Registers a new checkpoint in the training history with the current state of the model, loss, and accuracy.
-    /// # Arguments
-    /// - `model`: The current state of the `NeuronNetwork`.
-    /// - `train_predictions`: The final outputs (predictions) of the model for the training data.
-    /// - `train_targets`: The true labels for the training data.
-    /// - `test_predictions`: The final outputs (predictions) of the model for the test data.
-    /// - `test_targets`: The true labels for the test data.
-    pub fn checkpoint(
-        &mut self,
-        model: &NeuralNetwork,
-        loss_function: &Arc<dyn LossFunction>,
-        accuracy: &Arc<dyn Accuracy>,
-        train_predictions: ArrayView2<f32>,
-        train_targets: ArrayView2<f32>,
-        test_predictions: ArrayView2<f32>,
-        test_targets: ArrayView2<f32>,
-    ) {
-        self.model.push(model.clone());
-        self.loss
-            .push(loss_function.compute(train_predictions, train_targets));
-        self.train_accuracy
-            .push(accuracy.compute(train_predictions, train_targets));
-        self.test_accuracy
-            .push(accuracy.compute(test_predictions, test_targets));
-    }
-}
-
 impl NeuronLayer {
     /// Updates the weights and biases of this layer using the computed gradients and a learning rate.
     /// # Arguments
     /// - `gradients`: The gradients computed during backpropagation for this layer.
-    /// - `learning_rate`: The learning rate to apply during the update.
-    fn update(&mut self, gradients: Gradients, learning_rate: f32) {
-        self.weights -= &(gradients.dw * learning_rate);
-        self.bias -= &(gradients.db * learning_rate);
+    /// - `optimizer`: The optimizer to use for updating the weights and biases.
+    fn update(&mut self, gradients: Gradients, optimizer: &Arc<Mutex<dyn Optimizer>>) {
+        let mut optimizer = optimizer.lock().unwrap();
+        optimizer.update(self, &gradients);
     }
 }
 
@@ -119,14 +55,9 @@ impl NeuralNetwork {
         inputs: ArrayView2<f32>,
         targets: ArrayView2<f32>,
         loss_function: &Arc<dyn LossFunction>,
-        learning_rate: f32,
+        optimizer: &Arc<Mutex<dyn Optimizer>>,
         max_norm: f32,
     ) -> Array2<f32> {
-        assert!(
-            learning_rate > 0.0,
-            "Learning rate must be greater than zero."
-        );
-
         assert_eq!(
             inputs.ncols(),
             targets.ncols(),
@@ -139,7 +70,7 @@ impl NeuralNetwork {
             &activations,
             targets,
             loss_function,
-            learning_rate,
+            optimizer,
             max_norm,
         );
 
@@ -150,21 +81,21 @@ impl NeuralNetwork {
     /// # Arguments
     /// - `activations`: A vector of 2D arrays representing the activations of each layer.
     /// - `targets`: A 2D array representing the expected outputs for the inputs.
-    /// - `learning_rate`: The learning rate to apply during the update.
+    /// - `optimizer`: The optimizer to use for updating the weights and biases.
     /// - `max_norm`: The maximum norm to clip the gradients to, preventing exploding gradients.
     fn update(
         &mut self,
         activations: &[Array2<f32>],
         targets: ArrayView2<f32>,
         loss_function: &Arc<dyn LossFunction>,
-        learning_rate: f32,
+        optimizer: &Arc<Mutex<dyn Optimizer>>,
         max_norm: f32,
     ) {
         let gradients = self.backward(activations, targets, loss_function);
 
         for (layer, mut layer_gradients) in self.layers.iter_mut().zip(gradients) {
             layer_gradients.clip(max_norm);
-            layer.update(layer_gradients, learning_rate);
+            layer.update(layer_gradients, optimizer);
         }
     }
 
@@ -201,5 +132,70 @@ impl NeuralNetwork {
         }
 
         gradients
+    }
+}
+
+/// Training history to store the state of the model, loss, and accuracy at each interval for visualization and analysis.
+pub struct History {
+    /// The interval (in epochs) at which checkpoints are recorded.
+    pub interval: usize,
+    /// The recorded states of the model at each checkpoint.
+    pub model: Vec<NeuralNetwork>,
+    /// The recorded loss values at each checkpoint.
+    pub loss: Vec<f32>,
+    /// The recorded training accuracy values at each checkpoint.
+    pub train_accuracy: Vec<f32>,
+    /// The recorded test accuracy values at each checkpoint.
+    pub test_accuracy: Vec<f32>,
+}
+
+impl History {
+    /// Creates a new `TrainingHistory` instance with a specified interval and an epoch count.
+    /// When the `interval` is zero, it will return `None`.
+    /// # Arguments
+    /// - `interval`: The number of epochs between each checkpoint.
+    /// - `epochs`: The total number of epochs for the training process.
+    pub fn by_interval(interval: usize, epochs: usize) -> Option<Self> {
+        let capacity = epochs
+            .checked_div(interval)
+            .map(|step| if step > 0 { step } else { 1 });
+
+        capacity
+            // Add one to include the initial state before training starts
+            .map(|capacity| capacity + 1)
+            // Initialize vectors with the calculated capacity
+            .map(|capacity| History {
+                interval,
+                model: Vec::with_capacity(capacity),
+                loss: Vec::with_capacity(capacity),
+                train_accuracy: Vec::with_capacity(capacity),
+                test_accuracy: Vec::with_capacity(capacity),
+            })
+    }
+
+    /// Registers a new checkpoint in the training history with the current state of the model, loss, and accuracy.
+    /// # Arguments
+    /// - `model`: The current state of the `NeuronNetwork`.
+    /// - `train_predictions`: The final outputs (predictions) of the model for the training data.
+    /// - `train_targets`: The true labels for the training data.
+    /// - `test_predictions`: The final outputs (predictions) of the model for the test data.
+    /// - `test_targets`: The true labels for the test data.
+    pub fn checkpoint(
+        &mut self,
+        model: &NeuralNetwork,
+        loss_function: &Arc<dyn LossFunction>,
+        accuracy: &Arc<dyn Accuracy>,
+        train_predictions: ArrayView2<f32>,
+        train_targets: ArrayView2<f32>,
+        test_predictions: ArrayView2<f32>,
+        test_targets: ArrayView2<f32>,
+    ) {
+        self.model.push(model.clone());
+        self.loss
+            .push(loss_function.compute(train_predictions, train_targets));
+        self.train_accuracy
+            .push(accuracy.compute(train_predictions, train_targets));
+        self.test_accuracy
+            .push(accuracy.compute(test_predictions, test_targets));
     }
 }

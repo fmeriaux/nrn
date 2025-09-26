@@ -1,10 +1,10 @@
 use crate::core::model::NeuralNetwork;
-use crate::core::training::TrainingHistory;
+use crate::core::training::History;
 use crate::storage::h5;
 use std::io::Result;
 use std::path::Path;
 
-impl TrainingHistory {
+impl History {
     /// Saves the training history to an HDF5 file.
     /// # Arguments
     /// - `path`: The path to the file where the history will be saved.
@@ -70,7 +70,7 @@ impl TrainingHistory {
             }
         }
 
-        Ok(TrainingHistory {
+        Ok(History {
             interval,
             model,
             loss,

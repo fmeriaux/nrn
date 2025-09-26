@@ -1,9 +1,9 @@
-pub mod initializations;
-pub mod activations;
-pub mod scalers;
-pub mod data;
-pub mod model;
-pub mod training;
-pub mod encoder;
-pub mod loss_functions;
 pub mod accuracies;
+pub mod activations;
+pub mod data;
+pub mod initializations;
+pub mod loss_functions;
+pub mod model;
+pub mod optimizers;
+pub mod scalers;
+pub mod training;
