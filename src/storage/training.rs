@@ -1,5 +1,5 @@
-use crate::core::model::NeuronNetwork;
-use crate::core::training_history::TrainingHistory;
+use crate::core::model::NeuralNetwork;
+use crate::core::training::TrainingHistory;
 use crate::storage::h5;
 use std::io::Result;
 use std::path::Path;
@@ -64,7 +64,7 @@ impl TrainingHistory {
             let checkpoint_name = format!("checkpoint{}", model.len());
             match model_group.group(&checkpoint_name) {
                 Ok(checkpoint_group) => {
-                    model.push(NeuronNetwork::load_from_group(&checkpoint_group)?);
+                    model.push(NeuralNetwork::load_from_group(&checkpoint_group)?);
                 }
                 Err(_) => break,
             }

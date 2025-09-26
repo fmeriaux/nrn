@@ -1,4 +1,4 @@
-use std::fs;
+use std::{env, fs};
 use std::io::ErrorKind::PermissionDenied;
 use std::io::{Error, Result};
 use std::path::{Path, PathBuf};
@@ -13,6 +13,11 @@ pub trait PathExt {
     /// Ensures all parent directories of `self` exist,
     /// creating them if necessary.
     fn create_parents(&self) -> Result<()>;
+
+    /// Combines the current working directory with `user_path`, resolving the absolute path,
+    /// normalizing, and validating no directory traversal outside the current directory.
+    /// Returns an error if the result is outside the current working directory.
+    fn combine_safe_with_cwd<P: AsRef<Path>>(user_path: P) -> Result<PathBuf>;
 }
 
 impl PathExt for Path {
@@ -35,5 +40,10 @@ impl PathExt for Path {
             fs::create_dir_all(parent)?;
         }
         Ok(())
+    }
+
+    fn combine_safe_with_cwd<P: AsRef<Path>>(user_path: P) -> Result<PathBuf> {
+        let cwd = env::current_dir()?;
+        cwd.combine_safe(user_path)
     }
 }

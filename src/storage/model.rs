@@ -1,5 +1,5 @@
 use crate::core::activations::ActivationProvider;
-use crate::core::model::{NeuronLayer, NeuronNetwork};
+use crate::core::model::{NeuronLayer, NeuralNetwork};
 use crate::storage::h5;
 use hdf5_metno::Group;
 use hdf5_metno::types::VarLenUnicode;
@@ -8,7 +8,7 @@ use std::io::ErrorKind::InvalidData;
 use std::io::{Error, Result};
 use std::path::Path;
 
-impl NeuronNetwork {
+impl NeuralNetwork {
     /// Saves the neural network to an HDF5 group.
     /// # Arguments
     /// - `group`: The HDF5 group to save the network to.
@@ -82,7 +82,7 @@ impl NeuronNetwork {
             return Err(Error::new(InvalidData, "No layers found in the HDF5 group"));
         }
 
-        Ok(NeuronNetwork { layers })
+        Ok(NeuralNetwork { layers })
     }
 
     /// Saves the current state of the neural network to an HDF5 file.
@@ -98,6 +98,6 @@ impl NeuronNetwork {
     /// - `path`: The path to the file to load the network from.
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         let file = h5::load_file(path)?;
-        Ok(NeuronNetwork::load_from_group(&file)?)
+        Ok(NeuralNetwork::load_from_group(&file)?)
     }
 }

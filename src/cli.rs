@@ -1,13 +1,14 @@
 use crate::commands::Command;
 use crate::commands::Command::*;
 use crate::commands::EncodeCommand::{Img, ImgDir};
-use crate::core::activations::{ RELU, SIGMOID, SOFTMAX};
+use crate::core::accuracies::{Accuracy, BINARY_ACCURACY};
+use crate::core::activations::{RELU, SIGMOID, SOFTMAX};
 use crate::core::data::{Dataset, SplitDataset};
 use crate::core::encoder::{encode_image, extract_categories};
-use crate::core::model::{NeuronLayerSpec, NeuronNetwork};
-use crate::core::neuron_network::{accuracy, log_loss};
+use crate::core::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
+use crate::core::model::{NeuralNetwork, NeuronLayerSpec};
 use crate::core::scalers::{Scaler, ScalerMethod};
-use crate::core::training_history::TrainingHistory;
+use crate::core::training::TrainingHistory;
 use crate::plot::DecisionBoundaryView;
 use crate::progression::Progression;
 use crate::storage::data::{load_inputs, save_inputs};
@@ -15,14 +16,15 @@ use crate::storage::scalers::ScalerRecord;
 use crate::{display_info, display_initialization, display_success, display_warning, plot};
 use colored::Colorize;
 use ndarray::Array1;
-use ndarray_rand::rand::prelude::StdRng;
 use ndarray_rand::rand::SeedableRng;
+use ndarray_rand::rand::prelude::StdRng;
 use std::cmp::Ordering::Equal;
 use std::error::Error;
 use std::fs::read_dir;
 use std::io::stdin;
 use std::iter::once;
 use std::path::Path;
+use std::sync::Arc;
 
 fn load_dataset(filename: &str) -> Result<SplitDataset, Box<dyn Error>> {
     let dataset = SplitDataset::load(filename)?;
@@ -109,23 +111,23 @@ fn create_output_layer(max_label: usize) -> NeuronLayerSpec {
     }
 }
 
-fn initialize_model(input_size: usize, layer_specs: &Vec<NeuronLayerSpec>) -> NeuronNetwork {
-    let model = NeuronNetwork::initialization(input_size, &layer_specs);
+fn initialize_model(input_size: usize, layer_specs: &Vec<NeuronLayerSpec>) -> NeuralNetwork {
+    let model = NeuralNetwork::initialization(input_size, &layer_specs);
 
     display_initialization!("Neural network initialized ({})", model.summary().yellow());
 
     model
 }
 
-fn load_model(filename: &str) -> Result<NeuronNetwork, Box<dyn Error>> {
-    let model = NeuronNetwork::load(filename)?;
+fn load_model(filename: &str) -> Result<NeuralNetwork, Box<dyn Error>> {
+    let model = NeuralNetwork::load(filename)?;
 
     display_initialization!("Neural network loaded ({})", model.summary().yellow());
 
     Ok(model)
 }
 
-fn save_model(filename: &str, model: &NeuronNetwork) -> Result<(), Box<dyn Error>> {
+fn save_model(filename: &str, model: &NeuralNetwork) -> Result<(), Box<dyn Error>> {
     model.save(filename)?;
 
     display_success!(
@@ -350,11 +352,17 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
             learning_rate,
             max_norm,
         } => {
+            let loss_function: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
+            let accuracy: Arc<dyn Accuracy> = BINARY_ACCURACY.clone();
+
             let SplitDataset { train, test } = load_dataset(&dataset)?;
 
             // 🧠 NEURAL NETWORK INITIALIZATION
             let (train_inputs, train_expectations) = train.to_model_shape();
             let (test_inputs, test_expectations) = test.to_model_shape();
+            let train_expectations = train_expectations.view();
+            let test_expectations = test_expectations.view();
+
 
             let layer_specs: Vec<NeuronLayerSpec> = hidden_layers
                 .unwrap_or_default()
@@ -396,7 +404,8 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
             for epoch in progression.iter() {
                 let train_activations = model.train(
                     train_inputs,
-                    train_expectations.view(),
+                    train_expectations,
+                    &loss_function,
                     learning_rate,
                     max_norm,
                 );
@@ -408,25 +417,33 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
 
                         history.checkpoint(
                             &model,
-                            &train_activations,
-                            &train_expectations,
-                            &test_activations,
-                            &test_expectations,
+                            &loss_function,
+                            &accuracy,
+                            train_activations.view(),
+                            train_expectations,
+                            test_activations.view(),
+                            test_expectations,
                         );
                     }
                 }
             }
 
+            let train_predictions = model.predict(train_inputs);
+            let train_predictions = train_predictions.view();
+
             display_success!(
                 "{} -- Loss: {} -- Train Accuracy: {} -- Test Accuracy: {}",
                 "Training completed".bright_green(),
-                log_loss(&model.predict(train_inputs), &train_expectations)
+                loss_function
+                    .compute(train_predictions, train_expectations)
                     .to_string()
                     .yellow(),
-                accuracy(&model.predict(train_inputs), &train_expectations)
+                accuracy
+                    .compute(train_predictions, train_expectations)
                     .to_string()
                     .yellow(),
-                accuracy(&model.predict(test_inputs), &test_expectations)
+                accuracy
+                    .compute(model.predict(test_inputs).view(), test_expectations)
                     .to_string()
                     .yellow()
             );

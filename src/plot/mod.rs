@@ -1,5 +1,5 @@
 use crate::core::data::Dataset;
-use crate::core::model::NeuronNetwork;
+use crate::core::model::NeuralNetwork;
 use gif::{Encoder, Frame, Repeat};
 use ndarray::{Array1, Array2};
 use plotters::chart::ChartBuilder;
@@ -79,7 +79,7 @@ fn draw_data(
     dataset: &Dataset,
     width: u32,
     height: u32,
-    model: Option<&NeuronNetwork>,
+    model: Option<&NeuralNetwork>,
     show_legend: bool,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut buffer = create_rgb_buffer(width, height);
@@ -251,7 +251,7 @@ impl DecisionBoundaryView {
     /// Adds a frame to the decision boundary view by drawing it based on the provided `NeuronNetwork`.
     /// # Arguments
     /// - `model`: A reference to the `NeuronNetwork` whose decision boundary will be drawn.
-    pub fn add_frame(&mut self, model: &NeuronNetwork) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn add_frame(&mut self, model: &NeuralNetwork) -> Result<(), Box<dyn std::error::Error>> {
         let buffer = draw_data(&self.dataset, self.width, self.height, Some(model), false)?;
         self.frames.push(buffer.clone());
         Ok(())

@@ -5,6 +5,5 @@ pub mod data;
 pub mod model;
 pub mod training;
 pub mod encoder;
-pub mod neuron_network;
-pub mod training_history;
 pub mod loss_functions;
+pub mod accuracies;
