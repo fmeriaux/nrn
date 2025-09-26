@@ -8,16 +8,10 @@ name = "nrn"
 path = "src/main.rs"
 
 [workspace]
-members = [
-    "core",
-    "storage",
-    "synth"
-]
+members = ["core"]
 
 [dependencies]
-nrn = { path = "./core" }
-nrn-storage = { path = "./storage" }
-nrn-synth = { path = "./synth" }
+nrn = { path = "./core", features = ["synth", "storage", "scalers"] }
 clap = { version = "4.5.40", features = ["derive"] }
 colored = "3.0.0"
 gif = "0.13.1"

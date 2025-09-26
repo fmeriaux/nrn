@@ -1094,10 +1094,13 @@ checksum = "0676bb32a98c1a483ce53e500a81ad9c3d5b3f7c920c28c24e9cb0980d0b5bc8"
 name = "nrn"
 version = "0.1.0"
 dependencies = [
+ "hdf5-metno",
  "inventory",
  "ndarray",
  "ndarray-rand",
  "once_cell",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1112,30 +1115,8 @@ dependencies = [
  "ndarray",
  "ndarray-rand",
  "nrn",
- "nrn-storage",
- "nrn-synth",
  "plotters",
  "png 0.18.0",
-]
-
-[[package]]
-name = "nrn-storage"
-version = "0.1.0"
-dependencies = [
- "hdf5-metno",
- "ndarray",
- "nrn",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "nrn-synth"
-version = "0.1.0"
-dependencies = [
- "ndarray",
- "ndarray-rand",
- "nrn",
 ]
 
 [[package]]

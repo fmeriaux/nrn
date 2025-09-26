@@ -1,9 +1,11 @@
-pub mod accuracies;
-pub mod activations;
+mod nn;
+
+pub use nn::*;
 pub mod data;
-pub mod initializations;
-pub mod loss_functions;
-pub mod model;
-pub mod optimizers;
+#[cfg(feature = "scalers")]
 pub mod scalers;
-pub mod training;
+#[cfg(feature = "synth")]
+pub mod synth;
+#[cfg(feature = "storage")]
+pub mod storage;
+

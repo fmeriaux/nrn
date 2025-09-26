@@ -1,25 +1,18 @@
-use crate::h5;
+use crate::activations::ActivationProvider;
+use crate::model::{NeuralNetwork, NeuronLayer};
+use crate::storage::h5;
 use hdf5_metno::Group;
 use hdf5_metno::types::VarLenUnicode;
 use ndarray::{Array1, Array2};
-use nrn::activations::ActivationProvider;
-use nrn::model::{NeuralNetwork, NeuronLayer};
 use std::io::ErrorKind::InvalidData;
 use std::io::{Error, Result};
 use std::path::Path;
 
-pub trait NeuralNetworkExt {
-    fn save_to_group(&self, group: &Group) -> Result<()>;
-    fn load_from_group(group: &Group) -> Result<NeuralNetwork>;
-    fn save<P: AsRef<Path>>(&self, path: P) -> Result<()>;
-    fn load<P: AsRef<Path>>(path: P) -> Result<NeuralNetwork>;
-}
-
-impl NeuralNetworkExt for NeuralNetwork {
+impl NeuralNetwork {
     /// Saves the neural network to an HDF5 group.
     /// # Arguments
     /// - `group`: The HDF5 group to save the network to.
-    fn save_to_group(&self, group: &Group) -> Result<()> {
+    pub fn save_to_group(&self, group: &Group) -> Result<()> {
         for (i, layer) in self.layers.iter().enumerate() {
             let group = group.create_group(&format!("layer{}", i))?;
 
@@ -51,7 +44,7 @@ impl NeuralNetworkExt for NeuralNetwork {
     /// Reads a neural network from an HDF5 group.
     /// # Arguments
     /// - `group`: The HDF5 group to read the network from.
-    fn load_from_group(group: &Group) -> Result<Self> {
+    pub fn load_from_group(group: &Group) -> Result<Self> {
         let mut layers = Vec::new();
 
         loop {
@@ -95,7 +88,7 @@ impl NeuralNetworkExt for NeuralNetwork {
     /// Saves the current state of the neural network to an HDF5 file.
     /// # Arguments
     /// - `path`: The path to the file where the network will be saved.
-    fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let file = h5::create_file(path)?;
         self.save_to_group(&file)
     }
@@ -103,7 +96,7 @@ impl NeuralNetworkExt for NeuralNetwork {
     /// Loads a neural network from an HDF5 file.
     /// # Arguments
     /// - `path`: The path to the file to load the network from.
-    fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         let file = h5::load_file(path)?;
         Ok(NeuralNetwork::load_from_group(&file)?)
     }

@@ -1,20 +1,14 @@
-use crate::h5;
-use crate::model::NeuralNetworkExt;
-use nrn::model::NeuralNetwork;
-use nrn::training::History;
+use crate::model::NeuralNetwork;
+use crate::storage::h5;
+use crate::training::History;
 use std::io::Result;
 use std::path::Path;
 
-pub trait HistoryExt {
-    fn save<P: AsRef<Path>>(&self, path: P) -> Result<()>;
-    fn load<P: AsRef<Path>>(path: P) -> Result<History>;
-}
-
-impl HistoryExt for History {
+impl History {
     /// Saves the training history to an HDF5 file.
     /// # Arguments
     /// - `path`: The path to the file where the history will be saved.
-    fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let file = h5::create_file(path)?;
 
         file.new_attr::<usize>()
@@ -51,7 +45,7 @@ impl HistoryExt for History {
     /// Loads the training history from an HDF5 file.
     /// # Arguments
     /// - `path`: The path to the file to load the history from.
-    fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         let file = h5::load_file(path)?;
 
         let interval: usize = file.attr("interval")?.read_scalar()?;

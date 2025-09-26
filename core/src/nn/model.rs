@@ -38,7 +38,7 @@ pub struct NeuronLayerSpec {
 /// Returns the last activation from a vector of activations.
 /// # Panics
 /// - When the `activations` vector is empty.
-pub(crate) fn last_activation(activations: &[Array2<f32>]) -> Array2<f32> {
+pub fn last_activation(activations: &[Array2<f32>]) -> Array2<f32> {
     activations
         .last()
         .expect("Ensure activations is not empty.")

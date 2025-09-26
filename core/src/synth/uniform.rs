@@ -1,10 +1,10 @@
-use crate::generators::{
+use crate::data::Dataset;
+use crate::synth::{
     DatasetGenerator, calculate_radius, feature_bounds, init_features_and_labels, random_points,
 };
 use ndarray::{Array2, s};
-use ndarray_rand::rand::RngCore;
 use ndarray_rand::rand::Rng;
-use nrn::data::Dataset;
+use ndarray_rand::rand::RngCore;
 
 /// Generates a synthetic dataset with clusters arranged in concentric spheres.
 pub struct UniformDataset {

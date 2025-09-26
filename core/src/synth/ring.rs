@@ -1,10 +1,9 @@
-use crate::generators;
-use crate::generators::{
-    DatasetGenerator, calculate_radius, feature_bounds, init_features_and_labels,
+use crate::data::Dataset;
+use crate::synth::{
+    DatasetGenerator, calculate_radius, feature_bounds, init_features_and_labels, random_points,
 };
 use ndarray::{Array1, s};
 use ndarray_rand::rand::{Rng, RngCore};
-use nrn::data::Dataset;
 
 /// Generates a dataset with clusters arranged in concentric rings.
 pub struct RingDataset {
@@ -53,7 +52,7 @@ impl DatasetGenerator for RingDataset {
         });
 
         for (cluster_idx, &(r_min, r_max)) in radii.iter().enumerate() {
-            let points = generators::random_points(
+            let points = random_points(
                 &mut rng,
                 samples_per_cluster,
                 &center.to_vec(),

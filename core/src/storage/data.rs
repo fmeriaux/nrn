@@ -1,7 +1,7 @@
-use crate::h5;
+use crate::storage::h5;
 use hdf5_metno::Group;
 use ndarray::{Array1, Array2};
-use nrn::data::{Dataset, SplitDataset};
+use crate::data::{Dataset, SplitDataset};
 use std::io::Result;
 use std::path::Path;
 

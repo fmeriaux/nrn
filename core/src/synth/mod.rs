@@ -1,15 +1,15 @@
-mod uniform;
 mod ring;
+mod uniform;
 
-pub use uniform::UniformDataset;
 pub use ring::RingDataset;
+pub use uniform::UniformDataset;
 
+use crate::data::Dataset;
 use ndarray::{Array1, Array2, Axis};
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand::prelude::StdRng;
 use ndarray_rand::rand::{Rng, RngCore, SeedableRng};
 use ndarray_rand::rand_distr::{StandardNormal, Uniform};
-use nrn::data::Dataset;
 
 pub trait DatasetGenerator {
     fn generate_rng(&self, rng: &mut dyn RngCore) -> Dataset;
