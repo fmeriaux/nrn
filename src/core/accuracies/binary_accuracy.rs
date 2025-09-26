@@ -19,7 +19,7 @@ impl Accuracy for BinaryAccuracy {
     /// # Arguments
     ///
     /// * `predictions` - A 2D tensor of shape (1, n_samples), containing predicted probabilities or binary values for each sample.
-    /// * `expectations` - A 2D tensor of shape (1, n_samples), containing ground truth binary labels (0 or 1) for each sample.
+    /// * `targets` - A 2D tensor of shape (1, n_samples), containing ground truth binary labels (0 or 1) for each sample.
     ///
     /// # Returns
     ///
@@ -27,12 +27,12 @@ impl Accuracy for BinaryAccuracy {
     ///
     /// # Panics
     ///
-    /// Panics if the shapes of `predictions` and `expectations` do not match, or if the number of rows is not 1.
-    fn compute(&self, predictions: ArrayView2<f32>, expectations: ArrayView2<f32>) -> f32 {
+    /// Panics if the shapes of `predictions` and `targets` do not match, or if the number of rows is not 1.
+    fn compute(&self, predictions: ArrayView2<f32>, targets: ArrayView2<f32>) -> f32 {
         assert_eq!(
             predictions.shape(),
-            expectations.shape(),
-            "Predictions and expectations must have the same shape."
+            targets.shape(),
+            "Predictions and targets must have the same shape."
         );
         assert_eq!(
             predictions.nrows(),
@@ -44,7 +44,7 @@ impl Accuracy for BinaryAccuracy {
         let mut correct = 0;
         for i in 0..n_samples {
             let pred = predictions[[0, i]];
-            let exp = expectations[[0, i]];
+            let exp = targets[[0, i]];
             let pred_label = if pred >= 0.5 { 1.0 } else { 0.0 };
             if (pred_label - exp).abs() < f32::EPSILON {
                 correct += 1;

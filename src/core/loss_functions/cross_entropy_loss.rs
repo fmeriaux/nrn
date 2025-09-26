@@ -27,29 +27,29 @@ impl LossFunction for CrossEntropyLoss {
     ///
     /// # Arguments
     /// * `predictions` - 2D array where each row is the predicted probability distribution for a sample.
-    /// * `expectations` - 2D array where each row is the true one-hot encoded label for a sample.
+    /// * `targets` - 2D array where each row is the true one-hot encoded label for a sample.
     ///
     /// # Returns
     /// Average loss over the batch.
-    fn compute(&self, predictions: ArrayView2<f32>, expectations: ArrayView2<f32>) -> f32 {
+    fn compute(&self, predictions: ArrayView2<f32>, targets: ArrayView2<f32>) -> f32 {
         let clipped_predictions = Self::clip_probabilities(&predictions);
         let log_predictions = clipped_predictions.mapv(|p| p.ln());
         let n_samples = predictions.ncols() as f32;
-        -(&expectations * &log_predictions).sum() / n_samples
+        -(&targets * &log_predictions).sum() / n_samples
     }
 
     /// Computes the gradient of the loss with respect to the predictions.
     ///
     /// # Arguments
     /// * `predictions` - Same as in `compute`.
-    /// * `expectations` - Same as in `compute`.
+    /// * `targets` - Same as in `compute`.
     ///
     /// # Returns
     /// Gradient array (`Array2<f32>`) of the same shape as predictions, corresponding to
     /// the derivative of the loss with respect to each predicted probability.
-    fn gradient(&self, predictions: ArrayView2<f32>, expectations: ArrayView2<f32>) -> Array2<f32> {
+    fn gradient(&self, predictions: ArrayView2<f32>, targets: ArrayView2<f32>) -> Array2<f32> {
         let clipped_predictions = Self::clip_probabilities(&predictions);
-        clipped_predictions - &expectations
+        clipped_predictions - &targets
     }
 }
 

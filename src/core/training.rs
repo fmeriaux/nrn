@@ -53,39 +53,43 @@ impl TrainingHistory {
             .checked_div(interval)
             .map(|step| if step > 0 { step } else { 1 });
 
-        capacity.map(|capacity| TrainingHistory {
-            interval,
-            model: Vec::with_capacity(capacity),
-            loss: Vec::with_capacity(capacity),
-            train_accuracy: Vec::with_capacity(capacity),
-            test_accuracy: Vec::with_capacity(capacity),
-        })
+        capacity
+            // Add one to include the initial state before training starts
+            .map(|capacity| capacity + 1)
+            // Initialize vectors with the calculated capacity
+            .map(|capacity| TrainingHistory {
+                interval,
+                model: Vec::with_capacity(capacity),
+                loss: Vec::with_capacity(capacity),
+                train_accuracy: Vec::with_capacity(capacity),
+                test_accuracy: Vec::with_capacity(capacity),
+            })
     }
 
     /// Registers a new checkpoint in the training history with the current state of the model, loss, and accuracy.
     /// # Arguments
     /// - `model`: The current state of the `NeuronNetwork`.
-    /// - `train_activations`: The activations (outputs) of the model for the training data.
-    /// - `train_expectations`: The expected outputs (labels) for the training data.
-    /// - `test_activations`: The activations (outputs) of the model for the test data.
-    /// - `test_expectations`: The expected outputs (labels) for the test data.
+    /// - `train_predictions`: The final outputs (predictions) of the model for the training data.
+    /// - `train_targets`: The true labels for the training data.
+    /// - `test_predictions`: The final outputs (predictions) of the model for the test data.
+    /// - `test_targets`: The true labels for the test data.
     pub fn checkpoint(
         &mut self,
         model: &NeuralNetwork,
         loss_function: &Arc<dyn LossFunction>,
         accuracy: &Arc<dyn Accuracy>,
-        train_activations: ArrayView2<f32>,
-        train_expectations: ArrayView2<f32>,
-        test_activations: ArrayView2<f32>,
-        test_expectations: ArrayView2<f32>,
+        train_predictions: ArrayView2<f32>,
+        train_targets: ArrayView2<f32>,
+        test_predictions: ArrayView2<f32>,
+        test_targets: ArrayView2<f32>,
     ) {
         self.model.push(model.clone());
         self.loss
-            .push(loss_function.compute(train_activations, train_expectations));
+            .push(loss_function.compute(train_predictions, train_targets));
         self.train_accuracy
-            .push(accuracy.compute(train_activations, train_expectations));
+            .push(accuracy.compute(train_predictions, train_targets));
         self.test_accuracy
-            .push(accuracy.compute(test_activations, test_expectations));
+            .push(accuracy.compute(test_predictions, test_targets));
     }
 }
 
@@ -101,19 +105,19 @@ impl NeuronLayer {
 }
 
 impl NeuralNetwork {
-    /// Trains the network using the provided inputs and expectations, updating the weights and biases.
+    /// Trains the network using the provided inputs and targets, updating the weights and biases.
     /// # Panics
     /// - When the `learning_rate` is less than or equal to zero.
-    /// - When the number of columns in `inputs` does not match the length of `expectations`.
+    /// - When the number of columns in `inputs` does not match the length of `targets`.
     /// # Arguments
     /// - `inputs`: A 2D array representing the inputs to the network.
-    /// - `expectations`: A 2D array representing the expected outputs for the inputs.
+    /// - `targets`: A 2D array representing the true labels for the inputs.
     /// - `learning_rate`: The learning rate to apply during the update.
     /// - `max_norm`: The maximum norm to clip the gradients to, preventing exploding gradients.
     pub fn train(
         &mut self,
         inputs: ArrayView2<f32>,
-        expectations: ArrayView2<f32>,
+        targets: ArrayView2<f32>,
         loss_function: &Arc<dyn LossFunction>,
         learning_rate: f32,
         max_norm: f32,
@@ -125,15 +129,15 @@ impl NeuralNetwork {
 
         assert_eq!(
             inputs.ncols(),
-            expectations.ncols(),
-            "Inputs and expectations must have the same number of samples."
+            targets.ncols(),
+            "Inputs and targets must have the same number of samples."
         );
 
         let activations = self.forward(inputs);
 
         self.update(
             &activations,
-            expectations,
+            targets,
             loss_function,
             learning_rate,
             max_norm,
@@ -145,18 +149,18 @@ impl NeuralNetwork {
     /// Updates the weights and biases of the network using the computed gradients from backpropagation.
     /// # Arguments
     /// - `activations`: A vector of 2D arrays representing the activations of each layer.
-    /// - `expectations`: A 2D array representing the expected outputs for the inputs.
+    /// - `targets`: A 2D array representing the expected outputs for the inputs.
     /// - `learning_rate`: The learning rate to apply during the update.
     /// - `max_norm`: The maximum norm to clip the gradients to, preventing exploding gradients.
     fn update(
         &mut self,
         activations: &[Array2<f32>],
-        expectations: ArrayView2<f32>,
+        targets: ArrayView2<f32>,
         loss_function: &Arc<dyn LossFunction>,
         learning_rate: f32,
         max_norm: f32,
     ) {
-        let gradients = self.backward(activations, expectations, loss_function);
+        let gradients = self.backward(activations, targets, loss_function);
 
         for (layer, mut layer_gradients) in self.layers.iter_mut().zip(gradients) {
             layer_gradients.clip(max_norm);
@@ -167,16 +171,16 @@ impl NeuralNetwork {
     /// Computes the gradients for each layer using backpropagation.
     /// # Arguments
     /// - `activations`: A vector of 2D arrays representing the activations of each layer.
-    /// - `expectations`: A 2D array representing the expected outputs for the inputs.
+    /// - `targets`: A 2D array representing the true labels for the inputs.
     fn backward(
         &self,
         activations: &[Array2<f32>],
-        expectations: ArrayView2<f32>,
+        targets: ArrayView2<f32>,
         loss_function: &Arc<dyn LossFunction>,
     ) -> Vec<Gradients> {
-        let m = expectations.ncols() as f32;
+        let m = targets.ncols() as f32;
 
-        let mut dz = loss_function.gradient(last_activation(activations).view(), expectations);
+        let mut dz = loss_function.gradient(last_activation(activations).view(), targets);
 
         let mut gradients = Vec::with_capacity(activations.len() - 1);
 
@@ -190,9 +194,9 @@ impl NeuralNetwork {
             if i > 1 {
                 let next_layer = &self.layers[i - 1];
                 dz = next_layer.weights.t().dot(&dz)
-                    * next_layer
+                    * self.layers[i - 2]
                         .activation
-                        .derivative(previous_activations, expectations);
+                        .derivative(previous_activations, targets);
             }
         }
 

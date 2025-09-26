@@ -1,7 +1,7 @@
 use crate::commands::Command;
 use crate::commands::Command::*;
 use crate::commands::EncodeCommand::{Img, ImgDir};
-use crate::core::accuracies::{Accuracy, BINARY_ACCURACY};
+use crate::core::accuracies::{Accuracy, BINARY_ACCURACY, MULTI_CLASS_ACCURACY};
 use crate::core::activations::{RELU, SIGMOID, SOFTMAX};
 use crate::core::data::{Dataset, SplitDataset};
 use crate::core::encoder::{encode_image, extract_categories};
@@ -15,7 +15,7 @@ use crate::storage::data::{load_inputs, save_inputs};
 use crate::storage::scalers::ScalerRecord;
 use crate::{display_info, display_initialization, display_success, display_warning, plot};
 use colored::Colorize;
-use ndarray::Array1;
+use ndarray::{Array1, ArrayView2};
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::prelude::StdRng;
 use std::cmp::Ordering::Equal;
@@ -108,6 +108,14 @@ fn create_output_layer(max_label: usize) -> NeuronLayerSpec {
             neurons: 1,
             activation: SIGMOID.clone(),
         }
+    }
+}
+
+fn select_accuracy(max_label: usize) -> Arc<dyn Accuracy> {
+    if max_label > 1 {
+        MULTI_CLASS_ACCURACY.clone()
+    } else {
+        BINARY_ACCURACY.clone()
     }
 }
 
@@ -353,15 +361,16 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
             max_norm,
         } => {
             let loss_function: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
-            let accuracy: Arc<dyn Accuracy> = BINARY_ACCURACY.clone();
 
             let SplitDataset { train, test } = load_dataset(&dataset)?;
 
+            let accuracy: Arc<dyn Accuracy> = select_accuracy(train.max_label());
+
             // 🧠 NEURAL NETWORK INITIALIZATION
-            let (train_inputs, train_expectations) = train.to_model_shape();
-            let (test_inputs, test_expectations) = test.to_model_shape();
-            let train_expectations = train_expectations.view();
-            let test_expectations = test_expectations.view();
+            let (train_inputs, train_targets) = train.to_model_shape();
+            let (test_inputs, test_targets) = test.to_model_shape();
+            let train_targets = train_targets.view();
+            let test_targets = test_targets.view();
 
 
             let layer_specs: Vec<NeuronLayerSpec> = hidden_layers
@@ -390,21 +399,37 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
                 learning_rate.to_string().yellow()
             );
 
-            if let Some(ref history) = history {
+            // Closure to record the training history at each checkpoint
+            let record_history = |model: &NeuralNetwork, history: &mut TrainingHistory, train_predictions: ArrayView2<f32>| {
+                let test_predictions = model.predict(test_inputs);
+                history.checkpoint(
+                    model,
+                    &loss_function,
+                    &accuracy,
+                    train_predictions,
+                    train_targets,
+                    test_predictions.view(),
+                    test_targets,
+                );
+            };
+
+            if let Some(ref mut history) = history {
                 display_info!(
                     "{} -- {} checkpoints will be recorded, one every {} epochs",
                     "History".bright_cyan(),
                     history.model.capacity().to_string().yellow(),
                     history.interval.to_string().yellow()
                 );
+
+                let train_activations = model.predict(train_inputs);
+                record_history(&model, history, train_activations.view());
             };
 
             let progression = Progression::new(epochs, "Training");
-
             for epoch in progression.iter() {
-                let train_activations = model.train(
+                let train_predictions = model.train(
                     train_inputs,
-                    train_expectations,
+                    train_targets,
                     &loss_function,
                     learning_rate,
                     max_norm,
@@ -413,17 +438,7 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
                 if let Some(ref mut history) = history {
                     let epoch_number = epoch + 1;
                     if epoch_number % history.interval == 0 || epoch_number == epochs {
-                        let test_activations = model.predict(test_inputs);
-
-                        history.checkpoint(
-                            &model,
-                            &loss_function,
-                            &accuracy,
-                            train_activations.view(),
-                            train_expectations,
-                            test_activations.view(),
-                            test_expectations,
-                        );
+                        record_history(&model, history, train_predictions.view());
                     }
                 }
             }
@@ -435,15 +450,15 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
                 "{} -- Loss: {} -- Train Accuracy: {} -- Test Accuracy: {}",
                 "Training completed".bright_green(),
                 loss_function
-                    .compute(train_predictions, train_expectations)
+                    .compute(train_predictions, train_targets)
                     .to_string()
                     .yellow(),
                 accuracy
-                    .compute(train_predictions, train_expectations)
+                    .compute(train_predictions, train_targets)
                     .to_string()
                     .yellow(),
                 accuracy
-                    .compute(model.predict(test_inputs).view(), test_expectations)
+                    .compute(model.predict(test_inputs).view(), test_targets)
                     .to_string()
                     .yellow()
             );
@@ -594,7 +609,7 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
                 for step in progression.iter() {
                     let step_number = step + 1;
 
-                    if step_number % interval == 0 || step_number == history.model.len() {
+                    if step_number == 1 || step_number % interval == 0 || step_number == history.model.len() {
                         decision_boundaries.add_frame(&history.model[step])?;
                     }
                 }

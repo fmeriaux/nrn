@@ -56,9 +56,8 @@ impl Dataset {
     /// Transforms the dataset into a shape suitable for model input and output.
     ///
     /// # Returns
-    /// A tuple `(inputs, expectations)` where:
-    /// - `inputs` is a 2D array view of shape `(n_features, n_samples)`, i.e., features are transposed so that each column is a sample.
-    /// - `expectations` is a 2D array owned of shape `(n_classes, n_samples)` for multi-class (one-hot encoded labels),
+    /// A tuple `(inputs, targets)` where:
+    /// - `targets` is a 2D array owned of shape `(n_classes, n_samples)` for multi-class (one-hot encoded labels),
     ///   or `(1, n_samples)` for binary labels.
     ///
     /// # Details
@@ -67,15 +66,15 @@ impl Dataset {
     ///
     /// # Example
     /// ```
-    /// let (inputs, expectations) = dataset.to_model_shape();
-    /// // Use `inputs` and `expectations` as model input/output
+    /// let (inputs, targets) = dataset.to_model_shape();
+    /// // Use `inputs` and `targets` as model input/output
     /// ```
     pub fn to_model_shape(&self) -> (ArrayView2<'_, f32>, Array2<f32>) {
         let inputs: ArrayView2<f32> = self.features.t();
 
         let max_label = self.max_label();
 
-        let expectations: Array2<f32> = if max_label > 1 {
+        let targets: Array2<f32> = if max_label > 1 {
             // If labels are not binary, we need to one-hot encode them
             let mut one_hot = Array2::zeros((max_label + 1, self.n_samples()));
             for (i, &label) in self.labels.iter().enumerate() {
@@ -87,7 +86,7 @@ impl Dataset {
             self.labels.to_owned().insert_axis(Axis(0))
         };
 
-        (inputs, expectations)
+        (inputs, targets)
     }
 }
 

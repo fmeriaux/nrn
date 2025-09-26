@@ -23,16 +23,35 @@ pub trait PathExt {
 impl PathExt for Path {
     fn combine_safe<P: AsRef<Path>>(&self, user_path: P) -> Result<PathBuf> {
         let base_path = fs::canonicalize(self)?;
-        let combined = fs::canonicalize(self.join(user_path.as_ref()))?;
+        let combined = self.join(user_path.as_ref());
 
-        if !combined.starts_with(&base_path) {
+        // Find the nearest existing parent directory
+        let mut current = combined.as_path();
+        let mut segments = Vec::new();
+        while !current.exists() {
+            if let Some(parent) = current.parent() {
+                if let Some(name) = current.file_name() {
+                    segments.push(name.to_os_string());
+                }
+                current = parent;
+            } else {
+                return Err(Error::new(PermissionDenied, "No existing parent directory found for path traversal check"));
+            }
+        }
+        // Canonicalize the nearest existing parent directory
+        let mut canonical = fs::canonicalize(current)?;
+        // Reapply the non-existing segments in reverse order
+        for segment in segments.iter().rev() {
+            canonical = canonical.join(segment);
+        }
+        // Validate that the final path is within the base path
+        if !canonical.starts_with(&base_path) {
             return Err(Error::new(
                 PermissionDenied,
                 "Attempted directory traversal detected",
             ));
         }
-
-        Ok(combined)
+        Ok(canonical)
     }
 
     fn create_parents(&self) -> Result<()> {

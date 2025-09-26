@@ -15,7 +15,7 @@ use ndarray::ArrayView2;
 ///
 /// # Parameters
 /// - `predictions`: 2D array containing model predictions per sample.
-/// - `expectations`: 2D array containing ground truth labels per sample.
+/// - `targets`: 2D array containing ground truth labels per sample.
 ///
 /// # Returns
 /// A floating-point number representing accuracy as a percentage (0.0 to 100.0).
@@ -29,9 +29,9 @@ pub trait Accuracy: Send + Sync {
     /// # Arguments
     ///
     /// * `predictions` - A 2D array where each row represents a predicted output for a sample.
-    /// * `expectations` - A 2D array where each row represents the expected (true) output for a sample.
+    /// * `targets` - A 2D array where each row represents the expected (true) output for a sample.
     ///
     /// # Returns
     /// A float representing the accuracy percentage (0.0 to 100.0).
-    fn compute(&self, predictions: ArrayView2<f32>, expectations: ArrayView2<f32>) -> f32;
+    fn compute(&self, predictions: ArrayView2<f32>, targets: ArrayView2<f32>) -> f32;
 }

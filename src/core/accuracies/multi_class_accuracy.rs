@@ -20,7 +20,7 @@ impl Accuracy for MultiClassAccuracy {
     /// # Arguments
     ///
     /// * `predictions` - A 2D tensor of shape (n_classes, n_samples), containing predicted scores or probabilities for each class and sample.
-    /// * `expectations` - A 2D tensor of shape (n_classes, n_samples), containing one-hot encoded ground truth labels for each sample.
+    /// * `targets` - A 2D tensor of shape (n_classes, n_samples), containing one-hot encoded ground truth labels for each sample.
     ///
     /// # Returns
     ///
@@ -28,12 +28,12 @@ impl Accuracy for MultiClassAccuracy {
     ///
     /// # Panics
     ///
-    /// Panics if the shapes of `predictions` and `expectations` do not match, or if there are fewer than 2 classes.
-    fn compute(&self, predictions: ArrayView2<f32>, expectations: ArrayView2<f32>) -> f32 {
+    /// Panics if the shapes of `predictions` and `targets` do not match, or if there are fewer than 2 classes.
+    fn compute(&self, predictions: ArrayView2<f32>, targets: ArrayView2<f32>) -> f32 {
         assert_eq!(
             predictions.shape(),
-            expectations.shape(),
-            "Predictions and expectations must have the same shape."
+            targets.shape(),
+            "Predictions and targets must have the same shape."
         );
         assert!(
             predictions.nrows() >= 2,
@@ -51,7 +51,7 @@ impl Accuracy for MultiClassAccuracy {
         };
         for i in 0..n_samples {
             let pred_col = predictions.column(i);
-            let exp_col = expectations.column(i);
+            let exp_col = targets.column(i);
             let pred_label = argmax(pred_col);
             let exp_label = argmax(exp_col);
             if pred_label == exp_label {
