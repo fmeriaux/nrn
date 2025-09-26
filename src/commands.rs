@@ -1,4 +1,4 @@
-use crate::core::scalers::{MinMaxScaler, ScalerMethod, ZScoreScaler};
+use nrn::scalers::{MinMaxScaler, ScalerMethod, ZScoreScaler};
 use crate::synth::DistributionType;
 use clap::builder::PossibleValue;
 use clap::{Subcommand, ValueEnum};

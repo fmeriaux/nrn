@@ -1,5 +1,5 @@
-use crate::core::data::Dataset;
-use crate::core::model::NeuralNetwork;
+use nrn::data::Dataset;
+use nrn::model::NeuralNetwork;
 use gif::{Encoder, Frame, Repeat};
 use ndarray::{Array1, Array2};
 use plotters::chart::ChartBuilder;

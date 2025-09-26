@@ -1,0 +1,10 @@
+[package]
+name = "nrn"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ndarray = { version = "0.16.1" }
+once_cell = "1.21.3"
+inventory = "0.3"
+ndarray-rand = "0.15.0"

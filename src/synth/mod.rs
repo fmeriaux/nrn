@@ -1,8 +1,8 @@
-use crate::core::data::{Dataset, SplitDataset};
 use ndarray::{Array1, Array2, Axis, s};
 use ndarray_rand::rand::rngs::StdRng;
 use ndarray_rand::rand::seq::SliceRandom;
 use ndarray_rand::rand::{Rng, SeedableRng};
+use nrn::data::Dataset;
 use std::error::Error;
 use std::fmt;
 
@@ -81,9 +81,43 @@ fn calculate_radius(feature_min: f32, feature_max: f32, n_clusters: usize) -> f3
     (feature_max - feature_min) / (2.5 * n_clusters as f32)
 }
 
-impl Dataset {
+pub trait DatasetExt {
+    fn shuffled<R: Rng>(rng: &mut R, features: &Array2<f32>, labels: &Array1<f32>) -> Self;
+    fn from_image_vec<R: Rng>(
+        rng: &mut R,
+        images: Vec<Array1<u8>>,
+        labels: Vec<usize>,
+    ) -> Result<Dataset, Box<dyn Error>>;
+    fn new(
+        distribution: &DistributionType,
+        seed: u64,
+        n_samples: usize,
+        n_features: usize,
+        n_clusters: usize,
+        feature_min: f32,
+        feature_max: f32,
+    ) -> Self;
+    fn uniform(
+        seed: u64,
+        n_samples: usize,
+        n_features: usize,
+        n_clusters: usize,
+        feature_min: f32,
+        feature_max: f32,
+    ) -> Self;
+    fn ring(
+        seed: u64,
+        n_samples: usize,
+        n_features: usize,
+        n_clusters: usize,
+        feature_min: f32,
+        feature_max: f32,
+    ) -> Self;
+}
+
+impl DatasetExt for Dataset {
     /// Shuffles the dataset features and labels in unison using a random number generator.
-    pub fn shuffled<R: Rng>(rng: &mut R, features: &Array2<f32>, labels: &Array1<f32>) -> Self {
+    fn shuffled<R: Rng>(rng: &mut R, features: &Array2<f32>, labels: &Array1<f32>) -> Self {
         let mut indices: Vec<usize> = (0..features.nrows()).collect();
         indices.shuffle(rng);
 
@@ -102,7 +136,7 @@ impl Dataset {
     /// - `rng`: A mutable reference to a random number generator for shuffling.
     /// - `images`: A vector of images represented as 1D arrays of pixel values.
     /// - `labels`: A vector of labels corresponding to each image.
-    pub fn from_image_vec<R: Rng>(
+    fn from_image_vec<R: Rng>(
         rng: &mut R,
         images: Vec<Array1<u8>>,
         labels: Vec<usize>,
@@ -132,7 +166,7 @@ impl Dataset {
     /// - `n_clusters`: The number of clusters to generate.
     /// - `feature_min`: The minimum value for each feature.
     /// - `feature_max`: The maximum value for each feature.
-    pub fn new(
+    fn new(
         distribution: &DistributionType,
         seed: u64,
         n_samples: usize,
@@ -281,46 +315,5 @@ impl Dataset {
         }
 
         Dataset::shuffled(&mut rng, &features, &labels)
-    }
-
-    /// Splits the dataset into training and testing sets according to the given ratio.
-    ///
-    /// # Parameters
-    /// - `ratio`: Proportion of samples to include in the training set (e.g., 0.8 for 80/20 split)
-    ///
-    /// # Important
-    /// This method does **not** shuffle the dataset. It assumes the dataset has already been shuffled.
-    /// If the dataset is not shuffled, the split may not be representative.
-    pub fn split(&self, ratio: f32) -> SplitDataset {
-        assert!(ratio > 0.0 && ratio < 1.0, "Ratio must be between 0 and 1");
-        let n_samples = self.features.nrows();
-        let n_train = (n_samples as f32 * ratio).round() as usize;
-
-        let slice = |start: usize, end: usize| Dataset {
-            features: self.features.slice(s![start..end, ..]).to_owned(),
-            labels: self.labels.slice(s![start..end]).to_owned(),
-        };
-
-        let train = slice(0, n_train);
-        let test = slice(n_train, n_samples);
-        SplitDataset { train, test }
-    }
-}
-
-impl SplitDataset {
-    /// Gives dataset groups by their usage.
-    pub fn groups(&self) -> Vec<(&str, &Dataset)> {
-        vec![("train", &self.train), ("test", &self.test)]
-    }
-
-    /// Unsplits the `SplitDataset` back into a single `Dataset`.
-    pub fn unsplit(self) -> Dataset {
-        let mut features = self.train.features.to_owned();
-        let mut labels = self.train.labels.to_owned();
-
-        features.append(Axis(0), self.test.features.view()).unwrap();
-        labels.append(Axis(0), self.test.labels.view()).unwrap();
-
-        Dataset { features, labels }
     }
 }

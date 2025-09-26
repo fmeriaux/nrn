@@ -2,11 +2,9 @@ use clap::Parser;
 
 mod cli;
 mod commands;
-mod core;
 mod progression;
 mod plot;
 mod log;
-mod storage;
 mod synth;
 pub mod encoder;
 
