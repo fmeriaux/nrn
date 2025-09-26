@@ -2,10 +2,10 @@ use clap::Parser;
 
 mod cli;
 mod commands;
-mod progression;
-mod plot;
-mod log;
 mod encoder;
+mod log;
+mod plot;
+mod progression;
 
 use crate::commands::Command;
 
