@@ -1,5 +1,5 @@
 use crate::model::NeuralNetwork;
-use crate::storage::h5;
+use crate::io::h5;
 use crate::training::History;
 use std::io::Result;
 use std::path::Path;

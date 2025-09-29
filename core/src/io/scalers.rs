@@ -1,9 +1,9 @@
-use crate::scalers::{MinMaxScaler, ScalerMethod, ZScoreScaler};
-use crate::storage::json;
+use crate::io::json;
+use crate::data::scalers::{MinMaxScaler, ScalerMethod, ZScoreScaler};
+use ndarray::Array1;
 use serde::{Deserialize, Serialize};
 use std::io::Result;
 use std::path::Path;
-use ndarray::Array1;
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", content = "params")]

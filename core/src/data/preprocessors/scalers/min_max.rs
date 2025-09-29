@@ -11,7 +11,7 @@
 //! let scaled = scaler.apply(data.view());
 //! ```
 
-use crate::scalers::Scaler;
+use crate::data::scalers::Scaler;
 use ndarray::{Array1, ArrayView2, ArrayViewMut2, Axis};
 
 /// Scaler that linearly rescales data feature-wise to a target range using the min-max method.

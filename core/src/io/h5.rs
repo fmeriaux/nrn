@@ -1,4 +1,4 @@
-use crate::storage::path::PathExt;
+use crate::io::path::PathExt;
 use hdf5_metno::File;
 use std::io::{Error, Result};
 use std::path::Path;

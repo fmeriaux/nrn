@@ -1,6 +1,6 @@
 use clap::{Subcommand, ValueEnum};
 use ndarray::ArrayView2;
-use nrn::scalers::{MinMaxScaler, ScalerMethod, ZScoreScaler};
+use nrn::data::scalers::{MinMaxScaler, ScalerMethod, ZScoreScaler};
 use std::fmt;
 
 #[derive(ValueEnum, Clone, Debug)]

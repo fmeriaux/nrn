@@ -1,4 +1,4 @@
-use crate::scalers::Scaler;
+use crate::data::scalers::Scaler;
 use ndarray::{Array1, Array2, ArrayView2, Axis, s};
 use ndarray_rand::rand::Rng;
 use ndarray_rand::rand::prelude::SliceRandom;
@@ -162,9 +162,9 @@ impl Dataset {
     /// - `rng`: A mutable reference to a random number generator for shuffling.
     /// - `images`: A vector of images represented as 1D arrays of pixel values.
     /// - `labels`: A vector of labels corresponding to each image.
-    pub fn from_image_vec<R: Rng>(
+    pub fn from_vec<R: Rng>(
         rng: &mut R,
-        images: Vec<Array1<u8>>,
+        images: Vec<Array1<f32>>,
         labels: Vec<usize>,
     ) -> Result<Self, Box<dyn Error>> {
         assert!(
@@ -174,11 +174,11 @@ impl Dataset {
 
         let features: Array2<f32> = Array2::from_shape_vec(
             (images.len(), images[0].len()),
-            images.into_iter().flatten().map(|x| x as f32).collect(),
+            images.into_iter().flatten().collect(),
         )?;
 
         let labels: Array1<f32> =
-            Array1::from_shape_vec(labels.len(), labels.into_iter().map(|x| x as f32).collect())?;
+            Array1::from(labels.into_iter().map(|x| x as f32).collect::<Vec<_>>());
 
         Ok(Dataset::shuffled(rng, &features, &labels))
     }

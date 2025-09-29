@@ -1,4 +1,4 @@
-use crate::storage::h5;
+use crate::io::h5;
 use hdf5_metno::Group;
 use ndarray::{Array1, Array2};
 use crate::data::{Dataset, SplitDataset};

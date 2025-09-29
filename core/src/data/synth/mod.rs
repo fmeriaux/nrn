@@ -4,7 +4,7 @@ mod uniform;
 pub use ring::RingDataset;
 pub use uniform::UniformDataset;
 
-use crate::data::Dataset;
+use crate::data::dataset::Dataset;
 use ndarray::{Array1, Array2, Axis};
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand::prelude::StdRng;

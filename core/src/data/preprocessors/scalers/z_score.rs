@@ -19,7 +19,7 @@
 //! ```
 //!
 
-use crate::scalers::Scaler;
+use crate::data::scalers::Scaler;
 use ndarray::{Array1, ArrayView2, ArrayViewMut2, Axis};
 /// ZScoreScaler that normalizes each feature to zero mean and unit variance.
 ///

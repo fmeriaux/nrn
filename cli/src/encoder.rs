@@ -1,7 +1,4 @@
 use fs::read_dir;
-use image::imageops::FilterType::Nearest;
-use image::ImageReader;
-use ndarray::Array1;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;
@@ -30,20 +27,4 @@ pub fn extract_categories<P: AsRef<Path>>(root: &P) -> Result<CategoryMap, Box<d
         });
 
     Ok(categories)
-}
-
-pub fn encode_image<P: AsRef<Path>>(
-    img_shape: (u32, u32),
-    grayscale: bool,
-    path: &P,
-) -> Result<Array1<u8>, Box<dyn Error>> {
-    let img = ImageReader::open(path)?.decode()?;
-    let img = img.resize_exact(img_shape.0, img_shape.1, Nearest);
-    let len: usize = (img_shape.0 * img_shape.1) as usize;
-
-    if grayscale {
-        return Ok(Array1::from_shape_vec(len, img.to_luma8().into_raw())?);
-    }
-
-    Ok(Array1::from_shape_vec(len * 3, img.to_rgb8().into_raw())?)
 }

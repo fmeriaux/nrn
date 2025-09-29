@@ -6,3 +6,4 @@ pub mod scalers;
 pub mod data;
 pub mod model;
 pub mod training;
+pub mod bytes;

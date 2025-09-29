@@ -1,5 +1,5 @@
-use crate::data::Dataset;
-use crate::synth::{
+use crate::data::dataset::Dataset;
+use crate::data::synth::{
     DatasetGenerator, calculate_radius, feature_bounds, init_features_and_labels, random_points,
 };
 use ndarray::{Array2, s};

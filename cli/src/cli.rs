@@ -1,24 +1,27 @@
 use crate::commands::Command::*;
 use crate::commands::EncodeCommand::{Img, ImgDir};
 use crate::commands::{Command, DistributionOption};
-use crate::encoder::{encode_image, extract_categories};
-use crate::plot::DecisionBoundaryView;
+use crate::encoder::extract_categories;
+use crate::plot::chart;
+use crate::plot::gif::DecisionBoundaryView;
 use crate::progression::Progression;
-use crate::{display_info, display_initialization, display_success, display_warning, plot};
+use crate::{display_info, display_initialization, display_success, display_warning};
 use colored::Colorize;
 use ndarray::{Array1, ArrayView2};
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::prelude::StdRng;
 use nrn::accuracies::{Accuracy, BINARY_ACCURACY, MULTI_CLASS_ACCURACY};
 use nrn::activations::{RELU, SIGMOID, SOFTMAX};
+use nrn::data::scalers::{Scaler, ScalerMethod};
+use nrn::data::synth::{DatasetGenerator, RingDataset, UniformDataset};
+use nrn::data::vectorizers::{ImageEncoder, VectorEncoder};
 use nrn::data::{Dataset, SplitDataset};
+use nrn::io::bytes::secure_read;
+use nrn::io::data::{SplitDatasetExt, load_inputs, save_inputs};
+use nrn::io::scalers::ScalerRecord;
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::{Optimizer, StochasticGradientDescent};
-use nrn::scalers::{Scaler, ScalerMethod};
-use nrn::storage::data::{SplitDatasetExt, load_inputs, save_inputs};
-use nrn::storage::scalers::ScalerRecord;
-use nrn::synth::{DatasetGenerator, RingDataset, UniformDataset};
 use nrn::training::History;
 use std::cmp::Ordering::Equal;
 use std::error::Error;
@@ -85,7 +88,7 @@ fn plot_dataset(
     height: u32,
 ) -> Result<(), Box<dyn Error>> {
     if dataset.n_features() == 2 {
-        plot::of_data(&filename, &dataset, width, height)?;
+        chart::of_data(&filename, &dataset, width, height)?;
         display_success!(
             "{} at {} {}",
             "Plot saved".bright_green(),
@@ -288,11 +291,17 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
                             ),
                         );
 
+                        let encoder = ImageEncoder {
+                            img_shape: (shape, shape),
+                            grayscale,
+                        };
+
                         for entry in read_dir(&root.join(category))?.filter_map(Result::ok) {
                             progression.inc();
 
-                            if let Ok(img) = encode_image((shape, shape), grayscale, &entry.path())
-                            {
+                            let img = secure_read(entry.path())?;
+
+                            if let Ok(img) = encoder.encode(&img) {
                                 data.push(img);
                                 labels.push(label.to_owned());
                             }
@@ -306,7 +315,7 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
                     }
 
                     let mut rng = StdRng::seed_from_u64(seed);
-                    let dataset = Dataset::from_image_vec(&mut rng, data, labels)?;
+                    let dataset = Dataset::from_vec(&mut rng, data, labels)?;
 
                     let split_dataset = dataset.split(train_ratio);
 
@@ -321,9 +330,14 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
                     grayscale,
                     shape,
                 } => {
-                    let image = encode_image((shape, shape), grayscale, &input)?;
+                    let encoder = ImageEncoder {
+                        img_shape: (shape, shape),
+                        grayscale,
+                    };
 
-                    save_inputs(&output, &image.map(|&v| v as f32))?;
+                    let image = encoder.encode(&secure_read(Path::new(&input))?)?;
+
+                    save_inputs(&output, &image)?;
 
                     display_success!("{}", "Image encoded".bright_green());
                 }
@@ -576,14 +590,14 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
         } => {
             let history = load_training_history(&history_file)?;
 
-            plot::of_history(
+            chart::of_history(
                 &format!("loss-{}", history_file),
                 width,
                 height,
                 &[("Loss", &history.loss)],
             )?;
 
-            plot::of_history(
+            chart::of_history(
                 &format!("accuracy-{}", history_file),
                 width,
                 height,

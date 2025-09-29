@@ -3,7 +3,7 @@ use std::path::Path;
 use serde::Serialize;
 use std::io::{Result, Error, ErrorKind::InvalidData};
 use serde::de::DeserializeOwned;
-use crate::storage::path::PathExt;
+use crate::io::path::PathExt;
 
 pub fn save<T: Serialize, P: AsRef<Path>>(value: &T, path: P) -> Result<()> {
     let file_path = path.as_ref().with_extension("json");

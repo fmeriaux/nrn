@@ -1,3 +1,4 @@
+use std::error::Error;
 use clap::Parser;
 
 mod cli;
@@ -17,7 +18,7 @@ struct Args {
     command: Command,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
     cli::handle(args.command)?;
