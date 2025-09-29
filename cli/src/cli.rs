@@ -1,7 +1,6 @@
 use crate::commands::Command::*;
 use crate::commands::EncodeCommand::{Img, ImgDir};
 use crate::commands::{Command, DistributionOption};
-use crate::encoder::extract_categories;
 use crate::plot::chart;
 use crate::plot::gif::DecisionBoundaryView;
 use crate::progression::Progression;
@@ -23,6 +22,7 @@ use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::{Optimizer, StochasticGradientDescent};
 use nrn::training::History;
+use nrn::io::classes::extract_classes;
 use std::cmp::Ordering::Equal;
 use std::error::Error;
 use std::fs::read_dir;
@@ -257,12 +257,12 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
                     // Define categories by iterating over directories
                     let root = Path::new(&input);
 
-                    let categories = extract_categories(&root)?;
+                    let classes = extract_classes(&root)?;
 
                     display_info!(
                         "{}: {}",
-                        "Categories found".bright_cyan(),
-                        categories
+                        "Classes found".bright_cyan(),
+                        classes
                             .iter()
                             .map(|(name, label)| format!(
                                 "{} (as {})",
@@ -276,7 +276,7 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
                     let mut data = Vec::new();
                     let mut labels = Vec::new();
 
-                    for (i, (category, label)) in categories.iter().enumerate() {
+                    for (i, (category, label)) in classes.iter().enumerate() {
                         let total_img = read_dir(&root.join(category))?
                             .filter_map(Result::ok)
                             .count();
@@ -286,7 +286,7 @@ pub(crate) fn handle(command: Command) -> Result<(), Box<dyn Error>> {
                             format!(
                                 "Encoding category [{}/{}]: {}",
                                 i + 1,
-                                categories.len(),
+                                classes.len(),
                                 category.bright_blue()
                             ),
                         );

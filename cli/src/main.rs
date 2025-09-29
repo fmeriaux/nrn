@@ -3,8 +3,7 @@ use clap::Parser;
 
 mod cli;
 mod commands;
-mod encoder;
-mod log;
+mod console;
 mod plot;
 mod progression;
 
