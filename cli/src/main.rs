@@ -1,26 +1,15 @@
-use std::error::Error;
+use crate::cli::CliArgs;
 use clap::Parser;
+use std::error::Error;
 
+mod actions;
 mod cli;
 mod commands;
 mod console;
 mod plot;
 mod progression;
 
-use crate::commands::Command;
-
-/// Command line interface for a neural network training and prediction tool.
-#[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
-struct Args {
-    #[command(subcommand)]
-    command: Command,
-}
-
 fn main() -> Result<(), Box<dyn Error>> {
-    let args = Args::parse();
-
-    cli::handle(args.command)?;
-
-    Ok(())
+    let args = CliArgs::parse();
+    args.command.run()
 }
