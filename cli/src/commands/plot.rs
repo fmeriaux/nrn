@@ -1,5 +1,3 @@
-use crate::plot::chart;
-use crate::plot::gif::DecisionBoundaryView;
 use crate::progression::Progression;
 use crate::{actions, display_success, display_warning};
 use clap::Args;
@@ -7,6 +5,8 @@ use colored::Colorize;
 use nrn::data::SplitDataset;
 use nrn::io::data::SplitDatasetExt;
 use std::error::Error;
+use crate::actions::chart::draw_data;
+use crate::actions::gif::GifBuilder;
 
 #[derive(Args, Debug)]
 pub struct PlotArgs {
@@ -23,28 +23,28 @@ pub struct PlotArgs {
 
     /// Specify the width of the plot in pixels
     #[arg(long, default_value_t = 800, value_parser = clap::value_parser!(u32).range(100..=4096))]
-    width: u32,
+    width: u16,
 
     /// Specify the height of the plot in pixels
     #[arg(long, default_value_t = 600, value_parser = clap::value_parser!(u32).range(100..=4096))]
-    height: u32,
+    height: u16,
 }
 
 impl PlotArgs {
     pub fn run(self) -> Result<(), Box<dyn Error>> {
         let history = actions::load_training_history(&self.history)?;
 
-        chart::of_history(
+        actions::chart::of_history(
             &format!("loss-{}", self.history),
-            self.width,
-            self.height,
+            self.width as u32,
+            self.height as u32,
             &[("Loss", &history.loss)],
         )?;
 
-        chart::of_history(
+        actions::chart::of_history(
             &format!("accuracy-{}", self.history),
-            self.width,
-            self.height,
+            self.width as u32,
+            self.height as u32,
             &[
                 ("Train Accuracy", &history.train_accuracy),
                 ("Test Accuracy", &history.test_accuracy),
@@ -76,7 +76,7 @@ impl PlotArgs {
             );
 
             let mut decision_boundaries =
-                DecisionBoundaryView::new(self.width, self.height, dataset.train);
+                GifBuilder::new(self.width, self.height);
 
             for step in progression.iter() {
                 let step_number = step + 1;
@@ -85,7 +85,18 @@ impl PlotArgs {
                     || step_number % interval == 0
                     || step_number == history.model.len()
                 {
-                    decision_boundaries.add_frame(&history.model[step])?;
+
+                    let model = &history.model[step];
+
+                    let rgb_frame = draw_data(
+                        &dataset.train,
+                        self.width as u32,
+                        self.height as u32,
+                        Some(&model),
+                        false,
+                    )?;
+
+                    decision_boundaries.add_frame(rgb_frame)?;
                 }
             }
 

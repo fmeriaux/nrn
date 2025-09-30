@@ -1,4 +1,7 @@
-use crate::plot::chart;
+mod plot;
+
+pub use plot::*;
+
 use crate::{display_initialization, display_success, display_warning};
 use colored::Colorize;
 use nrn::data::scalers::{Scaler, ScalerMethod};
@@ -18,6 +21,7 @@ pub(crate) fn load_dataset(filename: &str) -> Result<SplitDataset, Box<dyn Error
         dataset.train.n_samples().to_string().yellow(),
         dataset.test.n_samples().to_string().yellow()
     );
+
 
     Ok(dataset)
 }

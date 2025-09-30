@@ -6,7 +6,6 @@ mod actions;
 mod cli;
 mod commands;
 mod console;
-mod plot;
 mod progression;
 
 fn main() -> Result<(), Box<dyn Error>> {

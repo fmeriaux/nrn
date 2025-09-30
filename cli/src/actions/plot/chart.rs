@@ -8,6 +8,7 @@ use plotters::prelude::{BLACK, Circle, Color, IntoDrawingArea, RGBColor};
 use plotters::prelude::{BitMapBackend, WHITE};
 use plotters::style::full_palette::*;
 use std::collections::HashSet;
+use std::error::Error;
 use std::fs::File;
 
 const PALETTE_900: &[RGBColor] = &[
@@ -80,7 +81,7 @@ pub fn draw_data(
     height: u32,
     model: Option<&NeuralNetwork>,
     show_legend: bool,
-) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut buffer = create_rgb_buffer(width, height);
     {
         let root = BitMapBackend::with_buffer(&mut buffer, (width, height)).into_drawing_area();
@@ -156,7 +157,7 @@ pub(crate) fn of_history(
     width: u32,
     height: u32,
     series: &[(&str, &[f32])],
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn Error>> {
     let filepath = &format!("{}.png", name);
     let title = format!("Training History - {}", name);
     let root = BitMapBackend::new(&filepath, (width, height)).into_drawing_area();
@@ -207,7 +208,7 @@ pub(crate) fn of_data(
     dataset: &Dataset,
     width: u32,
     height: u32,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn Error>> {
     let buffer = draw_data(&dataset, width, height, None, true)?;
     let filepath = format!("{}.png", name);
     let file = File::create(filepath)?;
