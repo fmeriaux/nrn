@@ -1,42 +1,37 @@
-mod plot;
-
-pub use plot::*;
+pub mod chart;
+mod display;
 
 use crate::{display_initialization, display_success, display_warning};
 use colored::Colorize;
+use console::style;
 use nrn::data::scalers::{Scaler, ScalerMethod};
 use nrn::data::{Dataset, SplitDataset};
 use nrn::io::data::SplitDatasetExt;
 use nrn::io::scalers::ScalerRecord;
-use std::error::Error;
 use nrn::model::NeuralNetwork;
 use nrn::training::History;
+use std::error::Error;
+use std::path::Path;
 
-pub(crate) fn load_dataset(filename: &str) -> Result<SplitDataset, Box<dyn Error>> {
-    let dataset = SplitDataset::load(filename)?;
+pub(crate) fn load_dataset<P: AsRef<Path>>(path: P) -> Result<SplitDataset, Box<dyn Error>> {
+    let dataset = SplitDataset::load(path)?;
 
-    display_initialization!(
-        "Dataset loaded ({} features, {} training samples, {} test samples)",
-        dataset.train.n_features().to_string().yellow(),
-        dataset.train.n_samples().to_string().yellow(),
-        dataset.test.n_samples().to_string().yellow()
+    println!(
+        "[{}] Dataset loaded ({} features, {} training samples, {} test samples)",
+        style("✔").green(),
+        style(dataset.train.n_features()).yellow(),
+        style(dataset.train.n_samples()).yellow(),
+        style(dataset.test.n_samples()).yellow()
     );
-
 
     Ok(dataset)
 }
 
-/// Saves the dataset to a file with the specified filename.
-pub(crate) fn save_dataset(dataset: &SplitDataset, filename: &str) -> Result<(), Box<dyn Error>> {
-    dataset.save(&filename)?;
-
-    display_success!(
-        "{} at {} {}",
-        "Dataset saved".bright_green(),
-        filename.bright_blue().italic(),
-        "(HDF5)".italic().dimmed()
-    );
-
+pub(crate) fn save_dataset<P: AsRef<Path>>(
+    dataset: &SplitDataset,
+    path: P,
+) -> Result<(), Box<dyn Error>> {
+    display::saved_at(dataset.save(&path)?, "Dataset");
     Ok(())
 }
 
@@ -70,13 +65,7 @@ pub(crate) fn plot_dataset(
     height: u32,
 ) -> Result<(), Box<dyn Error>> {
     if dataset.n_features() == 2 {
-        chart::of_data(&filename, &dataset, width, height)?;
-        display_success!(
-            "{} at {} {}",
-            "Plot saved".bright_green(),
-            filename.bright_blue().italic(),
-            "(PNG)".italic().dimmed()
-        );
+        display::saved_at(chart::of_data(&dataset, width, height, &filename)?, "Plot");
     } else {
         display_warning!("Plotting is only available for datasets with exactly two features");
     }
@@ -105,7 +94,6 @@ pub(crate) fn save_model(filename: &str, model: &NeuralNetwork) -> Result<(), Bo
     Ok(())
 }
 
-
 pub(crate) fn load_training_history(filename: &str) -> Result<History, Box<dyn Error>> {
     let history = History::load(filename)?;
 
@@ -123,7 +111,10 @@ pub(crate) fn load_training_history(filename: &str) -> Result<History, Box<dyn E
     Ok(history)
 }
 
-pub(crate) fn save_training_history(filename: &str, history: &History) -> Result<(), Box<dyn Error>> {
+pub(crate) fn save_training_history(
+    filename: &str,
+    history: &History,
+) -> Result<(), Box<dyn Error>> {
     history.save(filename)?;
 
     display_success!(

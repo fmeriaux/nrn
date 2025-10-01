@@ -1094,12 +1094,14 @@ checksum = "0676bb32a98c1a483ce53e500a81ad9c3d5b3f7c920c28c24e9cb0980d0b5bc8"
 name = "nrn"
 version = "0.1.0"
 dependencies = [
+ "gif 0.13.1",
  "hdf5-metno",
  "image 0.25.8",
  "inventory",
  "ndarray",
  "ndarray-rand",
  "once_cell",
+ "png 0.18.0",
  "serde",
  "serde_json",
 ]
@@ -1110,11 +1112,13 @@ version = "0.2.0"
 dependencies = [
  "clap",
  "colored",
+ "console",
  "gif 0.13.1",
  "indicatif",
  "ndarray",
  "ndarray-rand",
  "nrn",
+ "pathdiff",
  "plotters",
  "png 0.18.0",
 ]
@@ -1225,6 +1229,12 @@ name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+
+[[package]]
+name = "pathdiff"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
 
 [[package]]
 name = "pathfinder_geometry"

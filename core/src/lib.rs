@@ -1,6 +1,7 @@
 mod nn;
 pub use nn::*;
 
+pub mod analysis;
 pub mod data;
 
 #[cfg(feature = "io")]

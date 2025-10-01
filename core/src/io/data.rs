@@ -1,9 +1,9 @@
+use crate::data::{Dataset, SplitDataset};
 use crate::io::h5;
 use hdf5_metno::Group;
 use ndarray::{Array1, Array2};
-use crate::data::{Dataset, SplitDataset};
 use std::io::Result;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub fn save_inputs<P: AsRef<Path>>(path: P, inputs: &Array1<f32>) -> Result<()> {
     let file = h5::create_file(path)?;
@@ -58,7 +58,7 @@ impl DatasetExt for Dataset {
 }
 
 pub trait SplitDatasetExt {
-    fn save<P: AsRef<Path>>(&self, path: P) -> Result<()>;
+    fn save<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf>;
     fn load<P: AsRef<Path>>(path: P) -> Result<SplitDataset>;
 }
 
@@ -66,7 +66,9 @@ impl SplitDatasetExt for SplitDataset {
     /// Saves the split dataset to an HDF5 file.
     /// # Arguments
     /// - `path`: The path to the file where the dataset will be saved.
-    fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+    ///
+    /// Returns the path to the saved file.
+    fn save<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf> {
         let file = h5::create_file(path)?;
 
         for (usage, dataset) in self.groups().iter() {
@@ -74,7 +76,7 @@ impl SplitDatasetExt for SplitDataset {
             dataset.save_to_group(&group)?;
         }
 
-        Ok(())
+        Ok(PathBuf::from(file.filename()))
     }
 
     /// Loads a split dataset from an HDF5 file.

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use crate::data::scalers::Scaler;
 use ndarray::{Array1, Array2, ArrayView2, Axis, s};
 use ndarray_rand::rand::Rng;
@@ -29,6 +30,21 @@ impl Dataset {
     /// Returns the number of features in the dataset.
     pub fn n_features(&self) -> usize {
         self.features.ncols()
+    }
+
+    /// Returns a vector of unique labels present in the dataset.
+    /// # Returns
+    /// A vector containing all unique label values found in the `labels` array.
+    /// # Notes
+    /// - The order of labels in the returned vector is not guaranteed.
+    pub fn unique_labels(&self) -> Vec<f32> {
+        let set: HashSet<u32> = self.labels.iter()
+            .map(|&label| label.to_bits())
+            .collect();
+
+        set.into_iter()
+            .map(f32::from_bits)
+            .collect()
     }
 
     /// Returns the maximum label value in the dataset.
