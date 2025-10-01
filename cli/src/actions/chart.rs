@@ -66,7 +66,7 @@ pub fn draw_data(
         }
 
         if let Some(model) = model {
-            let decision_boundary = decision_boundary(&[min, min], &[max, max], 500, model);
+            let decision_boundary = decision_boundary(&[min, min], &[max, max], model, 800, 0.01);
 
             chart.draw_series(
                 decision_boundary
