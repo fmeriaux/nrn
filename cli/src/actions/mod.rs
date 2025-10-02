@@ -1,12 +1,13 @@
-pub mod chart;
 mod display;
 
+use crate::charts::{DatasetChart, RenderConfig};
 use crate::{display_initialization, display_success, display_warning};
 use colored::Colorize;
 use console::style;
 use nrn::data::scalers::{Scaler, ScalerMethod};
 use nrn::data::{Dataset, SplitDataset};
 use nrn::io::data::SplitDatasetExt;
+use nrn::io::png::save_rgb;
 use nrn::io::scalers::ScalerRecord;
 use nrn::model::NeuralNetwork;
 use nrn::training::History;
@@ -65,7 +66,11 @@ pub(crate) fn plot_dataset(
     height: u32,
 ) -> Result<(), Box<dyn Error>> {
     if dataset.n_features() == 2 {
-        display::saved_at(chart::of_data(&dataset, width, height, &filename)?, "Plot");
+        let render_cfg = RenderConfig::new(width, height);
+        display::saved_at(
+            save_rgb(dataset.draw(&render_cfg)?, filename, width, height)?,
+            "Plot",
+        );
     } else {
         display_warning!("Plotting is only available for datasets with exactly two features");
     }

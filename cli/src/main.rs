@@ -7,6 +7,7 @@ mod cli;
 mod commands;
 mod console;
 mod progression;
+mod charts;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args = CliArgs::parse();

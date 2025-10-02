@@ -1,4 +1,4 @@
-use crate::actions::chart::draw_data;
+use crate::charts::{DecisionBoundaryChart, HistoryChart, RenderConfig};
 use crate::progression::Progression;
 use crate::{actions, display_success, display_warning};
 use clap::Args;
@@ -6,6 +6,7 @@ use colored::Colorize;
 use nrn::data::SplitDataset;
 use nrn::io::data::SplitDatasetExt;
 use nrn::io::gif::save_gif_from_rgb;
+use nrn::io::png::save_rgb;
 use std::error::Error;
 
 #[derive(Args, Debug)]
@@ -33,23 +34,12 @@ pub struct PlotArgs {
 impl PlotArgs {
     pub fn run(self) -> Result<(), Box<dyn Error>> {
         let history = actions::load_training_history(&self.history)?;
+        let render_cfg = RenderConfig::new(self.width as u32, self.height as u32);
 
-        actions::chart::of_history(
-            &format!("loss-{}", self.history),
-            self.width as u32,
-            self.height as u32,
-            &[("Loss", &history.loss)],
-        )?;
+        let (width, height) = (self.width as u32, self.height as u32);
 
-        actions::chart::of_history(
-            &format!("accuracy-{}", self.history),
-            self.width as u32,
-            self.height as u32,
-            &[
-                ("Train Accuracy", &history.train_accuracy),
-                ("Test Accuracy", &history.test_accuracy),
-            ],
-        )?;
+        let frame = history.draw(&render_cfg)?;
+        save_rgb(frame, &self.history, width, height)?;
 
         display_success!(
             "{} at {} {}",
@@ -86,13 +76,7 @@ impl PlotArgs {
                 {
                     let model = &history.model[step];
 
-                    let rgb_frame = draw_data(
-                        &dataset.train,
-                        self.width as u32,
-                        self.height as u32,
-                        Some(&model),
-                        false,
-                    )?;
+                    let rgb_frame = model.draw_decision_boundary(&dataset.train, &render_cfg)?;
 
                     decision_frames.push(rgb_frame);
                 }

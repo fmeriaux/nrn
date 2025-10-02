@@ -66,13 +66,7 @@ impl NeuralNetwork {
 
         let activations = self.forward(inputs);
 
-        self.update(
-            &activations,
-            targets,
-            loss_function,
-            optimizer,
-            max_norm,
-        );
+        self.update(&activations, targets, loss_function, optimizer, max_norm);
 
         last_activation(&activations)
     }
@@ -197,5 +191,46 @@ impl History {
             .push(accuracy.compute(train_predictions, train_targets));
         self.test_accuracy
             .push(accuracy.compute(test_predictions, test_targets));
+    }
+
+    fn range_for_vec(data: &Vec<f32>) -> Option<(f32, f32)> {
+        if data.is_empty() {
+            return None;
+        }
+
+        let (min, max) = data
+            .iter()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), &value| {
+                (min.min(value), max.max(value))
+            });
+
+        Some((min, max))
+    }
+
+    /// Returns the range of loss values recorded in the training history as a tuple (min_loss, max_loss).
+    /// If no loss values are recorded, it returns `None`.
+    pub fn loss_range(&self) -> Option<(f32, f32)> {
+        Self::range_for_vec(&self.loss)
+    }
+
+    /// Returns the range of test accuracy values recorded in the training history as a tuple (min_accuracy, max_accuracy).
+    /// If no accuracy values are recorded, it returns `None`.
+    pub fn train_accuracy_range(&self) -> Option<(f32, f32)> {
+        Self::range_for_vec(&self.train_accuracy)
+    }
+
+    /// Returns the range of test accuracy values recorded in the training history as a tuple (min_accuracy, max_accuracy).
+    /// If no accuracy values are recorded, it returns `None`.
+    pub fn test_accuracy_range(&self) -> Option<(f32, f32)> {
+        Self::range_for_vec(&self.test_accuracy)
+    }
+
+    /// Returns the combined range of training and test accuracy values recorded in the training history
+    /// as a tuple (min_accuracy, max_accuracy).
+    /// If no accuracy values are recorded, it returns `None`.
+    pub fn accuracy_range(&self) -> Option<(f32, f32)> {
+        let (train_min, train_max) = self.train_accuracy_range()?;
+        let (test_min, test_max) = self.test_accuracy_range()?;
+        Some((train_min.min(test_min), train_max.max(test_max)))
     }
 }

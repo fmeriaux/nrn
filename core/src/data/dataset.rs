@@ -1,8 +1,8 @@
-use std::collections::HashSet;
 use crate::data::scalers::Scaler;
 use ndarray::{Array1, Array2, ArrayView2, Axis, s};
 use ndarray_rand::rand::Rng;
 use ndarray_rand::rand::prelude::SliceRandom;
+use std::collections::HashSet;
 use std::error::Error;
 
 /// A dataset containing features and labels for clustering tasks.
@@ -38,13 +38,25 @@ impl Dataset {
     /// # Notes
     /// - The order of labels in the returned vector is not guaranteed.
     pub fn unique_labels(&self) -> Vec<f32> {
-        let set: HashSet<u32> = self.labels.iter()
-            .map(|&label| label.to_bits())
+        let set: HashSet<u32> = self.labels.iter().map(|&label| label.to_bits()).collect();
+
+        set.into_iter().map(f32::from_bits).collect()
+    }
+
+    /// Returns all feature rows corresponding to a specific label.
+    /// # Arguments
+    /// - `label`: The label value for which to retrieve the feature rows.
+    /// # Returns
+    /// A 2D array containing all feature rows where the corresponding label matches the input.
+    pub fn get_features_for_label(&self, label: f32) -> Array2<f32> {
+        let indices: Vec<usize> = self
+            .labels
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &l)| if l == label { Some(i) } else { None })
             .collect();
 
-        set.into_iter()
-            .map(f32::from_bits)
-            .collect()
+        self.features.select(Axis(0), &indices).to_owned()
     }
 
     /// Returns the maximum label value in the dataset.
@@ -64,6 +76,33 @@ impl Dataset {
     /// ```
     pub fn max_label(&self) -> usize {
         self.labels.fold(0, |max, &label| max.max(label as usize))
+    }
+
+    /// Computes the minimum and maximum values for each feature in the dataset.
+    /// # Returns
+    /// An `Option` containing a tuple of two vectors:
+    /// - The first vector contains the minimum values for each feature.
+    /// - The second vector contains the maximum values for each feature.
+    /// If the dataset has no samples, returns `None`.
+    ///
+    pub fn feature_range(&self) -> Option<(Vec<f32>, Vec<f32>)> {
+        if self.features.nrows() == 0 {
+            return None;
+        }
+
+        let n_features = self.n_features();
+
+        let mut mins = vec![f32::INFINITY; n_features];
+        let mut maxs = vec![f32::NEG_INFINITY; n_features];
+
+        for (i, feature) in self.features.axis_iter(Axis(1)).enumerate() {
+            for &value in feature.iter() {
+                mins[i] = mins[i].min(value);
+                maxs[i] = maxs[i].max(value);
+            }
+        }
+
+        Some((mins, maxs))
     }
 
     /// Applies the specified scaling method to the training and test datasets.
@@ -149,7 +188,6 @@ impl Dataset {
     }
 
     /// Shuffles the dataset features and labels in unison using a random number generator.
-    /// Shuffles can be useful to ensure that the data is randomly ordered before splitting into training
     /// # Arguments
     /// - `rng`: A mutable reference to a random number generator.
     /// # Details

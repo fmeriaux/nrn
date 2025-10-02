@@ -17,7 +17,7 @@
 //! can be used with external plotting libraries.
 
 use crate::model::NeuralNetwork;
-use ndarray::Array2;
+use ndarray::{Array2, Axis};
 
 /// Computes decision boundary points for a trained neural network with custom tolerance.
 ///
@@ -34,7 +34,7 @@ use ndarray::Array2;
 ///
 /// # Returns
 ///
-/// A vector of points (each point is a Vec<f32>) that lie approximately on the decision boundary.
+/// An `Array2<f32>` where each row represents a point on the decision boundary.
 ///
 /// # Classification Behavior
 ///
@@ -56,7 +56,7 @@ pub fn decision_boundary(
     model: &NeuralNetwork,
     resolution: usize,
     tolerance: f32,
-) -> Vec<Vec<f32>> {
+) -> Array2<f32> {
     assert!(
         resolution >= 2,
         "Resolution must be at least 2 for meaningful boundary analysis. Got: {}",
@@ -70,7 +70,7 @@ pub fn decision_boundary(
     );
 
     if mins.len() == 0 {
-        return vec![];
+        return Array2::zeros((0, 0));
     }
 
     assert!(
@@ -83,8 +83,8 @@ pub fn decision_boundary(
 
     let n_outputs = predictions.nrows();
 
-    grid_points
-        .iter()
+    let boundary_indices: Vec<usize> = grid_points
+        .outer_iter()
         .enumerate()
         .filter(|(i, _)| {
             let pred = predictions.column(*i);
@@ -98,8 +98,10 @@ pub fn decision_boundary(
                 (probabilities[0] - probabilities[1]).abs() < tolerance
             }
         })
-        .map(|(_, pt)| pt.clone())
-        .collect()
+        .map(|(i, _)| i)
+        .collect();
+
+    grid_points.select(Axis(0), &boundary_indices)
 }
 
 /// Creates a grid of points and corresponding inputs for neural network evaluation.
@@ -116,13 +118,13 @@ pub fn decision_boundary(
 /// # Returns
 ///
 /// A tuple containing:
-/// - Vector of grid points (each point as Vec<f32>)
+/// - Array2<f32> of grid points (total_points × dimensions)
 /// - Array2<f32> formatted for neural network input (dimensions × total_points)
 fn make_grid_and_inputs(
     mins: &[f32],
     maxs: &[f32],
     resolution: usize,
-) -> (Vec<Vec<f32>>, Array2<f32>) {
+) -> (Array2<f32>, Array2<f32>) {
     let n_dims = mins.len();
 
     // Calculate steps for each dimension
@@ -135,7 +137,7 @@ fn make_grid_and_inputs(
 
     // Generate all grid points using recursive backtracking
     let total_points = resolution.pow(n_dims as u32);
-    let mut grid_points = Vec::with_capacity(total_points);
+    let mut nested_points = Vec::with_capacity(total_points);
 
     generate_points_recursive(
         &mins,
@@ -143,19 +145,21 @@ fn make_grid_and_inputs(
         resolution,
         n_dims,
         &mut vec![],
-        &mut grid_points,
+        &mut nested_points,
     );
 
     // Reorganize grid points by dimension for model input format
     // Example: points [(x1,y1), (x2,y2)] become dims [[x1,x2], [y1,y2]]
     let mut flat = Vec::with_capacity(n_dims * total_points);
     for dim in 0..n_dims {
-        for point in &grid_points {
+        for point in &nested_points {
             flat.push(point[dim]);
         }
     }
 
     let inputs = Array2::from_shape_vec((n_dims, total_points), flat).unwrap();
+    let grid_points =
+        Array2::from_shape_vec((total_points, n_dims), nested_points.concat()).unwrap();
     (grid_points, inputs)
 }
 
