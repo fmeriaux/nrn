@@ -66,7 +66,7 @@ pub struct TrainArgs {
     clip_norm: f32,
 
     /// Specify the gradient clipping value to prevent exploding gradients.
-    /// The value creates a symmetric range [-value, value] for gradient clipping.
+    /// This performs element-wise clipping: each gradient component is clipped individually to the symmetric range [-value, value].
     #[arg(long, conflicts_with_all = &["clip_norm", "no_clip"])]
     clip_value: Option<f32>,
 
