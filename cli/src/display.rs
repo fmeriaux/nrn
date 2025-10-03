@@ -2,7 +2,7 @@ use console::{Emoji, style};
 use nrn::data::SplitDataset;
 use nrn::data::scalers::{Scaler, ScalerMethod};
 use nrn::model::NeuralNetwork;
-use nrn::training::History;
+use nrn::training::{GradientClipping, History};
 use pathdiff::diff_paths;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -77,6 +77,31 @@ impl Summary for History {
             style(self.final_train_accuracy().summary()).yellow(),
             style(self.final_test_accuracy().summary()).yellow()
         )
+    }
+}
+
+impl Summary for GradientClipping {
+    fn summary(&self) -> String {
+        match self {
+            GradientClipping::None => {
+                format!("{}", style("No Clipping").bold().blue())
+            }
+            GradientClipping::Norm { max_norm } => {
+                format!(
+                    "{} (max {})",
+                    style("Clipping by Norm").bold().blue(),
+                    style(max_norm).yellow()
+                )
+            }
+            GradientClipping::Value { min, max } => {
+                format!(
+                    "{} (min {}, max {})",
+                    style("Clipping by Value").bold().blue(),
+                    style(min).yellow(),
+                    style(max).yellow()
+                )
+            }
+        }
     }
 }
 

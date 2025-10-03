@@ -1,5 +1,5 @@
 use crate::actions;
-use crate::display::{completed, trace};
+use crate::display::{Summary, completed, trace};
 use crate::progression::Progression;
 use clap::{Args, ValueEnum};
 use console::style;
@@ -10,7 +10,7 @@ use nrn::data::SplitDataset;
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::{Adam, Optimizer, StochasticGradientDescent};
-use nrn::training::History;
+use nrn::training::{GradientClipping, History};
 use std::error::Error;
 use std::fmt::Display;
 use std::iter::once;
@@ -61,9 +61,18 @@ pub struct TrainArgs {
     #[arg(long, default_value_t = 0.001)]
     learning_rate: f32,
 
-    /// Specify the maximum norm for gradient clipping
-    #[arg(long, default_value_t = 1.0)]
-    max_norm: f32,
+    /// Specify the gradient clipping norm to prevent exploding gradients
+    #[arg(long, default_value_t = 1.0, conflicts_with_all = &["clip_value", "no_clip"])]
+    clip_norm: f32,
+
+    /// Specify the gradient clipping value to prevent exploding gradients.
+    /// This performs element-wise clipping: each gradient component is clipped individually to the symmetric range [-value, value].
+    #[arg(long, conflicts_with_all = &["clip_norm", "no_clip"])]
+    clip_value: Option<f32>,
+
+    /// Disable gradient clipping
+    #[arg(long, conflicts_with_all = &["clip_norm", "clip_value"])]
+    no_clip: bool,
 }
 
 impl TrainArgs {
@@ -75,12 +84,19 @@ impl TrainArgs {
             style("Cross-Entropy").bold().blue()
         ));
 
-        let optimizer: Arc<Mutex<dyn Optimizer>> = create_optimizer(&self.optimizer, self.learning_rate);
+        let optimizer: Arc<Mutex<dyn Optimizer>> =
+            create_optimizer(&self.optimizer, self.learning_rate);
 
         trace(&format!(
             "Using {} optimizer with learning rate {}",
             style(self.optimizer).bold().blue(),
             style(self.learning_rate).yellow()
+        ));
+
+        let clipping = select_clipping(self.clip_norm, self.clip_value, self.no_clip);
+        trace(&format!(
+            "Using {}",
+            clipping.summary()
         ));
 
         let SplitDataset { train, test } = actions::load_dataset(&self.dataset)?;
@@ -147,7 +163,7 @@ impl TrainArgs {
                 train_targets,
                 &loss_function,
                 &optimizer,
-                self.max_norm,
+                &clipping,
             );
 
             if let Some(ref mut history) = history {
@@ -211,5 +227,20 @@ fn create_optimizer(
     match optimizer_type {
         OptimizerType::SGD => Arc::new(Mutex::new(StochasticGradientDescent::new(learning_rate))),
         OptimizerType::Adam => Arc::new(Mutex::new(Adam::with_defaults(learning_rate))),
+    }
+}
+
+fn select_clipping(clip_norm: f32, clip_value: Option<f32>, no_clip: bool) -> GradientClipping {
+    if no_clip {
+        GradientClipping::None
+    } else if let Some(value) = clip_value {
+        GradientClipping::Value {
+            min: -value,
+            max: value,
+        }
+    } else {
+        GradientClipping::Norm {
+            max_norm: clip_norm,
+        }
     }
 }
