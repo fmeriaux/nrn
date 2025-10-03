@@ -12,6 +12,7 @@ use nrn::io::data::save_inputs;
 use std::error::Error;
 use std::fs::read_dir;
 use std::path::Path;
+use crate::display::{completed, trace};
 
 #[derive(Args, Debug)]
 pub struct EncodeArgs {
@@ -70,7 +71,7 @@ impl ImgDirArgs {
 
         let classes = extract_classes(&root)?;
 
-        println!(
+        trace(&format!(
             "{}: {}",
             style("Classes found").bright().cyan(),
             classes
@@ -82,7 +83,7 @@ impl ImgDirArgs {
                 ))
                 .collect::<Vec<_>>()
                 .join(", ")
-        );
+        ));
 
         let mut data = Vec::new();
         let mut labels = Vec::new();
@@ -130,7 +131,7 @@ impl ImgDirArgs {
 
         let split_dataset = dataset.split(self.train_ratio);
 
-        println!("{}", style("Image dataset encoded").bright().green());
+        completed(style("Encoding completed").bright().green().to_string().as_str());
 
         actions::save_dataset(split_dataset, "IMAGE DATASET", false, &self.output)?;
 

@@ -126,41 +126,41 @@ Below is a typical workflow using the CLI to generate a synthetic dataset, visua
 #### 1. Generate a uniform dataset
 
 ```sh
-nrn synth --seed 1024 --distribution uniform --samples 200 --features 2 --clusters 2 --plot
+nrn synth --seed 1024 --distribution uniform --samples 500 --features 2 --clusters 2 --plot
 ```
 **Output files:**
-- `uniform-c2-f2-n200-seed1024.h5`: generated synthetic dataset (required for next steps).
-- `uniform-c2-f2-n200-seed1024.png`: dataset visualization (only if two features).
+- `uniform-c2-f2-n500-seed1024.h5`: generated synthetic dataset (required for next steps).
+- `uniform-c2-f2-n500-seed1024.png`: dataset visualization (only if two features).
 
 > [!IMPORTANT]
 > The seed value is important for dataset quality. Some seeds may produce overlapping clusters; pay attention to the seed choice to ensure well-separated clusters if needed.
 
 **Example of generated dataset:**
 
-![Synthetic dataset: 2 uniform clusters](tutorials/uniform-c2-f2-n200-seed1024.png)
+![Synthetic dataset: 2 uniform clusters](tutorials/uniform-c2-f2-n500-seed1024.png)
 
 #### 2. Scale the dataset
 
 See the [Data Scaling and Normalization](#data-scaling-and-normalization) section above for a detailed explanation of the importance and methods of normalization. Here is how to apply normalization in practice:
 
 ```sh
-nrn scale uniform-c2-f2-n200-seed1024 z-score --plot
+nrn scale uniform-c2-f2-n500-seed1024 z-score --plot
 ```
 **Output files:**
-- `scaled-uniform-c2-f2-n200-seed1024.h5`: scaled dataset, ready for training.
-- `scaled-uniform-c2-f2-n200-seed1024.png`: visualization of the scaled data.
-- `scaler-uniform-c2-f2-n200-seed1024.json`: scaling parameters (mean, std; required for prediction to ensure consistency).
+- `scaled-uniform-c2-f2-n500-seed1024.h5`: scaled dataset, ready for training.
+- `scaled-uniform-c2-f2-n500-seed1024.png`: visualization of the scaled data.
+- `scaler-uniform-c2-f2-n500-seed1024.json`: scaling parameters (mean, std; required for prediction to ensure consistency).
 
 **Example of scaled data visualization:**
 
 *Be attentive to the scale: after normalization, the clusters may look similar to the original, which is expected and a sign that the scaling preserved the structure of the data.*
 
-![Scaled synthetic dataset: z-score](tutorials/scaled-uniform-c2-f2-n200-seed1024.png)
+![Scaled synthetic dataset: z-score](tutorials/scaled-uniform-c2-f2-n500-seed1024.png)
 
 #### 3. Train a Single-Layer Perceptron (SLP)
 
 ```sh
-nrn train scaled-uniform-c2-f2-n200-seed1024 --epochs 3000
+nrn train scaled-uniform-c2-f2-n500-seed1024 --epochs 1000
 ```
 **Output files:**
 - `model-scaled-uniform-c2-f2-n200-seed1024.h5`: trained model (architecture and weights; required for prediction).
@@ -174,29 +174,26 @@ The CLI also reports the final loss, training accuracy, and test accuracy.
 #### 4. Visualize training history (loss, accuracy, decision boundary)
 
 ```sh
-nrn plot training-model-scaled-uniform-c2-f2-n200-seed1024 --dataset scaled-uniform-c2-f2-n200-seed1024
+nrn plot training-model-scaled-uniform-c2-f2-n500-seed1024 --dataset scaled-uniform-c2-f2-n500-seed1024
 ```
 **Output files:**
 - `training-model-scaled-uniform-c2-f2-n200-seed1024.gif`: decision boundary animation (only for 2D datasets).
-- `loss-training-model-scaled-uniform-c2-f2-n200-seed1024.png`: loss curve.
-- `accuracy-training-model-scaled-uniform-c2-f2-n200-seed1024.png`: accuracy curve.
+- `training-model-scaled-uniform-c2-f2-n200-seed1024.png`: loss and accuracy curves.
 
 *The loss curve shows how the model's error decreases during training, indicating learning progress and convergence.*
-
-![Loss curve](tutorials/loss-training-model-scaled-uniform-c2-f2-n200-seed1024.png)
-
 *The accuracy curve shows the proportion of correct predictions during training (train accuracy) and on the validation/test set (test accuracy). Comparing both helps to assess model performance and detect overfitting (train accuracy much higher than test accuracy) or underfitting (both low).* 
 
-![Accuracy curve](tutorials/accuracy-training-model-scaled-uniform-c2-f2-n200-seed1024.png)
+![Training curves](tutorials/training-model-scaled-uniform-c2-f2-n500-seed1024.png)
 
 *The decision boundary animation shows how the model's classification regions evolve during training. It helps to visually understand how the network learns to separate the clusters and how quickly the boundary stabilizes. This is especially useful for 2D datasets to interpret the model's learning dynamics.*
+*A broad decision boundary indicates uncertainty, while a sharp boundary indicates confidence in classification.*
 
-![Decision boundary animation](tutorials/training-model-scaled-uniform-c2-f2-n200-seed1024.gif)
+![Decision boundary animation](tutorials/training-model-scaled-uniform-c2-f2-n500-seed1024.gif)
 
 #### 5. Make predictions
 
 ```sh
-nrn predict model-scaled-uniform-c2-f2-n200-seed1024 --scaler scaler-uniform-c2-f2-n200-seed1024
+nrn predict model-scaled-uniform-c2-f2-n500-seed1024 --scaler scaler-uniform-c2-f2-n500-seed1024
 ```
 - Use the trained model to make predictions on new data.
 - The `--scaler` option ensures the same scaling is applied as during training.
@@ -204,16 +201,16 @@ nrn predict model-scaled-uniform-c2-f2-n200-seed1024 --scaler scaler-uniform-c2-
 **Interactive example:**
 
 ```sh
-nrn predict model-scaled-uniform-c2-f2-n200-seed1024 --scaler scaler-uniform-c2-f2-n200-seed1024
-/// Neural network loaded ([2] -> 1-sigmoid)
-/// Scaler loaded (z-score)
+nrn predict model-scaled-uniform-c2-f2-n500-seed1024 --scaler scaler-uniform-c2-f2-n500-seed1024
+📥 Loaded NEURAL NETWORK | [2] -> 1-sigmoid
+📥 Loaded SCALER | z-score
 Input[0]:
-5
-Input[1]:
 3
-Predictions for [-0.23714493, -1.3086028]
-|> 1: 62.23%
-|> 0: 37.77%
+Input[1]:
+5
+Predictions for [-1.3665887, -0.14052105]
+|> 0: 57.17%
+|> 1: 42.83%
 ```
 
 - The entered values are automatically normalized (here, [-0.23714493, -1.3086028]).
@@ -233,63 +230,60 @@ To solve this problem, we need to add at least one hidden layer, turning our net
 #### 1. Generate a ring dataset
 
 ```sh
-nrn synth --seed 1024 --distribution ring --samples 400 --features 2 --clusters 2 --plot
+nrn synth --seed 1024 --distribution ring --samples 500 --features 2 --clusters 2 --plot
 ```
 **Output files:**
-- `ring-c2-f2-n400-seed1024.h5`: generated synthetic dataset (rings; required for next steps).
-- `ring-c2-f2-n400-seed1024.png`: dataset visualization (only if two features).
+- `ring-c2-f2-n500-seed1024.h5`: generated synthetic dataset (rings; required for next steps).
+- `ring-c2-f2-n500-seed1024.png`: dataset visualization (only if two features).
 
 #### Example of generated dataset:
 
-![Synthetic dataset: 2 concentric rings](tutorials/ring-c2-f2-n400-seed1024.png)
+![Synthetic dataset: 2 concentric rings](tutorials/ring-c2-f2-n500-seed1024.png)
 
 #### 2. Scale the dataset
 
 Scales the features using z-score normalization and visualizes the scaled data.
 
 ```sh
-nrn scale ring-c2-f2-n400-seed1024 z-score --plot
+nrn scale ring-c2-f2-n500-seed1024 z-score --plot
 ```
 **Output files:**
-- `scaled-ring-c2-f2-n400-seed1024.h5`: scaled dataset, ready for training.
-- `scaled-ring-c2-f2-n400-seed1024.png`: visualization of the scaled data.
-- `scaler-ring-c2-f2-n400-seed1024.json`: scaling parameters (mean, std; required for prediction).
+- `scaled-ring-c2-f2-n500-seed1024.h5`: scaled dataset, ready for training.
+- `scaled-ring-c2-f2-n500-seed1024.png`: visualization of the scaled data.
+- `scaler-ring-c2-f2-n500-seed1024.json`: scaling parameters (mean, std; required for prediction).
 
 
 #### Example of scaled data visualization:
 
-![Scaled ring dataset: z-score](tutorials/scaled-ring-c2-f2-n400-seed1024.png)
+![Scaled ring dataset: z-score](tutorials/scaled-ring-c2-f2-n500-seed1024.png)
 
 #### 3. Train a Multi-Layer Perceptron (MLP)
 
 ```sh
-nrn train scaled-ring-c2-f2-n400-seed1024 --layers 32,32 --epochs 30000
+nrn train scaled-ring-c2-f2-n500-seed1024 --layers 16,8 --epochs 30000
 ```
 **Output files:**
-- `model-scaled-ring-c2-f2-n400-seed1024.h5`: trained MLP model (required for prediction).
-- `training-model-scaled-ring-c2-f2-n400-seed1024.h5`: training history (for analysis and visualization).
+- `model-scaled-ring-c2-f2-n500-seed1024.h5`: trained MLP model (required for prediction).
+- `training-model-scaled-ring-c2-f2-n500-seed1024.h5`: training history (for analysis and visualization).
 
-Trains an MLP with two hidden layers of 32 neurons each (you can adjust the number and size of hidden layers as needed).
-The CLI automatically detects the architecture: `[2] -> 32-relu -> 32-relu -> 1-sigmoid`. 
+Trains an MLP with two hidden layers, 16 and 8 neurons (you can adjust the number and size of hidden layers as needed).
+The CLI automatically detects the architecture: `[2] -> 16-relu -> 8-relu -> 1-sigmoid`. 
 Hidden layers use the ReLU activation function, as explained in the [Activation Functions](#activation-functions) section above.
 
 #### 4. Visualize training history (loss, accuracy, decision boundary)
 
 ```sh
-nrn plot training-model-scaled-ring-c2-f2-n400-seed1024 --dataset scaled-ring-c2-f2-n400-seed1024
+nrn plot training-model-scaled-ring-c2-f2-n500-seed1024 --dataset scaled-ring-c2-f2-n500-seed1024
 ```
 **Output files:**
-- `training-model-scaled-ring-c2-f2-n400-seed1024.gif`: decision boundary animation (only for 2D datasets).
-- `loss-training-model-scaled-ring-c2-f2-n400-seed1024.png`: loss curve.
-- `accuracy-training-model-scaled-ring-c2-f2-n400-seed1024.png`: accuracy curve.
+- `training-model-scaled-ring-c2-f2-n500-seed1024.gif`: decision boundary animation (only for 2D datasets).
+- `training-model-scaled-ring-c2-f2-n500-seed1024.png`: loss and accuracy curves.
 
-![Loss curve](tutorials/loss-training-model-scaled-ring-c2-f2-n400-seed1024.png)
-
-![Accuracy curve](tutorials/accuracy-training-model-scaled-ring-c2-f2-n400-seed1024.png)
+![Training curves](tutorials/training-model-scaled-ring-c2-f2-n500-seed1024.png)
 
 *The decision boundary animation shows how the MLP learns a non-linear separation adapted to the ring structure. This visualization demonstrates the power of MLPs for non-linear problems.*
 
-![MLP decision boundary animation](tutorials/training-model-scaled-ring-c2-f2-n400-seed1024.gif)
+![MLP decision boundary animation](tutorials/training-model-scaled-ring-c2-f2-n500-seed1024.gif)
 
 ## Tutorial: MLP on Multi-Class Non-Linear Data
 
@@ -332,33 +326,28 @@ nrn scale ring-c3-f2-n600-seed1024 z-score --plot
 #### 3. Train a Multi-Layer Perceptron (MLP)
 
 ```sh
-nrn train scaled-ring-c3-f2-n600-seed1024 --layers 32,32 --epochs 150000
+nrn train scaled-ring-c3-f2-n600-seed1024 --layers 16,8 --epochs 70000
 ```
 **Output files:**
 - `model-scaled-ring-c3-f2-n600-seed1024.h5`: trained MLP model (required for prediction).
 - `training-model-scaled-ring-c3-f2-n600-seed1024.h5`: training history (for analysis and visualization).
 
 > [!NOTE]
-> The number of epochs is set to 150,000 to ensure proper convergence on this more complex multi-class problem. You may adjust this value depending on your hardware and the desired training duration.
+> The number of epochs is set to 70,000 to ensure proper convergence on this more complex multi-class problem. You may adjust this value depending on your hardware and the desired training duration.
 
-The CLI automatically detects the architecture: `[2] -> 32-relu -> 32-relu -> 3-softmax`. The output layer uses the **Softmax** activation function, which is appropriate for multi-class classification problems. Each output neuron corresponds to one class, and the output values represent the probability for each class.
+The CLI automatically detects the architecture: `[2] -> 16-relu -> 8-relu -> 3-softmax`. The output layer uses the **Softmax** activation function, which is appropriate for multi-class classification problems. Each output neuron corresponds to one class, and the output values represent the probability for each class.
 
 #### 4. Visualize training history (loss, accuracy, decision boundary)
 
 ```sh
-nrn plot training-model-scaled-ring-c3-f2-n600-seed1024 --dataset scaled-ring-c3-f2-n600-seed1024 -f 50
+nrn plot training-model-scaled-ring-c3-f2-n600-seed1024 --dataset scaled-ring-c3-f2-n600-seed1024
 ```
 **Output files:**
 - `training-model-scaled-ring-c3-f2-n600-seed1024.gif`: decision boundary animation (only for 2D datasets).
-- `loss-training-model-scaled-ring-c3-f2-n600-seed1024.png`: loss curve.
-- `accuracy-training-model-scaled-ring-c3-f2-n600-seed1024.png`: accuracy curve.
+- `training-model-scaled-ring-c3-f2-n600-seed1024.png`: loss and accuracy curves.
 
-> [!NOTE]
-> The `-f 50` option increases the number of frames in the decision boundary animation, allowing you to better visualize the evolution of the model during training and to make fuller use of the training history.
+![Training curves](tutorials/training-model-scaled-ring-c3-f2-n600-seed1024.png)
 
-![Loss curve](tutorials/loss-training-model-scaled-ring-c3-f2-n600-seed1024.png)
-
-![Accuracy curve](tutorials/accuracy-training-model-scaled-ring-c3-f2-n600-seed1024.png)
 
 *The decision boundary animation shows how the MLP learns to separate the three classes. The Softmax output enables the network to model complex, non-linear, multi-class boundaries.*
 
@@ -375,15 +364,15 @@ nrn predict model-scaled-ring-c3-f2-n600-seed1024 --scaler scaler-ring-c3-f2-n60
 **Example output:**
 
 ```sh
-/// Neural network loaded ([2] -> 32-relu -> 32-relu -> 3-softmax)
-/// Scaler loaded (z-score)
+📥 Loaded NEURAL NETWORK | [2] -> 16-relu -> 8-relu -> 3-softmax
+📥 Loaded SCALER | z-score
 Input[0]:
 7
 Input[1]:
 9
-Predictions for [0.9694462, 2.0005205]
-|> 2: 99.63%
-|> 1: 0.37%
+Predictions for [1.1158931, 1.865757]
+|> 2: 99.97%
+|> 1: 0.03%
 |> 0: 0.00%
 ```
 
@@ -490,8 +479,8 @@ To predict the digit from a new image:
 
 **Example output:**
 ```sh
-/// Neural network loaded ([784] -> 128-relu -> 128-relu -> 10-softmax)
-/// Scaler loaded (min-max)
+📥 Loaded NEURAL NETWORK | [784] -> 128-relu -> 128-relu -> 10-softmax
+📥 Loaded SCALER | min-max
 Predictions for [0.0, 0.0, ..., 0.0]:
 |> 0: 0.01%
 |> 1: 0.02%

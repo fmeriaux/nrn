@@ -175,7 +175,7 @@ fn select_accuracy(n_classes: usize) -> Arc<dyn Accuracy> {
 fn create_output_layer(n_classes: usize) -> NeuronLayerSpec {
     if n_classes > 2 {
         NeuronLayerSpec {
-            neurons: n_classes + 1,
+            neurons: n_classes,
             activation: SOFTMAX.clone(),
         }
     } else {
