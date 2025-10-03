@@ -5,6 +5,8 @@ use crate::optimizers::Optimizer;
 use ndarray::{Array1, Array2, ArrayView2, Axis};
 use std::sync::{Arc, Mutex};
 
+const EPSILON: f32 = 1e-6;
+
 pub enum GradientClipping {
     /// No gradient clipping is applied.
     None,
@@ -32,7 +34,7 @@ impl Gradients {
         let norm = (dw_norm + db_norm).sqrt();
 
         if norm > max_norm {
-            let scale = max_norm / (norm + 1e-6);
+            let scale = max_norm / (norm + EPSILON);
             self.dw.mapv_inplace(|x| x * scale);
             self.db.mapv_inplace(|x| x * scale);
         }
