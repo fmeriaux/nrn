@@ -5,6 +5,9 @@ use crate::optimizers::Optimizer;
 use ndarray::{Array1, Array2, ArrayView2, Axis};
 use std::sync::{Arc, Mutex};
 
+/// Small constant to prevent division by zero in gradient clipping.
+/// This value was chosen to be sufficiently small to avoid affecting the clipping behavior
+/// while ensuring numerical stability during calculations.
 const EPSILON: f32 = 1e-6;
 
 pub enum GradientClipping {
