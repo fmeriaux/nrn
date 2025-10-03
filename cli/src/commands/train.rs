@@ -1,7 +1,7 @@
 use crate::actions;
 use crate::display::{completed, trace};
 use crate::progression::Progression;
-use clap::Args;
+use clap::{Args, ValueEnum};
 use console::style;
 use ndarray::ArrayView2;
 use nrn::accuracies::{Accuracy, BINARY_ACCURACY, MULTI_CLASS_ACCURACY};
@@ -9,11 +9,27 @@ use nrn::activations::{RELU, SIGMOID, SOFTMAX};
 use nrn::data::SplitDataset;
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
-use nrn::optimizers::{Optimizer, StochasticGradientDescent};
+use nrn::optimizers::{Adam, Optimizer, StochasticGradientDescent};
 use nrn::training::History;
 use std::error::Error;
+use std::fmt::Display;
 use std::iter::once;
 use std::sync::{Arc, Mutex};
+
+#[derive(ValueEnum, Clone, Debug)]
+enum OptimizerType {
+    SGD,
+    Adam,
+}
+
+impl Display for OptimizerType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OptimizerType::SGD => write!(f, "Stochastic Gradient Descent (SGD)"),
+            OptimizerType::Adam => write!(f, "Adam"),
+        }
+    }
+}
 
 #[derive(Args, Debug)]
 pub struct TrainArgs {
@@ -37,6 +53,10 @@ pub struct TrainArgs {
     #[arg(long, value_delimiter = ',', conflicts_with = "model")]
     layers: Option<Vec<usize>>,
 
+    /// Specify the optimizer to use for training
+    #[arg(long, value_enum, default_value_t = OptimizerType::Adam)]
+    optimizer: OptimizerType,
+
     /// Specify the learning rate for the training process
     #[arg(long, default_value_t = 0.001)]
     learning_rate: f32,
@@ -55,13 +75,11 @@ impl TrainArgs {
             style("Cross-Entropy").bold().blue()
         ));
 
-        let optimizer: Arc<Mutex<dyn Optimizer>> = Arc::new(Mutex::new(
-            StochasticGradientDescent::new(self.learning_rate),
-        ));
+        let optimizer: Arc<Mutex<dyn Optimizer>> = create_optimizer(&self.optimizer, self.learning_rate);
 
         trace(&format!(
             "Using {} optimizer with learning rate {}",
-            style("Stochastic Gradient Descent").bold().blue(),
+            style(self.optimizer).bold().blue(),
             style(self.learning_rate).yellow()
         ));
 
@@ -183,5 +201,15 @@ fn create_output_layer(n_classes: usize) -> NeuronLayerSpec {
             neurons: 1,
             activation: SIGMOID.clone(),
         }
+    }
+}
+
+fn create_optimizer(
+    optimizer_type: &OptimizerType,
+    learning_rate: f32,
+) -> Arc<Mutex<dyn Optimizer>> {
+    match optimizer_type {
+        OptimizerType::SGD => Arc::new(Mutex::new(StochasticGradientDescent::new(learning_rate))),
+        OptimizerType::Adam => Arc::new(Mutex::new(Adam::with_defaults(learning_rate))),
     }
 }

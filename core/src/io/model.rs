@@ -34,8 +34,8 @@ impl NeuralNetwork {
 
             group
                 .new_dataset_builder()
-                .with_data(&layer.bias)
-                .create("bias")?;
+                .with_data(&layer.biases)
+                .create("biases")?;
         }
 
         Ok(())
@@ -52,7 +52,7 @@ impl NeuralNetwork {
             match group.group(&layer_name) {
                 Ok(layer_group) => {
                     let weights: Array2<f32> = layer_group.dataset("weights")?.read()?;
-                    let bias: Array1<f32> = layer_group.dataset("bias")?.read()?;
+                    let biases: Array1<f32> = layer_group.dataset("biases")?.read()?;
 
                     let activation_name: String = layer_group
                         .attr("activation")?
@@ -70,7 +70,7 @@ impl NeuralNetwork {
 
                     layers.push(NeuronLayer {
                         weights,
-                        bias,
+                        biases,
                         activation,
                     });
                 }
