@@ -1,9 +1,6 @@
 mod dataset;
 mod training;
 
-pub use dataset::*;
-pub use training::*;
-
 use plotters::backend::BitMapBackend;
 use plotters::chart::{ChartBuilder, ChartContext};
 use plotters::coord::Shift;
@@ -11,23 +8,30 @@ use plotters::coord::ranged1d::{AsRangedCoord, ValueFormatter};
 use plotters::prelude::*;
 use std::error::Error;
 
+/// Provides configuration options for rendering charts.
 pub struct RenderConfig<'a> {
+    /// Width of the chart in pixels.
     pub width: u32,
+    /// Height of the chart in pixels.
     pub height: u32,
+    /// Padding factor to add space around the data points, e.g., 0.05 for 5% padding.
     pub padding_factor: f32,
-    pub text_style: &'a str,
-    pub text_size: u32,
+    /// Font style for text elements in the chart, e.g., "sans-serif".
+    pub font_style: &'a str,
+    /// Font size for text elements in the chart.
+    pub font_size: u32,
+    /// Size of the area allocated for axis labels and legends.
     pub area_size: u32,
 }
 
 impl Default for RenderConfig<'_> {
     fn default() -> Self {
         Self {
-            width: 800,
-            height: 600,
+            width: 1200,
+            height: 900,
             padding_factor: 0.05,
-            text_style: "sans-serif",
-            text_size: 20,
+            font_style: "sans-serif",
+            font_size: 20,
             area_size: 40,
         }
     }
@@ -50,7 +54,8 @@ where
 {
     let mut buffer = vec![255u8; (cfg.width * cfg.height * 3) as usize];
     {
-        let root = BitMapBackend::with_buffer(&mut buffer, (cfg.width, cfg.height)).into_drawing_area();
+        let root =
+            BitMapBackend::with_buffer(&mut buffer, (cfg.width, cfg.height)).into_drawing_area();
         root.fill(&WHITE)?;
 
         draw(&root)?;
@@ -78,7 +83,7 @@ where
     Y::CoordDescType: ValueFormatter<Y::Value>,
 {
     let mut chart = ChartBuilder::on(area)
-        .caption(title, (cfg.text_style, cfg.text_size).into_font())
+        .caption(title, (cfg.font_style, cfg.font_size).into_font())
         .x_label_area_size(cfg.area_size)
         .y_label_area_size(cfg.area_size)
         .build_cartesian_2d(x_range, y_range)?;
@@ -92,6 +97,9 @@ where
             .configure_series_labels()
             .background_style(&WHITE.mix(0.8))
             .border_style(&BLACK)
+            .label_font((cfg.font_style, cfg.font_size))
+            .legend_area_size(cfg.area_size)
+            .position(SeriesLabelPosition::LowerRight)
             .draw()?;
     }
 

@@ -1,37 +1,25 @@
+use crate::analysis::decision_boundary;
 use crate::charts::{RenderConfig, add_padding, draw_chart, draw_with};
-use nrn::analysis::decision_boundary;
-use nrn::data::Dataset;
-use nrn::model::NeuralNetwork;
+use crate::data::Dataset;
+use crate::model::NeuralNetwork;
 use plotters::element::Circle;
 use plotters::prelude::full_palette::RED_900;
 use plotters::prelude::*;
 use std::error::Error;
 
-pub trait DatasetChart {
-    fn draw(&self, cfg: &RenderConfig) -> Result<Vec<u8>, Box<dyn Error>>;
-}
-
-impl DatasetChart for Dataset {
+impl Dataset {
     /// Draws a scatter plot of the dataset features with labels.
     /// Returns the plot as a vector of bytes in RGB format.
-    fn draw(&self, cfg: &RenderConfig) -> Result<Vec<u8>, Box<dyn Error>> {
+    pub fn draw(&self, cfg: &RenderConfig) -> Result<Vec<u8>, Box<dyn Error>> {
         draw_data_with(self, None, cfg, true)
     }
 }
 
-pub trait DecisionBoundaryChart {
-    fn draw_decision_boundary(
-        &self,
-        dataset: &Dataset,
-        cfg: &RenderConfig,
-    ) -> Result<Vec<u8>, Box<dyn Error>>;
-}
-
-impl DecisionBoundaryChart for NeuralNetwork {
+impl NeuralNetwork {
     /// Draws the decision boundary of the neural network over the provided dataset.
     /// The dataset must have exactly two features.
     /// Returns the plot as a vector of bytes in RGB format.
-    fn draw_decision_boundary(
+    pub fn draw_decision_boundary(
         &self,
         dataset: &Dataset,
         cfg: &RenderConfig,

@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use std::error::Error;
 
 /// A dataset containing features and labels for clustering tasks.
+#[derive(Clone)]
 pub struct Dataset {
     /// A 2D array where each row is a sample and each column is a feature
     pub features: Array2<f32>,
@@ -14,6 +15,7 @@ pub struct Dataset {
 }
 
 /// A structure representing a split dataset into training and testing sets.
+#[derive(Clone)]
 pub struct SplitDataset {
     /// A `Dataset` containing the training samples.
     pub train: Dataset,
@@ -30,6 +32,11 @@ impl Dataset {
     /// Returns the number of features in the dataset.
     pub fn n_features(&self) -> usize {
         self.features.ncols()
+    }
+
+    /// Returns the number of unique classes (labels) in the dataset.
+    pub fn n_classes(&self) -> usize {
+        self.unique_labels().len()
     }
 
     /// Returns a vector of unique labels present in the dataset.
@@ -57,25 +64,6 @@ impl Dataset {
             .collect();
 
         self.features.select(Axis(0), &indices).to_owned()
-    }
-
-    /// Returns the maximum label value in the dataset.
-    ///
-    /// # Returns
-    /// The largest value found in the `labels` array, cast to `usize`.
-    ///
-    /// # Notes
-    /// - If the dataset is empty, returns `0`.
-    /// - Assumes that all labels are non-negative and represent class indices.
-    /// - Useful for determining the number of classes (e.g., for one-hot encoding).
-    ///
-    /// # Example
-    /// ```
-    /// let max = dataset.max_label();
-    /// // For labels [0.0, 2.0, 1.0], returns 2
-    /// ```
-    pub fn max_label(&self) -> usize {
-        self.labels.fold(0, |max, &label| max.max(label as usize))
     }
 
     /// Computes the minimum and maximum values for each feature in the dataset.
@@ -130,11 +118,11 @@ impl Dataset {
     pub fn to_model_shape(&self) -> (ArrayView2<'_, f32>, Array2<f32>) {
         let inputs: ArrayView2<f32> = self.features.t();
 
-        let max_label = self.max_label();
+        let n_classes = self.n_classes();
 
-        let targets: Array2<f32> = if max_label > 1 {
+        let targets: Array2<f32> = if n_classes > 2 {
             // If labels are not binary, we need to one-hot encode them
-            let mut one_hot = Array2::zeros((max_label + 1, self.n_samples()));
+            let mut one_hot = Array2::zeros((n_classes, self.n_samples()));
             for (i, &label) in self.labels.iter().enumerate() {
                 one_hot[[label as usize, i]] = 1.0;
             }

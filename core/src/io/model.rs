@@ -1,12 +1,12 @@
 use crate::activations::ActivationProvider;
-use crate::model::{NeuralNetwork, NeuronLayer};
 use crate::io::h5;
+use crate::model::{NeuralNetwork, NeuronLayer};
 use hdf5_metno::Group;
 use hdf5_metno::types::VarLenUnicode;
 use ndarray::{Array1, Array2};
 use std::io::ErrorKind::InvalidData;
 use std::io::{Error, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 impl NeuralNetwork {
     /// Saves the neural network to an HDF5 group.
@@ -88,9 +88,10 @@ impl NeuralNetwork {
     /// Saves the current state of the neural network to an HDF5 file.
     /// # Arguments
     /// - `path`: The path to the file where the network will be saved.
-    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf> {
         let file = h5::create_file(path)?;
-        self.save_to_group(&file)
+        self.save_to_group(&file)?;
+        Ok(PathBuf::from(file.filename()))
     }
 
     /// Loads a neural network from an HDF5 file.

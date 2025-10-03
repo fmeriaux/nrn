@@ -1,18 +1,19 @@
-use std::error::Error;
-use std::iter::once;
-use std::sync::{Arc, Mutex};
+use crate::actions;
+use crate::display::{completed, trace};
+use crate::progression::Progression;
 use clap::Args;
-use colored::Colorize;
+use console::style;
 use ndarray::ArrayView2;
 use nrn::accuracies::{Accuracy, BINARY_ACCURACY, MULTI_CLASS_ACCURACY};
 use nrn::activations::{RELU, SIGMOID, SOFTMAX};
 use nrn::data::SplitDataset;
-use nrn::loss_functions::{LossFunction, CROSS_ENTROPY_LOSS};
+use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::{Optimizer, StochasticGradientDescent};
 use nrn::training::History;
-use crate::{actions, display_info, display_initialization, display_success};
-use crate::progression::Progression;
+use std::error::Error;
+use std::iter::once;
+use std::sync::{Arc, Mutex};
 
 #[derive(Args, Debug)]
 pub struct TrainArgs {
@@ -48,12 +49,25 @@ pub struct TrainArgs {
 impl TrainArgs {
     pub fn run(self) -> Result<(), Box<dyn Error>> {
         let loss_function: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
-        let optimizer: Arc<Mutex<dyn Optimizer>> =
-            Arc::new(Mutex::new(StochasticGradientDescent::new(self.learning_rate)));
+
+        trace(&format!(
+            "Using {} loss function",
+            style("Cross-Entropy").bold().blue()
+        ));
+
+        let optimizer: Arc<Mutex<dyn Optimizer>> = Arc::new(Mutex::new(
+            StochasticGradientDescent::new(self.learning_rate),
+        ));
+
+        trace(&format!(
+            "Using {} optimizer with learning rate {}",
+            style("Stochastic Gradient Descent").bold().blue(),
+            style(self.learning_rate).yellow()
+        ));
 
         let SplitDataset { train, test } = actions::load_dataset(&self.dataset)?;
 
-        let accuracy: Arc<dyn Accuracy> = select_accuracy(train.max_label());
+        let accuracy: Arc<dyn Accuracy> = select_accuracy(train.n_classes());
 
         // 🧠 NEURAL NETWORK INITIALIZATION
         let (train_inputs, train_targets) = train.to_model_shape();
@@ -61,37 +75,30 @@ impl TrainArgs {
         let train_targets = train_targets.view();
         let test_targets = test_targets.view();
 
-        let layer_specs: Vec<NeuronLayerSpec> = self.layers
+        let layer_specs: Vec<NeuronLayerSpec> = self
+            .layers
             .unwrap_or_default()
             .into_iter()
             .map(|neurons| NeuronLayerSpec {
                 neurons,
                 activation: RELU.clone(),
             })
-            .chain(once(create_output_layer(train.max_label())))
+            .chain(once(create_output_layer(train.n_classes())))
             .collect();
 
-        let mut model = self.model
+        let mut model = self
+            .model
             .iter()
             .find_map(|file| actions::load_model(file).ok())
-            .unwrap_or_else(|| initialize_model(train_inputs.nrows(), &layer_specs));
+            .unwrap_or_else(|| actions::initialize_model(train_inputs.nrows(), &layer_specs));
 
         // 👨‍🎓 TRAINING LOOP
         let mut history: Option<History> =
             History::by_interval(self.checkpoint_interval, self.epochs);
 
-        display_info!(
-                    "{} -- {} epochs, learning rate: {}",
-                    "Training".bright_cyan(),
-                    self.epochs.to_string().yellow(),
-                    self.learning_rate.to_string().yellow()
-                );
-
         // Closure to record the training history at each checkpoint
         let record_history =
-            |model: &NeuralNetwork,
-             history: &mut History,
-             train_predictions: ArrayView2<f32>| {
+            |model: &NeuralNetwork, history: &mut History, train_predictions: ArrayView2<f32>| {
                 let test_predictions = model.predict(test_inputs);
                 history.checkpoint(
                     model,
@@ -105,12 +112,11 @@ impl TrainArgs {
             };
 
         if let Some(ref mut history) = history {
-            display_info!(
-                        "{} -- {} checkpoints will be recorded, one every {} epochs",
-                        "History".bright_cyan(),
-                        history.model.capacity().to_string().yellow(),
-                        history.interval.to_string().yellow()
-                    );
+            trace(&format!(
+                "Recording {} checkpoints, one every {} epochs",
+                style(history.model.capacity()).yellow(),
+                style(history.interval).yellow()
+            ));
 
             let train_activations = model.predict(train_inputs);
             record_history(&model, history, train_activations.view());
@@ -137,22 +143,13 @@ impl TrainArgs {
         let train_predictions = model.predict(train_inputs);
         let train_predictions = train_predictions.view();
 
-        display_success!(
-                    "{} -- Loss: {} -- Train Accuracy: {} -- Test Accuracy: {}",
-                    "Training completed".bright_green(),
-                    loss_function
-                        .compute(train_predictions, train_targets)
-                        .to_string()
-                        .yellow(),
-                    accuracy
-                        .compute(train_predictions, train_targets)
-                        .to_string()
-                        .yellow(),
-                    accuracy
-                        .compute(model.predict(test_inputs).view(), test_targets)
-                        .to_string()
-                        .yellow()
-                );
+        completed(&format!(
+            "{} | Loss: {} | Accuracy: Train={}, Test: {}",
+            style("Training completed").bright().green(),
+            style(loss_function.compute(train_predictions, train_targets)).yellow(),
+            style(accuracy.compute(train_predictions, train_targets)).yellow(),
+            style(accuracy.compute(model.predict(test_inputs).view(), test_targets)).yellow()
+        ));
 
         // 🗂️ SAVE THE TRAINED NETWORK
         let model_file = format!("model-{}", self.dataset);
@@ -167,18 +164,18 @@ impl TrainArgs {
     }
 }
 
-fn select_accuracy(max_label: usize) -> Arc<dyn Accuracy> {
-    if max_label > 1 {
+fn select_accuracy(n_classes: usize) -> Arc<dyn Accuracy> {
+    if n_classes > 2 {
         MULTI_CLASS_ACCURACY.clone()
     } else {
         BINARY_ACCURACY.clone()
     }
 }
 
-fn create_output_layer(max_label: usize) -> NeuronLayerSpec {
-    if max_label > 1 {
+fn create_output_layer(n_classes: usize) -> NeuronLayerSpec {
+    if n_classes > 2 {
         NeuronLayerSpec {
-            neurons: max_label + 1,
+            neurons: n_classes + 1,
             activation: SOFTMAX.clone(),
         }
     } else {
@@ -187,12 +184,4 @@ fn create_output_layer(max_label: usize) -> NeuronLayerSpec {
             activation: SIGMOID.clone(),
         }
     }
-}
-
-fn initialize_model(input_size: usize, layer_specs: &Vec<NeuronLayerSpec>) -> NeuralNetwork {
-    let model = NeuralNetwork::initialization(input_size, &layer_specs);
-
-    display_initialization!("Neural network initialized ({})", model.summary().yellow());
-
-    model
 }

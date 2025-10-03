@@ -1,17 +1,17 @@
-use std::error::Error;
-use std::fs::read_dir;
-use std::path::Path;
+use crate::actions;
+use crate::progression::Progression;
 use clap::{Args, Subcommand};
-use colored::Colorize;
-use ndarray_rand::rand::prelude::StdRng;
+use console::style;
 use ndarray_rand::rand::SeedableRng;
+use ndarray_rand::rand::prelude::StdRng;
 use nrn::data::Dataset;
 use nrn::data::vectorizers::{ImageEncoder, VectorEncoder};
 use nrn::io::bytes::secure_read;
 use nrn::io::classes::extract_classes;
 use nrn::io::data::save_inputs;
-use crate::{actions, display_info, display_success};
-use crate::progression::Progression;
+use std::error::Error;
+use std::fs::read_dir;
+use std::path::Path;
 
 #[derive(Args, Debug)]
 pub struct EncodeArgs {
@@ -70,19 +70,19 @@ impl ImgDirArgs {
 
         let classes = extract_classes(&root)?;
 
-        display_info!(
-                            "{}: {}",
-                            "Classes found".bright_cyan(),
-                            classes
-                                .iter()
-                                .map(|(name, label)| format!(
-                                    "{} (as {})",
-                                    name.bright_blue(),
-                                    label.to_string().yellow()
-                                ))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        );
+        println!(
+            "{}: {}",
+            style("Classes found").bright().cyan(),
+            classes
+                .iter()
+                .map(|(name, label)| format!(
+                    "{} (as {})",
+                    style(name).bright().blue(),
+                    style(label).yellow()
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
 
         let mut data = Vec::new();
         let mut labels = Vec::new();
@@ -98,7 +98,7 @@ impl ImgDirArgs {
                     "Encoding category [{}/{}]: {}",
                     i + 1,
                     classes.len(),
-                    category.bright_blue()
+                    style(category).bright().blue()
                 ),
             );
 
@@ -130,9 +130,9 @@ impl ImgDirArgs {
 
         let split_dataset = dataset.split(self.train_ratio);
 
-        display_success!("{}", "Image dataset encoded".bright_green());
+        println!("{}", style("Image dataset encoded").bright().green());
 
-        actions::save_dataset(&split_dataset, &self.output)?;
+        actions::save_dataset(split_dataset, "IMAGE DATASET", false, &self.output)?;
 
         Ok(())
     }
@@ -168,7 +168,7 @@ impl ImgArgs {
 
         save_inputs(&self.output, &image)?;
 
-        display_success!("{}", "Image encoded".bright_green());
+        println!("{}", style("Image encoded").bright().green());
 
         Ok(())
     }

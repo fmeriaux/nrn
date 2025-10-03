@@ -1,10 +1,10 @@
-use std::error::Error;
+use crate::actions;
+use crate::display::generated;
 use clap::{Args, ValueEnum};
+use nrn::data::synth::{DatasetGenerator, RingDataset, UniformDataset};
+use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
-use colored::Colorize;
-use nrn::data::synth::{DatasetGenerator, RingDataset, UniformDataset};
-use crate::{actions, display_success};
 
 #[derive(Args, Debug)]
 pub struct SynthArgs {
@@ -60,7 +60,6 @@ impl fmt::Display for DistributionOption {
     }
 }
 
-
 impl SynthArgs {
     pub fn run(&self) -> Result<(), Box<dyn Error>> {
         // 🗂️ GENERATE THE DATASET
@@ -85,14 +84,7 @@ impl SynthArgs {
 
         let split_dataset = dataset.split(self.train_ratio);
 
-        display_success!(
-                "{} ({} features, {} samples -> {} training, {} test)",
-                "Dataset generated".bright_green(),
-                dataset.n_features().to_string().yellow(),
-                dataset.n_samples().to_string().yellow(),
-                split_dataset.train.n_samples().to_string().yellow(),
-                split_dataset.test.n_samples().to_string().yellow()
-            );
+        generated(&split_dataset);
 
         let filename = format!(
             "{}-c{}-f{}-n{}-seed{}",
@@ -103,11 +95,7 @@ impl SynthArgs {
             self.seed
         );
 
-        actions::save_dataset(&split_dataset, &filename)?;
-
-        if self.plot {
-            actions::plot_dataset(&filename, &dataset, 800, 600)?;
-        }
+        actions::save_dataset(split_dataset, "DATASET", self.plot, &filename)?;
 
         Ok(())
     }

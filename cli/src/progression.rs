@@ -1,5 +1,5 @@
-use std::borrow::Cow;
 use indicatif::{ProgressBar, ProgressBarIter, ProgressDrawTarget, ProgressStyle};
+use std::borrow::Cow;
 use std::ops::Range;
 
 pub struct Progression {
@@ -13,7 +13,7 @@ impl Progression {
         bar.set_length(len as u64);
         bar.set_style(
             ProgressStyle::with_template(
-                "{msg} {spinner:.green} [{elapsed_precise}] {wide_bar} {percent}% ({eta})",
+                "{msg} {spinner:.green} [{elapsed_precise}] {wide_bar} {pos}/{len} {percent}% ({eta})",
             )
             .unwrap(),
         );

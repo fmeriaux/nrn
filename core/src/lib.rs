@@ -6,3 +6,5 @@ pub mod data;
 
 #[cfg(feature = "io")]
 pub mod io;
+#[cfg(feature = "charts")]
+pub mod charts;

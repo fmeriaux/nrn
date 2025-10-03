@@ -1,14 +1,14 @@
-use crate::model::NeuralNetwork;
 use crate::io::h5;
+use crate::model::NeuralNetwork;
 use crate::training::History;
 use std::io::Result;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 impl History {
     /// Saves the training history to an HDF5 file.
     /// # Arguments
     /// - `path`: The path to the file where the history will be saved.
-    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf> {
         let file = h5::create_file(path)?;
 
         file.new_attr::<usize>()
@@ -39,7 +39,7 @@ impl History {
             model.save_to_group(&checkpoint_group)?;
         }
 
-        Ok(())
+        Ok(PathBuf::from(file.filename()))
     }
 
     /// Loads the training history from an HDF5 file.

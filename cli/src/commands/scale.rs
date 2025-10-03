@@ -1,8 +1,10 @@
-use crate::{actions, display_success};
+use crate::actions;
+use crate::display::completed;
 use clap::{Args, ValueEnum};
-use colored::Colorize;
+use console::style;
 use ndarray::ArrayView2;
 use nrn::data::scalers::{MinMaxScaler, Scaler, ScalerMethod, ZScoreScaler};
+use std::path::Path;
 
 #[derive(Args, Debug)]
 pub struct ScaleArgs {
@@ -39,26 +41,22 @@ impl ScaleArgs {
         let scaler = self.scaling.fit(split_dataset.train.features.view());
         split_dataset.scale_inplace(&scaler);
 
-        display_success!(
-            "{} with {}",
-            "Dataset scaled".bright_green(),
-            scaler.name().yellow()
-        );
+        completed(&format!(
+            "Scaled with {}",
+            style(&scaler.name().to_uppercase()).bold().blue()
+        ));
 
-        actions::save_dataset(&split_dataset, &format!("scaled-{}", self.dataset))?;
-        actions::save_scaler(
-            scaler,
-            &format!("scaler-{}", self.dataset.trim_end_matches(".h5")),
-        )?;
+        // Extract the filename without extension
+        let path = Path::new(&self.dataset);
+        let filename = path
+            .file_stem()
+            .ok_or_else(|| panic!("Failed to get file stem from path: {}", path.display()))?;
 
-        if self.plot {
-            actions::plot_dataset(
-                &format!("scaled-{}", self.dataset),
-                &split_dataset.unsplit(),
-                800,
-                600,
-            )?;
-        }
+        let dataset_path = path.with_file_name(format!("scaled-{}", filename.to_string_lossy()));
+        let scaler_path = path.with_file_name(format!("scaler-{}", filename.to_string_lossy()));
+
+        actions::save_dataset(split_dataset, "SCALED DATASET", self.plot, &dataset_path)?;
+        actions::save_scaler(scaler, scaler_path)?;
 
         Ok(())
     }

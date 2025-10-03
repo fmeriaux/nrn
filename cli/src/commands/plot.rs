@@ -1,8 +1,9 @@
-use crate::charts::{DecisionBoundaryChart, HistoryChart, RenderConfig};
+use crate::actions;
+use crate::display::{ANIMATION_ICON, HISTORY_ICON, saved_at};
 use crate::progression::Progression;
-use crate::{actions, display_success, display_warning};
 use clap::Args;
-use colored::Colorize;
+use crate::display::warning;
+use nrn::charts::RenderConfig;
 use nrn::data::SplitDataset;
 use nrn::io::data::SplitDatasetExt;
 use nrn::io::gif::save_gif_from_rgb;
@@ -23,11 +24,11 @@ pub struct PlotArgs {
     frames: u8,
 
     /// Specify the width of the plot in pixels
-    #[arg(long, default_value_t = 800, value_parser = clap::value_parser!(u16).range(100..=4096))]
+    #[arg(long, default_value_t = 1200, value_parser = clap::value_parser!(u16).range(100..=4096))]
     width: u16,
 
     /// Specify the height of the plot in pixels
-    #[arg(long, default_value_t = 600, value_parser = clap::value_parser!(u16).range(100..=4096))]
+    #[arg(long, default_value_t = 900, value_parser = clap::value_parser!(u16).range(100..=4096))]
     height: u16,
 }
 
@@ -39,21 +40,19 @@ impl PlotArgs {
         let (width, height) = (self.width as u32, self.height as u32);
 
         let frame = history.draw(&render_cfg)?;
-        save_rgb(frame, &self.history, width, height)?;
 
-        display_success!(
-            "{} at {} {}",
-            "Training history plots saved".bright_green(),
-            self.history.bright_blue().italic(),
-            "(PNG)".italic().dimmed()
+        saved_at(
+            HISTORY_ICON,
+            "TRAINING CURVES",
+            save_rgb(frame, &self.history, width, height)?,
         );
 
         if let Some(dataset) = self.dataset {
             let dataset = SplitDataset::load(&dataset)?;
 
             if dataset.train.n_features() != 2 {
-                display_warning!(
-                    "Decision boundary visualization is only available for datasets with exactly two features"
+                warning(
+                    "Decision boundary visualization is only available for datasets with exactly two features",
                 );
                 return Ok(());
             }
@@ -82,19 +81,16 @@ impl PlotArgs {
                 }
             }
 
-            save_gif_from_rgb(
-                decision_frames,
-                self.width,
-                self.height,
-                50,
-                &format!("{}", self.history),
-            )?;
-
-            display_success!(
-                "{} at {} {}",
-                "Decision boundary animation saved".bright_green(),
-                self.history.bright_blue().italic(),
-                "(GIF)".italic().dimmed()
+            saved_at(
+                ANIMATION_ICON,
+                "DECISION BOUNDARY ANIMATION",
+                save_gif_from_rgb(
+                    decision_frames,
+                    self.width,
+                    self.height,
+                    50,
+                    &format!("{}", &self.history),
+                )?,
             );
         }
 

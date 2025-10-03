@@ -1,12 +1,13 @@
-use std::cmp::Ordering::Equal;
-use std::error::Error;
-use std::io::stdin;
+use crate::actions;
+use crate::display;
 use clap::Args;
-use colored::Colorize;
+use console::style;
 use ndarray::Array1;
 use nrn::data::scalers::{Scaler, ScalerMethod};
 use nrn::io::data::load_inputs;
-use crate::{actions, display_initialization};
+use std::cmp::Ordering::Equal;
+use std::error::Error;
+use std::io::stdin;
 
 #[derive(Args, Debug)]
 pub struct PredictArgs {
@@ -26,15 +27,18 @@ impl PredictArgs {
     pub fn run(self) -> Result<(), Box<dyn Error>> {
         let model = actions::load_model(&self.model)?;
 
-        let scaler: Option<ScalerMethod> = self.scaler.iter().find_map(|s| actions::load_scaler(s).ok());
+        let scaler: Option<ScalerMethod> = self
+            .scaler
+            .iter()
+            .find_map(|s| actions::load_scaler(s).ok());
 
         let mut input = if let Some(input_file) = self.input {
             let input = load_inputs(&input_file)?;
 
-            display_initialization!(
-                        "Input data loaded from {}",
-                        input_file.bright_blue().italic()
-                    );
+            println!(
+                "Input data loaded from {}",
+                style(input_file).bright().blue().italic()
+            );
 
             input
         } else {
@@ -43,8 +47,8 @@ impl PredictArgs {
             loop {
                 println!(
                     "{}[{}]:",
-                    "Input".bold().bright_blue(),
-                    inputs.len().to_string().yellow(),
+                    style("Input").bold().bright().blue(),
+                    style(inputs.len()).yellow(),
                 );
 
                 let mut raw = String::new();
@@ -53,7 +57,7 @@ impl PredictArgs {
                 match raw.trim().parse::<f32>() {
                     Ok(val) => inputs.push(val),
                     Err(err) => {
-                        eprintln!("{}", err.to_string().red());
+                        display::error(err.to_string().as_str());
                     }
                 }
 
@@ -85,13 +89,13 @@ impl PredictArgs {
 
         println!(
             "{} for {}\n|> {}",
-            "Predictions".bold().bright_green(),
-            input.to_string().yellow(),
+            style("Predictions").bold().bright().green(),
+            style(input).yellow(),
             result
                 .iter()
                 .map(|(index, value)| format!(
                     "{}: {:.2}%",
-                    index.to_string().bright_blue(),
+                    style(index).bright().blue(),
                     value * 100.0
                 ))
                 .collect::<Vec<_>>()

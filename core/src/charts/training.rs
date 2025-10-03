@@ -1,18 +1,14 @@
 use crate::charts::{RenderConfig, add_padding, draw_chart, draw_with};
-use nrn::training::History;
+use crate::training::History;
 use plotters::element::Circle;
-use plotters::prelude::full_palette::{BLUE_900, RED_900};
+use plotters::prelude::full_palette::{BLUE_900, GREEN_900, RED_900};
 use plotters::prelude::*;
 use std::error::Error;
 
-pub trait HistoryChart {
-    fn draw(&self, cfg: &RenderConfig) -> Result<Vec<u8>, Box<dyn Error>>;
-}
-
-impl HistoryChart for History {
+impl History {
     /// Draws the training history (loss over epochs) as a line chart.
     /// Returns the plot as a vector of bytes in RGB format.
-    fn draw(&self, cfg: &RenderConfig) -> Result<Vec<u8>, Box<dyn Error>> {
+    pub fn draw(&self, cfg: &RenderConfig) -> Result<Vec<u8>, Box<dyn Error>> {
         draw_history(cfg, self)
     }
 }
@@ -40,15 +36,12 @@ fn draw_history(cfg: &RenderConfig, history: &History) -> Result<Vec<u8>, Box<dy
             0..history.loss.len(),
             mins[0]..maxs[0],
             cfg,
-            true,
+            false,
             |loss_chart| {
-                loss_chart
-                    .draw_series(LineSeries::new(
-                        history.loss.iter().enumerate().map(|(i, &l)| (i, l)),
-                        &BLUE_900.to_rgba(),
-                    ))?
-                    .label("Loss")
-                    .legend(move |(x, y)| Circle::new((x, y), 2, BLUE_900.to_rgba()));
+                loss_chart.draw_series(LineSeries::new(
+                    history.loss.iter().enumerate().map(|(i, &l)| (i, l)),
+                    &BLUE_900.to_rgba(),
+                ))?;
                 Ok(())
             },
         )?;
@@ -70,7 +63,7 @@ fn draw_history(cfg: &RenderConfig, history: &History) -> Result<Vec<u8>, Box<dy
                             .map(|(i, &a)| (i, a)),
                         &RED_900.to_rgba(),
                     ))?
-                    .label("Train Accuracy")
+                    .label("Train")
                     .legend(move |(x, y)| Circle::new((x, y), 2, RED_900.to_rgba()));
 
                 accuracy_chart
@@ -82,8 +75,8 @@ fn draw_history(cfg: &RenderConfig, history: &History) -> Result<Vec<u8>, Box<dy
                             .map(|(i, &a)| (i, a)),
                         &GREEN.to_rgba(),
                     ))?
-                    .label("Test Accuracy")
-                    .legend(move |(x, y)| Circle::new((x, y), 2, GREEN.to_rgba()));
+                    .label("Test")
+                    .legend(move |(x, y)| Circle::new((x, y), 2, GREEN_900.to_rgba()));
 
                 Ok(())
             },

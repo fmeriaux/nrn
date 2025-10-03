@@ -193,6 +193,21 @@ impl History {
             .push(accuracy.compute(test_predictions, test_targets));
     }
 
+    /// Returns the final training accuracy recorded in the training history, if available.
+    pub fn final_train_accuracy(&self) -> Option<f32> {
+        self.train_accuracy.last().copied()
+    }
+
+    /// Returns the final test accuracy recorded in the training history, if available.
+    pub fn final_test_accuracy(&self) -> Option<f32> {
+        self.test_accuracy.last().copied()
+    }
+
+    /// Returns the final loss value recorded in the training history, if available.
+    pub fn final_loss(&self) -> Option<f32> {
+        self.loss.last().copied()
+    }
+
     fn range_for_vec(data: &Vec<f32>) -> Option<(f32, f32)> {
         if data.is_empty() {
             return None;

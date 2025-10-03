@@ -3,7 +3,7 @@ use crate::data::scalers::{MinMaxScaler, ScalerMethod, ZScoreScaler};
 use ndarray::Array1;
 use serde::{Deserialize, Serialize};
 use std::io::Result;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", content = "params")]
@@ -58,7 +58,7 @@ impl From<ScalerRecord> for ScalerMethod {
 }
 
 impl ScalerRecord {
-    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf> {
         json::save(self, path)
     }
 
