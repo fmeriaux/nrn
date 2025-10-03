@@ -1,0 +1,17 @@
+[package]
+name = "nrn-cli"
+version = "0.2.0"
+edition = "2024"
+
+[[bin]]
+name = "nrn"
+path = "src/main.rs"
+
+[dependencies]
+nrn = { path = "../core", features = ["io", "charts"] }
+clap = { version = "4.5.40", features = ["derive"] }
+indicatif = "0.18.0"
+console = "0.16.1"
+ndarray = { version = "0.16.1" }
+ndarray-rand = "0.15.0"
+pathdiff = "0.2.3"
