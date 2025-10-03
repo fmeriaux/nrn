@@ -15,7 +15,7 @@ pub struct NeuronLayer {
     /// A 2D array where each row corresponds to a neuron and each column corresponds to an input feature.
     pub weights: Array2<f32>,
     /// A 1D array where each element is the bias for the corresponding neuron.
-    pub bias: Array1<f32>,
+    pub biases: Array1<f32>,
     /// The activation function applied to the output of this layer.
     pub activation: Arc<dyn Activation>,
 }
@@ -59,14 +59,14 @@ impl NeuronLayer {
             "Neurons and inputs must be greater than zero."
         );
 
-        let (weights, bias) = spec
+        let (weights, biases) = spec
             .activation
             .initialization()
             .apply((spec.neurons, inputs));
 
         NeuronLayer {
             weights,
-            bias,
+            biases,
             activation: spec.activation.clone(),
         }
     }
@@ -84,10 +84,10 @@ impl NeuronLayer {
         );
 
         // Broadcasting bias to match the shape of the output
-        let broadcasted_bias: Array2<f32> = self.bias.view().insert_axis(Axis(1)).to_owned();
+        let broadcasted_biases: Array2<f32> = self.biases.view().insert_axis(Axis(1)).to_owned();
 
         self.activation
-            .apply((self.weights.dot(inputs) + &broadcasted_bias).view())
+            .apply((self.weights.dot(inputs) + &broadcasted_biases).view())
     }
 
     /// Returns the number of neurons in this layer.

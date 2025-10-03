@@ -14,21 +14,12 @@
 //! optimizer.update(&mut layer, &gradients);
 //! ```
 
-
 use crate::model::NeuronLayer;
 use crate::optimizers::Optimizer;
 use crate::training::Gradients;
 
 pub struct StochasticGradientDescent {
     pub learning_rate: f32,
-}
-
-impl Optimizer for StochasticGradientDescent {
-    fn update(&mut self, layer: &mut NeuronLayer, gradients: &Gradients) {
-        let (dw, db) = (&gradients.dw, &gradients.db);
-        layer.weights -= &(dw * self.learning_rate);
-        layer.bias -= &(db * self.learning_rate);
-    }
 }
 
 impl StochasticGradientDescent {
@@ -41,8 +32,10 @@ impl StochasticGradientDescent {
     }
 }
 
-impl Default for StochasticGradientDescent {
-    fn default() -> Self {
-        Self::new(0.001)
+impl Optimizer for StochasticGradientDescent {
+    fn update(&mut self, _: usize, layer: &mut NeuronLayer, gradients: &Gradients) {
+        let (dw, db) = (&gradients.dw, &gradients.db);
+        layer.weights -= &(dw * self.learning_rate);
+        layer.biases -= &(db * self.learning_rate);
     }
 }

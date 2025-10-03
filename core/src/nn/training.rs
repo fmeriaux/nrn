@@ -1,6 +1,6 @@
 use crate::accuracies::Accuracy;
 use crate::loss_functions::LossFunction;
-use crate::model::{NeuralNetwork, NeuronLayer, last_activation};
+use crate::model::{NeuralNetwork, last_activation};
 use crate::optimizers::Optimizer;
 use ndarray::{Array1, Array2, ArrayView2, Axis};
 use std::sync::{Arc, Mutex};
@@ -26,17 +26,6 @@ impl Gradients {
             self.dw.mapv_inplace(|x| x * scale);
             self.db.mapv_inplace(|x| x * scale);
         }
-    }
-}
-
-impl NeuronLayer {
-    /// Updates the weights and biases of this layer using the computed gradients and a learning rate.
-    /// # Arguments
-    /// - `gradients`: The gradients computed during backpropagation for this layer.
-    /// - `optimizer`: The optimizer to use for updating the weights and biases.
-    fn update(&mut self, gradients: Gradients, optimizer: &Arc<Mutex<dyn Optimizer>>) {
-        let mut optimizer = optimizer.lock().unwrap();
-        optimizer.update(self, &gradients);
     }
 }
 
@@ -66,7 +55,7 @@ impl NeuralNetwork {
 
         let activations = self.forward(inputs);
 
-        self.update(&activations, targets, loss_function, optimizer, max_norm);
+        self.update_parameters(&activations, targets, loss_function, optimizer, max_norm);
 
         last_activation(&activations)
     }
@@ -77,7 +66,7 @@ impl NeuralNetwork {
     /// - `targets`: A 2D array representing the expected outputs for the inputs.
     /// - `optimizer`: The optimizer to use for updating the weights and biases.
     /// - `max_norm`: The maximum norm to clip the gradients to, preventing exploding gradients.
-    fn update(
+    fn update_parameters(
         &mut self,
         activations: &[Array2<f32>],
         targets: ArrayView2<f32>,
@@ -87,10 +76,17 @@ impl NeuralNetwork {
     ) {
         let gradients = self.backward(activations, targets, loss_function);
 
-        for (layer, mut layer_gradients) in self.layers.iter_mut().zip(gradients) {
+        let mut optimizer = optimizer.lock().unwrap();
+
+        for (layer_index, (layer, mut layer_gradients)) in
+            self.layers.iter_mut().zip(gradients).enumerate()
+        {
             layer_gradients.clip(max_norm);
-            layer.update(layer_gradients, optimizer);
+
+            optimizer.update(layer_index, layer, &layer_gradients);
         }
+
+        optimizer.step();
     }
 
     /// Computes the gradients for each layer using backpropagation.

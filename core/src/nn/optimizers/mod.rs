@@ -12,9 +12,11 @@
 //! optimizer.update(&mut layer, &gradients);
 //! ```
 
+mod adam;
 mod sgd;
 
-pub use sgd::StochasticGradientDescent;
+pub use adam::*;
+pub use sgd::*;
 
 use crate::model::NeuronLayer;
 use crate::training::Gradients;
@@ -23,7 +25,13 @@ pub trait Optimizer {
     /// Updates the weights and biases of a layer using the provided gradients.
     ///
     /// # Arguments
-    /// * `layer` - The layer to update.
+    /// * `layer_index` - The index of the layer being updated, inside the neural network.
+    /// * `layer` - The layer whose weights and biases are to be updated.
     /// * `gradients` - The gradients computed during backpropagation for this layer.
-    fn update(&mut self, layer: &mut NeuronLayer, gradients: &Gradients);
+    fn update(&mut self, layer_index: usize, layer: &mut NeuronLayer, gradients: &Gradients);
+
+    /// Performs any necessary state updates after each training step.
+    /// This is useful for optimizers that maintain internal state, such as Adam.
+    /// The default implementation does nothing.
+    fn step(&mut self) {}
 }
