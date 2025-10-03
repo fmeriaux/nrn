@@ -5,6 +5,15 @@ use crate::optimizers::Optimizer;
 use ndarray::{Array1, Array2, ArrayView2, Axis};
 use std::sync::{Arc, Mutex};
 
+pub enum GradientClipping {
+    /// No gradient clipping is applied.
+    None,
+    /// Gradients are clipped to a maximum norm using the L2 norm.
+    Norm { max_norm: f32 },
+    /// Gradients are clipped to a maximum value element-wise.
+    Value { min: f32, max: f32 },
+}
+
 /// Represents the gradients computed during backpropagation for a single layer.
 pub struct Gradients {
     /// A 2D array where each element represents the gradient of the corresponding weight.
@@ -18,13 +27,34 @@ impl Gradients {
     /// # Arguments
     /// - `max_norm`: The maximum norm to clip the gradients to.
     pub fn clip(&mut self, max_norm: f32) {
-        let dw_norm = self.dw.iter().map(|x| x.powi(2)).sum::<f32>();
-        let db_norm = self.db.iter().map(|x| x.powi(2)).sum::<f32>();
+        let dw_norm = self.dw.mapv(|x| x.powi(2)).sum();
+        let db_norm = self.db.mapv(|x| x.powi(2)).sum();
         let norm = (dw_norm + db_norm).sqrt();
+
         if norm > max_norm {
-            let scale = max_norm / norm;
+            let scale = max_norm / (norm + 1e-6);
             self.dw.mapv_inplace(|x| x * scale);
             self.db.mapv_inplace(|x| x * scale);
+        }
+    }
+
+    /// Clips the gradients to a specified range element-wise.
+    /// # Arguments
+    /// - `min`: The minimum value to clip the gradients to.
+    /// - `max`: The maximum value to clip the gradients to.
+    pub fn clip_value(&mut self, min: f32, max: f32) {
+        self.dw.mapv_inplace(|x| x.clamp(min, max));
+        self.db.mapv_inplace(|x| x.clamp(min, max));
+    }
+
+    /// Clips the gradients based on the specified `GradientClipping` strategy.
+    /// # Arguments
+    /// - `clipping`: The `GradientClipping` strategy to apply.
+    pub fn clip_by(&mut self, clipping: &GradientClipping) {
+        match clipping {
+            GradientClipping::None => {}
+            GradientClipping::Norm { max_norm } => self.clip(*max_norm),
+            GradientClipping::Value { min, max } => self.clip_value(*min, *max),
         }
     }
 }
@@ -37,15 +67,16 @@ impl NeuralNetwork {
     /// # Arguments
     /// - `inputs`: A 2D array representing the inputs to the network.
     /// - `targets`: A 2D array representing the true labels for the inputs.
-    /// - `learning_rate`: The learning rate to apply during the update.
-    /// - `max_norm`: The maximum norm to clip the gradients to, preventing exploding gradients.
+    /// - `loss_function`: The loss function to use for computing the loss and its gradient.
+    /// - `optimizer`: The optimizer to use for updating the weights and biases.
+    /// - `clipping`: The gradient clipping strategy to apply during training.
     pub fn train(
         &mut self,
         inputs: ArrayView2<f32>,
         targets: ArrayView2<f32>,
         loss_function: &Arc<dyn LossFunction>,
         optimizer: &Arc<Mutex<dyn Optimizer>>,
-        max_norm: f32,
+        clipping: &GradientClipping,
     ) -> Array2<f32> {
         assert_eq!(
             inputs.ncols(),
@@ -55,7 +86,7 @@ impl NeuralNetwork {
 
         let activations = self.forward(inputs);
 
-        self.update_parameters(&activations, targets, loss_function, optimizer, max_norm);
+        self.update_parameters(&activations, targets, loss_function, optimizer, clipping);
 
         last_activation(&activations)
     }
@@ -64,15 +95,16 @@ impl NeuralNetwork {
     /// # Arguments
     /// - `activations`: A vector of 2D arrays representing the activations of each layer.
     /// - `targets`: A 2D array representing the expected outputs for the inputs.
+    /// - `loss_function`: The loss function to use for computing the loss and its gradient.
     /// - `optimizer`: The optimizer to use for updating the weights and biases.
-    /// - `max_norm`: The maximum norm to clip the gradients to, preventing exploding gradients.
+    /// - `clipping`: The gradient clipping strategy to apply during training.
     fn update_parameters(
         &mut self,
         activations: &[Array2<f32>],
         targets: ArrayView2<f32>,
         loss_function: &Arc<dyn LossFunction>,
         optimizer: &Arc<Mutex<dyn Optimizer>>,
-        max_norm: f32,
+        clipping: &GradientClipping,
     ) {
         let gradients = self.backward(activations, targets, loss_function);
 
@@ -81,7 +113,7 @@ impl NeuralNetwork {
         for (layer_index, (layer, mut layer_gradients)) in
             self.layers.iter_mut().zip(gradients).enumerate()
         {
-            layer_gradients.clip(max_norm);
+            layer_gradients.clip_by(clipping);
 
             optimizer.update(layer_index, layer, &layer_gradients);
         }
