@@ -65,7 +65,8 @@ pub struct TrainArgs {
     #[arg(long, default_value_t = 1.0, conflicts_with_all = &["clip_value", "no_clip"])]
     clip_norm: f32,
 
-    /// Specify the gradient clipping value to prevent exploding gradients
+    /// Specify the gradient clipping value to prevent exploding gradients.
+    /// The value creates a symmetric range [-value, value] for gradient clipping.
     #[arg(long, conflicts_with_all = &["clip_norm", "no_clip"])]
     clip_value: Option<f32>,
 
