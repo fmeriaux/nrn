@@ -1,8 +1,8 @@
-use std::collections::HashMap;
 use crate::model::NeuronLayer;
 use crate::optimizers::Optimizer;
-use crate::training::Gradients;
+use crate::training::{Gradients, LearningRate};
 use ndarray::{Array1, Array2};
+use std::collections::HashMap;
 
 /// Adam optimizer state, maintaining first and second moment estimates.
 struct AdamState {
@@ -19,7 +19,7 @@ struct AdamState {
 /// Provides the Adam optimization algorithm for updating neural network weights and biases.
 pub struct Adam {
     /// Learning rate for the optimizer.
-    pub learning_rate: f32,
+    learning_rate: LearningRate,
     /// Exponential decay rate for the first moment estimates.
     beta1: f32,
     /// Exponential decay rate for the second moment estimates.
@@ -33,11 +33,10 @@ pub struct Adam {
 }
 
 impl Adam {
-    pub fn new(learning_rate: f32, beta1: f32, beta2: f32, epsilon: f32) -> Self {
-        assert!(
-            learning_rate > 0.0,
-            "Learning rate must be greater than zero."
-        );
+    /// Creates a new [`Adam`] optimizer with the specified parameters.
+    /// # Panics
+    /// Will panic if `beta1` or `beta2` are not in (0, 1) or if `epsilon` is not positive.
+    pub fn new(learning_rate: LearningRate, beta1: f32, beta2: f32, epsilon: f32) -> Self {
         assert!(beta1 > 0.0 && beta1 < 1.0, "Beta1 must be in (0, 1).");
         assert!(beta2 > 0.0 && beta2 < 1.0, "Beta2 must be in (0, 1).");
         assert!(epsilon > 0.0, "Epsilon must be greater than zero.");
@@ -53,7 +52,7 @@ impl Adam {
     }
 
     /// Creates an Adam optimizer with default parameters.
-    pub fn with_defaults(learning_rate: f32) -> Self {
+    pub fn with_defaults(learning_rate: LearningRate) -> Self {
         Self::new(learning_rate, 0.9, 0.999, 1e-8)
     }
 
@@ -63,16 +62,23 @@ impl Adam {
         let m_biases = Array1::<f32>::zeros(layer.biases.dim());
         let v_biases = Array1::<f32>::zeros(layer.biases.dim());
 
-        self.states.insert(layer_index, AdamState {
-            m_weights,
-            v_weights,
-            m_biases,
-            v_biases,
-        });
+        self.states.insert(
+            layer_index,
+            AdamState {
+                m_weights,
+                v_weights,
+                m_biases,
+                v_biases,
+            },
+        );
     }
 }
 
 impl Optimizer for Adam {
+    fn set_learning_rate(&mut self, learning_rate: LearningRate) {
+        self.learning_rate = learning_rate;
+    }
+
     fn update(&mut self, layer_index: usize, layer: &mut NeuronLayer, gradients: &Gradients) {
         if !self.states.contains_key(&layer_index) {
             self.init_state(layer_index, layer);
@@ -98,8 +104,10 @@ impl Optimizer for Adam {
         let v_hat_biases = &state.v_biases / (1.0 - self.beta2.powi(self.time_step as i32));
 
         // Update weights and biases
-        layer.weights -= &(m_hat_weights * self.learning_rate / (v_hat_weights.mapv(f32::sqrt) + self.epsilon));
-        layer.biases -= &(m_hat_biases * self.learning_rate / (v_hat_biases.mapv(f32::sqrt) + self.epsilon));
+        layer.weights -= &(m_hat_weights * self.learning_rate.value()
+            / (v_hat_weights.mapv(f32::sqrt) + self.epsilon));
+        layer.biases -= &(m_hat_biases * self.learning_rate.value()
+            / (v_hat_biases.mapv(f32::sqrt) + self.epsilon));
     }
 
     fn step(&mut self) {

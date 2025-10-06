@@ -1,7 +1,7 @@
 use crate::actions;
 use crate::display::{Summary, completed, trace};
 use crate::progression::Progression;
-use clap::{Args, ValueEnum};
+use clap::*;
 use console::style;
 use ndarray::ArrayView2;
 use nrn::accuracies::{Accuracy, BINARY_ACCURACY, MULTI_CLASS_ACCURACY};
@@ -10,16 +10,26 @@ use nrn::data::SplitDataset;
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::{Adam, Optimizer, StochasticGradientDescent};
-use nrn::training::{GradientClipping, History};
+use nrn::schedulers;
+use nrn::schedulers::{ConstantScheduler, Scheduler, StepDecay};
+use nrn::training::{GradientClipping, History, LearningRate};
+use schedulers::CosineAnnealing;
 use std::error::Error;
 use std::fmt::Display;
 use std::iter::once;
 use std::sync::{Arc, Mutex};
 
-#[derive(ValueEnum, Clone, Debug)]
+#[derive(ValueEnum, Debug, Copy, Clone)]
 enum OptimizerType {
     SGD,
     Adam,
+}
+
+#[derive(ValueEnum, Debug, Copy, Clone)]
+enum SchedulerType {
+    Constant,
+    Cosine,
+    Step,
 }
 
 impl Display for OptimizerType {
@@ -27,6 +37,16 @@ impl Display for OptimizerType {
         match self {
             OptimizerType::SGD => write!(f, "Stochastic Gradient Descent (SGD)"),
             OptimizerType::Adam => write!(f, "Adam"),
+        }
+    }
+}
+
+impl Display for SchedulerType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SchedulerType::Constant => write!(f, "Constant"),
+            SchedulerType::Cosine => write!(f, "Cosine Annealing"),
+            SchedulerType::Step => write!(f, "Step Decay"),
         }
     }
 }
@@ -41,10 +61,10 @@ pub struct TrainArgs {
     model: Option<String>,
 
     /// The number of epochs to train the model
-    #[arg(short, long)]
+    #[arg(short, long, value_parser=1..)]
     epochs: usize,
 
-    #[arg(short = 'k', long, default_value_t = 10)]
+    #[arg(short = 'k', long, default_value_t = 10, value_parser=0..)]
     /// Specify the checkpoint interval for saving the model state,
     /// if set to 0, no checkpoints will be saved
     checkpoint_interval: usize,
@@ -57,17 +77,45 @@ pub struct TrainArgs {
     #[arg(long, value_enum, default_value_t = OptimizerType::Adam)]
     optimizer: OptimizerType,
 
+    /// Specify the scheduler to use for adjusting the learning rate during training
+    #[arg(long, value_enum, default_value_t = SchedulerType::Constant)]
+    scheduler: SchedulerType,
+
+    /// Enable warm restarts for schedulers that support it (e.g., cosine)
+    #[arg(long, requires = "scheduler", default_value_t = false)]
+    warm_restarts: bool,
+
+    /// Specify the cycle multiplier for schedulers that support it (e.g., cosine with warm-restarts)
+    #[arg(long, requires = "warm_restarts", value_parser = 1..10)]
+    cycle_multiplier: Option<usize>,
+
+    /// Specify the decay factor for schedulers that require it (e.g., step)
+    #[arg(long, requires = "scheduler", value_parser = 0..1, default_value_t = 0.1)]
+    decay_factor: f32,
+
+    /// Specify the step size for learning rate schedulers that require it:
+    /// - cosine: number of epochs to complete a full cosine cycle
+    /// - step: number of epochs between each learning rate decay
+    /// By default, this is set to the total number of epochs
+    #[arg(long, requires = "scheduler", value_parser = 1..)]
+    steps: Option<usize>,
+
     /// Specify the learning rate for the training process
-    #[arg(long, default_value_t = 0.001)]
-    learning_rate: f32,
+    #[arg(long, default_value_t = 0.001, value_parser = 0..=1)]
+    lr: f32,
+
+    /// Specify the minimum learning rate for schedulers that support it (e.g., cosine)
+    #[arg(long, requires = "scheduler")]
+    lr_min: Option<f32>,
 
     /// Specify the gradient clipping norm to prevent exploding gradients
-    #[arg(long, default_value_t = 1.0, conflicts_with_all = &["clip_value", "no_clip"])]
+    #[arg(long, default_value_t = 1.0, conflicts_with_all = &["clip_value", "no_clip"], value_parser = 0..
+    )]
     clip_norm: f32,
 
     /// Specify the gradient clipping value to prevent exploding gradients.
     /// This performs element-wise clipping: each gradient component is clipped individually to the symmetric range [-value, value].
-    #[arg(long, conflicts_with_all = &["clip_norm", "no_clip"])]
+    #[arg(long, conflicts_with_all = &["clip_norm", "no_clip"], value_parser = 0..)]
     clip_value: Option<f32>,
 
     /// Disable gradient clipping
@@ -84,20 +132,24 @@ impl TrainArgs {
             style("Cross-Entropy").bold().blue()
         ));
 
-        let optimizer: Arc<Mutex<dyn Optimizer>> =
-            create_optimizer(&self.optimizer, self.learning_rate);
+        let optimizer: Arc<Mutex<dyn Optimizer>> = self.make_optimizer();
+        let scheduler: Arc<Mutex<dyn Scheduler>> = self.make_scheduler();
 
         trace(&format!(
             "Using {} optimizer with learning rate {}",
             style(self.optimizer).bold().blue(),
-            style(self.learning_rate).yellow()
+            style(self.lr).yellow()
         ));
 
-        let clipping = select_clipping(self.clip_norm, self.clip_value, self.no_clip);
-        trace(&format!(
-            "Using {}",
-            clipping.summary()
-        ));
+        if !matches!(self.scheduler, SchedulerType::Constant) {
+            trace(&format!(
+                "Learning rate scheduled by {}",
+                style(self.scheduler).bold().blue()
+            ));
+        }
+
+        let clipping = self.infer_clipping();
+        trace(&format!("Using {}", clipping.summary()));
 
         let SplitDataset { train, test } = actions::load_dataset(&self.dataset)?;
 
@@ -163,6 +215,7 @@ impl TrainArgs {
                 train_targets,
                 &loss_function,
                 &optimizer,
+                &scheduler,
                 &clipping,
             );
 
@@ -196,6 +249,66 @@ impl TrainArgs {
 
         Ok(())
     }
+
+    fn infer_clipping(&self) -> GradientClipping {
+        if self.no_clip {
+            GradientClipping::None
+        } else if let Some(value) = self.clip_value {
+            GradientClipping::Value {
+                min: -value,
+                max: value,
+            }
+        } else {
+            GradientClipping::Norm {
+                max_norm: self.clip_norm,
+            }
+        }
+    }
+
+    fn lr(&self) -> LearningRate {
+        LearningRate::new(self.lr)
+    }
+
+    fn lr_min(&self) -> LearningRate {
+        LearningRate::new(self.lr_min.unwrap_or(0.0))
+    }
+
+    fn step_size(&self) -> usize {
+        self.steps.unwrap_or(self.epochs)
+    }
+
+    fn cycle_multiplier(&self) -> usize {
+        self.cycle_multiplier.unwrap_or(1)
+    }
+
+    fn make_scheduler(&self) -> Arc<Mutex<dyn Scheduler>> {
+        match self.scheduler {
+            SchedulerType::Constant => Arc::new(Mutex::new(ConstantScheduler::new(self.lr()))),
+            SchedulerType::Cosine => {
+                let cosine = CosineAnnealing::new(self.lr_min(), self.lr(), self.step_size());
+
+                if self.warm_restarts {
+                    Arc::new(Mutex::new(
+                        cosine.with_restarts(true, self.cycle_multiplier()),
+                    ))
+                } else {
+                    Arc::new(Mutex::new(cosine))
+                }
+            }
+            SchedulerType::Step => Arc::new(Mutex::new(StepDecay::new(
+                self.lr(),
+                self.step_size(),
+                self.decay_factor,
+            ))),
+        }
+    }
+
+    fn make_optimizer(&self) -> Arc<Mutex<dyn Optimizer>> {
+        match self.optimizer {
+            OptimizerType::SGD => Arc::new(Mutex::new(StochasticGradientDescent::new(self.lr()))),
+            OptimizerType::Adam => Arc::new(Mutex::new(Adam::with_defaults(self.lr()))),
+        }
+    }
 }
 
 fn select_accuracy(n_classes: usize) -> Arc<dyn Accuracy> {
@@ -216,31 +329,6 @@ fn create_output_layer(n_classes: usize) -> NeuronLayerSpec {
         NeuronLayerSpec {
             neurons: 1,
             activation: SIGMOID.clone(),
-        }
-    }
-}
-
-fn create_optimizer(
-    optimizer_type: &OptimizerType,
-    learning_rate: f32,
-) -> Arc<Mutex<dyn Optimizer>> {
-    match optimizer_type {
-        OptimizerType::SGD => Arc::new(Mutex::new(StochasticGradientDescent::new(learning_rate))),
-        OptimizerType::Adam => Arc::new(Mutex::new(Adam::with_defaults(learning_rate))),
-    }
-}
-
-fn select_clipping(clip_norm: f32, clip_value: Option<f32>, no_clip: bool) -> GradientClipping {
-    if no_clip {
-        GradientClipping::None
-    } else if let Some(value) = clip_value {
-        GradientClipping::Value {
-            min: -value,
-            max: value,
-        }
-    } else {
-        GradientClipping::Norm {
-            max_norm: clip_norm,
         }
     }
 }

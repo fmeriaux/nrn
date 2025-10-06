@@ -1,6 +1,7 @@
 use crate::accuracies::Accuracy;
 use crate::loss_functions::LossFunction;
 use crate::model::{NeuralNetwork, last_activation};
+use crate::nn::schedulers::Scheduler;
 use crate::optimizers::Optimizer;
 use ndarray::{Array1, Array2, ArrayView2, Axis};
 use std::sync::{Arc, Mutex};
@@ -9,6 +10,27 @@ use std::sync::{Arc, Mutex};
 /// This value was chosen to be sufficiently small to avoid affecting the clipping behavior
 /// while ensuring numerical stability during calculations.
 const EPSILON: f32 = 1e-6;
+
+/// Represents the learning rate used in optimization algorithms.
+#[derive(Clone, Copy, Debug)]
+pub struct LearningRate(f32);
+
+impl LearningRate {
+    /// Creates a new `LearningRate` instance with the specified value.
+    /// # Panics
+    /// - When the provided `value` is negative.
+    /// # Arguments
+    /// - `value`: The learning rate value to be used in optimization algorithms.
+    pub fn new(value: f32) -> Self {
+        assert!(value >= 0.0, "Learning rate must be non-negative.");
+        LearningRate(value)
+    }
+
+    /// Returns the current learning rate value.
+    pub fn value(&self) -> f32 {
+        self.0
+    }
+}
 
 pub enum GradientClipping {
     /// No gradient clipping is applied.
@@ -74,6 +96,7 @@ impl NeuralNetwork {
     /// - `targets`: A 2D array representing the true labels for the inputs.
     /// - `loss_function`: The loss function to use for computing the loss and its gradient.
     /// - `optimizer`: The optimizer to use for updating the weights and biases.
+    /// - `scheduler`: The learning rate scheduler to adjust the learning rate over time.
     /// - `clipping`: The gradient clipping strategy to apply during training.
     pub fn train(
         &mut self,
@@ -81,6 +104,7 @@ impl NeuralNetwork {
         targets: ArrayView2<f32>,
         loss_function: &Arc<dyn LossFunction>,
         optimizer: &Arc<Mutex<dyn Optimizer>>,
+        scheduler: &Arc<Mutex<dyn Scheduler>>,
         clipping: &GradientClipping,
     ) -> Array2<f32> {
         assert_eq!(
@@ -91,7 +115,14 @@ impl NeuralNetwork {
 
         let activations = self.forward(inputs);
 
-        self.update_parameters(&activations, targets, loss_function, optimizer, clipping);
+        self.update_parameters(
+            &activations,
+            targets,
+            loss_function,
+            optimizer,
+            scheduler,
+            clipping,
+        );
 
         last_activation(&activations)
     }
@@ -102,6 +133,7 @@ impl NeuralNetwork {
     /// - `targets`: A 2D array representing the expected outputs for the inputs.
     /// - `loss_function`: The loss function to use for computing the loss and its gradient.
     /// - `optimizer`: The optimizer to use for updating the weights and biases.
+    /// - `scheduler`: The learning rate scheduler to adjust the learning rate over time.
     /// - `clipping`: The gradient clipping strategy to apply during training.
     fn update_parameters(
         &mut self,
@@ -109,6 +141,7 @@ impl NeuralNetwork {
         targets: ArrayView2<f32>,
         loss_function: &Arc<dyn LossFunction>,
         optimizer: &Arc<Mutex<dyn Optimizer>>,
+        scheduler: &Arc<Mutex<dyn Scheduler>>,
         clipping: &GradientClipping,
     ) {
         let gradients = self.backward(activations, targets, loss_function);
@@ -124,6 +157,10 @@ impl NeuralNetwork {
         }
 
         optimizer.step();
+
+        let mut scheduler = scheduler.lock().unwrap();
+
+        optimizer.set_learning_rate(scheduler.step());
     }
 
     /// Computes the gradients for each layer using backpropagation.

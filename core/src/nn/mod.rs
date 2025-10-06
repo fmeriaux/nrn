@@ -5,3 +5,4 @@ pub mod loss_functions;
 pub mod optimizers;
 pub mod model;
 pub mod training;
+pub mod schedulers;

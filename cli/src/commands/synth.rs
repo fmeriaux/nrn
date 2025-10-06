@@ -21,15 +21,15 @@ pub struct SynthArgs {
     samples: usize,
 
     /// Number of features in the generated data
-    #[arg(short, long, default_value_t = 2)]
+    #[arg(short, long, default_value_t = 2, value_parser=1..)]
     features: usize,
 
     /// Number of clusters to generate in the dataset
-    #[arg(short, long, default_value_t = 2)]
+    #[arg(short, long, default_value_t = 2, value_parser=1..)]
     clusters: usize,
 
     /// Specify the training ratio for the dataset split
-    #[arg(long, default_value_t = 0.8)]
+    #[arg(long, default_value_t = 0.8, value_parser = 0..=1)]
     train_ratio: f32,
 
     /// Minimum value for each feature in the dataset
