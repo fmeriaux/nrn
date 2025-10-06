@@ -56,7 +56,7 @@ pub struct ImgDirArgs {
     grayscale: bool,
 
     /// Specify the image shape for encoding
-    #[arg(short, long, default_value_t = 64, value_parser = clap::value_parser!(u32).range(1..=128))]
+    #[arg(short, long, default_value_t = 64, value_parser = 1..=128)]
     shape: u32,
 
     /// Specify the training ratio for the dataset split

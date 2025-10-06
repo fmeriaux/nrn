@@ -6,9 +6,11 @@
 
 mod constant;
 mod cosine_annealing;
+mod step;
 
 pub use constant::*;
 pub use cosine_annealing::*;
+pub use step::*;
 
 use crate::training::LearningRate;
 

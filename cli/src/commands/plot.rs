@@ -1,8 +1,8 @@
 use crate::actions;
+use crate::display::warning;
 use crate::display::{ANIMATION_ICON, HISTORY_ICON, saved_at};
 use crate::progression::Progression;
 use clap::Args;
-use crate::display::warning;
 use nrn::charts::RenderConfig;
 use nrn::data::SplitDataset;
 use nrn::io::data::SplitDatasetExt;
@@ -20,19 +20,19 @@ pub struct PlotArgs {
     dataset: Option<String>,
 
     /// Specify the number of frames for the decision boundary animation
-    #[arg(short, long, default_value_t = 20, requires = "dataset", value_parser = clap::value_parser!(u8).range(2..201))]
+    #[arg(short, long, default_value_t = 20, requires = "dataset", value_parser = 2..201)]
     frames: u8,
 
     /// Specify the delay between frames in the decision boundary animation (in milliseconds)
-    #[arg(long, default_value_t = 50, requires = "dataset", value_parser = clap::value_parser!(u16).range(1..=1000))]
+    #[arg(long, default_value_t = 50, requires = "dataset", value_parser = 1..=1000)]
     delay: u16,
 
     /// Specify the width of the plot in pixels
-    #[arg(long, default_value_t = 1200, value_parser = clap::value_parser!(u16).range(100..=4096))]
+    #[arg(long, default_value_t = 1200, value_parser = 100..=4096)]
     width: u16,
 
     /// Specify the height of the plot in pixels
-    #[arg(long, default_value_t = 900, value_parser = clap::value_parser!(u16).range(100..=4096))]
+    #[arg(long, default_value_t = 900, value_parser = 100..=4096)]
     height: u16,
 }
 

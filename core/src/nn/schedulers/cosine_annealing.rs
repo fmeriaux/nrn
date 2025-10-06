@@ -1,6 +1,6 @@
 use crate::schedulers::Scheduler;
 use crate::training::LearningRate;
-use std::f32::consts::PI;
+use core::f32::consts::PI;
 
 /// A cosine annealing learning rate scheduler.
 ///
@@ -19,48 +19,81 @@ use std::f32::consts::PI;
 /// ```
 pub struct CosineAnnealing {
     /// Minimum learning rate (reached at the end of the schedule).
-    lr_min: f32,
+    min: LearningRate,
     /// Maximum learning rate (starting point of the schedule).
-    lr_max: f32,
+    max: LearningRate,
     /// Current step in the schedule.
     current_step: usize,
-    /// Total number of steps for the schedule.
-    total_steps: usize,
+    /// Total number of steps in one cycle.
+    steps: usize,
+    /// Enable warm restarts
+    restarts: bool,
+    /// Multiplier for increasing the period after each restart
+    steps_multiplier: usize,
 }
 
 impl CosineAnnealing {
     /// Creates a new [`CosineAnnealing`] scheduler.
     ///
     /// # Panics
-    /// Will panic if `lr_min` is negative, `lr_max` is not greater than `lr_min`,
+    /// Will panic if `max` is not greater than `min` or if `steps` is zero.
     ///
-    pub fn new(lr_min: f32, lr_max: f32, total_steps: usize) -> Self {
-        assert!(lr_min >= 0.0, "Minimum learning rate must be non-negative");
+    pub fn new(min: LearningRate, max: LearningRate, steps: usize) -> Self {
         assert!(
-            lr_max > lr_min,
+            max.value() > min.value(),
             "Maximum learning rate must be greater than minimum"
         );
-        assert!(total_steps > 0, "Total steps must be greater than zero");
+        assert!(steps > 0, "Total steps must be greater than zero");
 
         Self {
-            lr_min,
-            lr_max,
+            min,
+            max,
             current_step: 0,
-            total_steps,
+            steps,
+            restarts: false,
+            steps_multiplier: 1,
         }
+    }
+
+    /// Enables or disables warm restarts and sets the steps multiplier.
+    /// When restarts are enabled, the scheduler will reset the current step to zero
+    /// and multiply the total steps by `steps_multiplier` after each cycle.
+    /// # Arguments
+    /// * `restarts` - Whether to enable warm restarts.
+    /// * `steps_multiplier` - The factor by which to multiply the total steps after each restart. Must be greater than 1.
+    /// # Panics
+    /// Will panic if `steps_multiplier` is less than 1.
+    pub fn with_restarts(mut self, restarts: bool, steps_multiplier: usize) -> Self {
+        assert!(steps_multiplier >= 1, "Steps multiplier must be at least 1");
+        self.restarts = restarts;
+        self.steps_multiplier = steps_multiplier;
+        self
+    }
+
+    /// Computes the current learning rate based on the cosine annealing formula.
+    pub fn current_value(&self) -> LearningRate {
+        let step = self.current_step.min(self.steps) as f32;
+        let cos = (PI * step / (self.steps as f32)).cos();
+        let lr = self.min.value() + 0.5 * (self.max.value() - self.min.value()) * (1.0 + cos);
+        LearningRate::new(lr)
     }
 }
 
 impl Scheduler for CosineAnnealing {
     fn step(&mut self) -> LearningRate {
-        if self.current_step >= self.total_steps {
-            return LearningRate::new(self.lr_min);
+        if !self.restarts && self.current_step >= self.steps {
+            return self.min;
         }
 
-        let cos = (PI * (self.current_step as f32) / (self.total_steps as f32)).cos();
-        let lr = self.lr_min + 0.5 * (self.lr_max - self.lr_min) * (1.0 + cos);
+        let lr = self.current_value();
 
         self.current_step += 1;
-        LearningRate::new(lr)
+
+        if self.restarts && self.current_step >= self.steps {
+            self.current_step = 0;
+            self.steps *= self.steps_multiplier;
+        }
+
+        lr
     }
 }
