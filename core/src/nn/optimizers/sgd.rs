@@ -16,26 +16,26 @@
 
 use crate::model::NeuronLayer;
 use crate::optimizers::Optimizer;
-use crate::training::Gradients;
+use crate::training::{Gradients, LearningRate};
 
 pub struct StochasticGradientDescent {
-    pub learning_rate: f32,
+    pub learning_rate: LearningRate,
 }
 
 impl StochasticGradientDescent {
-    pub fn new(learning_rate: f32) -> Self {
-        assert!(
-            learning_rate > 0.0,
-            "Learning rate must be greater than zero."
-        );
+    pub fn new(learning_rate: LearningRate) -> Self {
         StochasticGradientDescent { learning_rate }
     }
 }
 
 impl Optimizer for StochasticGradientDescent {
+    fn set_learning_rate(&mut self, learning_rate: LearningRate) {
+        self.learning_rate = learning_rate;
+    }
+
     fn update(&mut self, _: usize, layer: &mut NeuronLayer, gradients: &Gradients) {
         let (dw, db) = (&gradients.dw, &gradients.db);
-        layer.weights -= &(dw * self.learning_rate);
-        layer.biases -= &(db * self.learning_rate);
+        layer.weights -= &(dw * self.learning_rate.value());
+        layer.biases -= &(db * self.learning_rate.value());
     }
 }

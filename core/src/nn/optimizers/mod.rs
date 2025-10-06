@@ -19,9 +19,13 @@ pub use adam::*;
 pub use sgd::*;
 
 use crate::model::NeuronLayer;
-use crate::training::Gradients;
+use crate::training::{Gradients, LearningRate};
 
 pub trait Optimizer {
+    /// Sets the learning rate for the optimizer.
+    /// This allows dynamic adjustment of the learning rate during training.
+    fn set_learning_rate(&mut self, learning_rate: LearningRate);
+
     /// Updates the weights and biases of a layer using the provided gradients.
     ///
     /// # Arguments

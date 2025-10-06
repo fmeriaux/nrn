@@ -71,7 +71,7 @@ fn draw_data_with(
                 }
 
                 if let Some(model) = model {
-                    let decision_boundary = decision_boundary(&mins, &maxs, model, 800, 0.01);
+                    let decision_boundary = decision_boundary(&mins, &maxs, model, 800, 0.001);
                     let color = RED_900.to_rgba().filled();
 
                     chart.draw_series(
