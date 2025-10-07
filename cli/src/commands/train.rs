@@ -1,4 +1,6 @@
-use crate::actions;
+use crate::actions::{
+    initialize_model, load_dataset, load_model, save_model, save_training_history,
+};
 use crate::display::{Summary, completed, trace};
 use crate::progression::Progression;
 use clap::*;
@@ -6,7 +8,6 @@ use console::style;
 use ndarray::ArrayView2;
 use nrn::accuracies::{Accuracy, BINARY_ACCURACY, MULTI_CLASS_ACCURACY};
 use nrn::activations::{RELU, SIGMOID, SOFTMAX};
-use nrn::data::SplitDataset;
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::{Adam, Optimizer, StochasticGradientDescent};
@@ -61,10 +62,10 @@ pub struct TrainArgs {
     model: Option<String>,
 
     /// The number of epochs to train the model
-    #[arg(short, long, value_parser=1..)]
+    #[arg(short, long)]
     epochs: usize,
 
-    #[arg(short = 'k', long, default_value_t = 10, value_parser=0..)]
+    #[arg(short = 'k', long, default_value_t = 10)]
     /// Specify the checkpoint interval for saving the model state,
     /// if set to 0, no checkpoints will be saved
     checkpoint_interval: usize,
@@ -86,22 +87,22 @@ pub struct TrainArgs {
     warm_restarts: bool,
 
     /// Specify the cycle multiplier for schedulers that support it (e.g., cosine with warm-restarts)
-    #[arg(long, requires = "warm_restarts", value_parser = 1..10)]
+    #[arg(long, requires = "warm_restarts")]
     cycle_multiplier: Option<usize>,
 
     /// Specify the decay factor for schedulers that require it (e.g., step)
-    #[arg(long, requires = "scheduler", value_parser = 0..1, default_value_t = 0.1)]
+    #[arg(long, requires = "scheduler", default_value_t = 0.1)]
     decay_factor: f32,
 
     /// Specify the step size for learning rate schedulers that require it:
     /// - cosine: number of epochs to complete a full cosine cycle
     /// - step: number of epochs between each learning rate decay
     /// By default, this is set to the total number of epochs
-    #[arg(long, requires = "scheduler", value_parser = 1..)]
+    #[arg(long, requires = "scheduler")]
     steps: Option<usize>,
 
     /// Specify the learning rate for the training process
-    #[arg(long, default_value_t = 0.001, value_parser = 0..=1)]
+    #[arg(long, default_value_t = 0.001)]
     lr: f32,
 
     /// Specify the minimum learning rate for schedulers that support it (e.g., cosine)
@@ -109,22 +110,91 @@ pub struct TrainArgs {
     lr_min: Option<f32>,
 
     /// Specify the gradient clipping norm to prevent exploding gradients
-    #[arg(long, default_value_t = 1.0, conflicts_with_all = &["clip_value", "no_clip"], value_parser = 0..
-    )]
+    #[arg(long, default_value_t = 1.0, conflicts_with_all = &["clip_value", "no_clip"])]
     clip_norm: f32,
 
     /// Specify the gradient clipping value to prevent exploding gradients.
     /// This performs element-wise clipping: each gradient component is clipped individually to the symmetric range [-value, value].
-    #[arg(long, conflicts_with_all = &["clip_norm", "no_clip"], value_parser = 0..)]
+    #[arg(long, conflicts_with_all = &["clip_norm", "no_clip"])]
     clip_value: Option<f32>,
 
     /// Disable gradient clipping
     #[arg(long, conflicts_with_all = &["clip_norm", "clip_value"])]
     no_clip: bool,
+
+    /// Specify the validation ratio for the dataset split
+    #[arg(long, default_value_t = 0.1)]
+    val_ratio: f32,
+
+    /// Specify the test ratio for the dataset split
+    #[arg(long, default_value_t = 0.1)]
+    test_ratio: f32,
 }
 
 impl TrainArgs {
+    fn validate(&self) -> Result<(), Box<dyn Error>> {
+        if self.epochs < 1 {
+            return Err("The number of epochs must be greater than zero.".into());
+        }
+
+        if let Some(ref layers) = self.layers {
+            if layers.iter().any(|&n| n == 0) {
+                return Err("Each hidden layer must have at least one neuron.".into());
+            }
+        }
+
+        if self.lr < 0.0 {
+            return Err("The learning rate must be a non-negative value.".into());
+        }
+
+        if let Some(lr_min) = self.lr_min {
+            if lr_min < 0.0 || lr_min >= self.lr {
+                return Err("The minimum learning rate must be non-negative and less than the initial learning rate.".into());
+            }
+        }
+
+        if self.decay_factor <= 0.0 {
+            return Err("The decay factor must be a positive value.".into());
+        }
+
+        if let Some(steps) = self.steps {
+            if steps < 1 {
+                return Err("The step size must be greater than zero.".into());
+            }
+        }
+
+        if self.clip_norm <= 0.0 {
+            return Err("The gradient clipping norm must be a positive value.".into());
+        }
+
+        if let Some(clip_value) = self.clip_value {
+            if clip_value <= 0.0 {
+                return Err("The gradient clipping value must be a positive value.".into());
+            }
+        }
+
+        if let Some(cycle_multiplier) = self.cycle_multiplier {
+            if cycle_multiplier < 1 {
+                return Err("The cycle multiplier must be at least 1.".into());
+            }
+        }
+
+        if self.val_ratio < 0.0 || self.val_ratio >= 1.0 {
+            return Err("Validation ratio must be in the range [0.0, 1.0)".into());
+        }
+        if self.test_ratio < 0.0 || self.test_ratio >= 1.0 {
+            return Err("Test ratio must be in the range [0.0, 1.0)".into());
+        }
+        if self.val_ratio + self.test_ratio >= 1.0 {
+            return Err("The sum of validation and test ratios must be less than 1.0".into());
+        }
+
+        Ok(())
+    }
+
     pub fn run(self) -> Result<(), Box<dyn Error>> {
+        self.validate()?;
+
         let loss_function: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
 
         trace(&format!(
@@ -151,13 +221,22 @@ impl TrainArgs {
         let clipping = self.infer_clipping();
         trace(&format!("Using {}", clipping.summary()));
 
-        let SplitDataset { train, test } = actions::load_dataset(&self.dataset)?;
+        let dataset = load_dataset(&self.dataset)?;
+        let split = dataset.split(self.val_ratio, self.test_ratio);
 
-        let accuracy: Arc<dyn Accuracy> = select_accuracy(train.n_classes());
+        completed(& format!(
+            "Split {} | Train={}, Val={}, Test={}",
+            style("DATASET").bold().blue(),
+            style(split.train.n_samples()).yellow(),
+            style(split.validation.as_ref().map(|v| v.n_samples()).unwrap_or(0)).yellow(),
+            style(split.test.n_samples()).yellow()
+        ));
+
+        let accuracy: Arc<dyn Accuracy> = select_accuracy(split.train.n_classes());
 
         // 🧠 NEURAL NETWORK INITIALIZATION
-        let (train_inputs, train_targets) = train.to_model_shape();
-        let (test_inputs, test_targets) = test.to_model_shape();
+        let (train_inputs, train_targets) = split.train.to_model_shape();
+        let (test_inputs, test_targets) = split.test.to_model_shape();
         let train_targets = train_targets.view();
         let test_targets = test_targets.view();
 
@@ -169,14 +248,14 @@ impl TrainArgs {
                 neurons,
                 activation: RELU.clone(),
             })
-            .chain(once(create_output_layer(train.n_classes())))
+            .chain(once(create_output_layer(split.train.n_classes())))
             .collect();
 
         let mut model = self
             .model
             .iter()
-            .find_map(|file| actions::load_model(file).ok())
-            .unwrap_or_else(|| actions::initialize_model(train_inputs.nrows(), &layer_specs));
+            .find_map(|file| load_model(file).ok())
+            .unwrap_or_else(|| initialize_model(train_inputs.nrows(), &layer_specs));
 
         // 👨‍🎓 TRAINING LOOP
         let mut history: Option<History> =
@@ -240,11 +319,11 @@ impl TrainArgs {
 
         // 🗂️ SAVE THE TRAINED NETWORK
         let model_file = format!("model-{}", self.dataset);
-        actions::save_model(&model_file, &model)?;
+        save_model(&model_file, &model)?;
 
         // 🗂️ SAVE THE TRAINING HISTORY
         if let Some(ref history) = history {
-            actions::save_training_history(&format!("training-{}", model_file), history)?;
+            save_training_history(&format!("training-{}", model_file), history)?;
         }
 
         Ok(())

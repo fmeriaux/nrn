@@ -1,4 +1,4 @@
-use crate::actions;
+use crate::actions::{load_dataset, save_dataset, save_scaler};
 use crate::display::completed;
 use clap::{Args, ValueEnum};
 use console::style;
@@ -8,7 +8,7 @@ use std::path::Path;
 
 #[derive(Args, Debug)]
 pub struct ScaleArgs {
-    /// Name of the dataset to scale
+    /// The name of the dataset to scale. If a split dataset is provided, it will be unsplit before scaling.
     dataset: String,
 
     /// Specify the scaling method to apply to the dataset
@@ -36,10 +36,10 @@ impl ScalingOption {
 
 impl ScaleArgs {
     pub fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        let mut split_dataset = actions::load_dataset(&self.dataset)?;
+        let mut dataset = load_dataset(&self.dataset)?;
 
-        let scaler = self.scaling.fit(split_dataset.train.features.view());
-        split_dataset.scale_inplace(&scaler);
+        let scaler = self.scaling.fit(dataset.features.view());
+        dataset.scale_inplace(&scaler);
 
         completed(&format!(
             "Scaled with {}",
@@ -55,8 +55,8 @@ impl ScaleArgs {
         let dataset_path = path.with_file_name(format!("scaled-{}", filename.to_string_lossy()));
         let scaler_path = path.with_file_name(format!("scaler-{}", filename.to_string_lossy()));
 
-        actions::save_dataset(split_dataset, "SCALED DATASET", self.plot, &dataset_path)?;
-        actions::save_scaler(scaler, scaler_path)?;
+        save_dataset(dataset, "SCALED DATASET", self.plot, &dataset_path)?;
+        save_scaler(scaler, scaler_path)?;
 
         Ok(())
     }

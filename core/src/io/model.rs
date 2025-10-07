@@ -12,7 +12,7 @@ impl NeuralNetwork {
     /// Saves the neural network to an HDF5 group.
     /// # Arguments
     /// - `group`: The HDF5 group to save the network to.
-    pub fn save_to_group(&self, group: &Group) -> Result<()> {
+    pub fn save_to(&self, group: &Group) -> Result<()> {
         for (i, layer) in self.layers.iter().enumerate() {
             let group = group.create_group(&format!("layer{}", i))?;
 
@@ -90,7 +90,7 @@ impl NeuralNetwork {
     /// - `path`: The path to the file where the network will be saved.
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf> {
         let file = h5::create_file(path)?;
-        self.save_to_group(&file)?;
+        self.save_to(&file)?;
         Ok(PathBuf::from(file.filename()))
     }
 

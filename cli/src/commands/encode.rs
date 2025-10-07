@@ -1,4 +1,4 @@
-use crate::actions;
+use crate::display::{completed, trace};
 use crate::progression::Progression;
 use clap::{Args, Subcommand};
 use console::style;
@@ -12,7 +12,7 @@ use nrn::io::data::save_inputs;
 use std::error::Error;
 use std::fs::read_dir;
 use std::path::Path;
-use crate::display::{completed, trace};
+use crate::actions::save_dataset;
 
 #[derive(Args, Debug)]
 pub struct EncodeArgs {
@@ -57,11 +57,7 @@ pub struct ImgDirArgs {
 
     /// Specify the image shape for encoding
     #[arg(short, long, default_value_t = 64, value_parser = 1..=128)]
-    shape: u32,
-
-    /// Specify the training ratio for the dataset split
-    #[arg(long, default_value_t = 0.8)]
-    train_ratio: f32,
+    shape: u32
 }
 
 impl ImgDirArgs {
@@ -129,11 +125,15 @@ impl ImgDirArgs {
         let mut rng = StdRng::seed_from_u64(self.seed);
         let dataset = Dataset::from_vec(&mut rng, data, labels)?;
 
-        let split_dataset = dataset.split(self.train_ratio);
+        completed(
+            style("Encoding completed")
+                .bright()
+                .green()
+                .to_string()
+                .as_str(),
+        );
 
-        completed(style("Encoding completed").bright().green().to_string().as_str());
-
-        actions::save_dataset(split_dataset, "IMAGE DATASET", false, &self.output)?;
+        save_dataset(dataset, "IMAGE DATASET", false, &self.output)?;
 
         Ok(())
     }

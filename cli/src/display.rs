@@ -1,5 +1,5 @@
 use console::{Emoji, style};
-use nrn::data::SplitDataset;
+use nrn::data::Dataset;
 use nrn::data::scalers::{Scaler, ScalerMethod};
 use nrn::model::NeuralNetwork;
 use nrn::training::{GradientClipping, History};
@@ -25,15 +25,14 @@ pub(crate) trait Summary {
     fn summary(&self) -> String;
 }
 
-impl Summary for SplitDataset {
+impl Summary for Dataset {
     fn summary(&self) -> String {
         format!(
-            "{} | Features: {} | Classes: {} | Split: Train={}, Test={}",
+            "{} | Features: {} | Classes: {} | Samples: {}",
             style("DATASET").bold().blue(),
-            style(self.train.n_features()).yellow(),
-            style(self.train.n_classes()).yellow(),
-            style(self.train.n_samples()).yellow(),
-            style(self.test.n_samples()).yellow()
+            style(self.n_features()).yellow(),
+            style(self.n_classes()).yellow(),
+            style(self.n_samples()).yellow()
         )
     }
 }

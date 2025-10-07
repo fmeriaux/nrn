@@ -30,7 +30,7 @@ pub enum Command {
 impl Command {
     pub(crate) fn run(self) -> Result<(), Box<dyn Error>> {
         match self {
-            // 🗂️ DATASET GENERATION
+            // 🧪 SYNTHETIC DATA GENERATION
             Synth(args) => args.run(),
             // 🖼️ / 📄 DATASET ENCODING
             Encode(args) => args.run(),

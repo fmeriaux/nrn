@@ -36,7 +36,7 @@ impl History {
 
         for (i, model) in self.model.iter().enumerate() {
             let checkpoint_group = model_group.create_group(&format!("checkpoint{}", i))?;
-            model.save_to_group(&checkpoint_group)?;
+            model.save_to(&checkpoint_group)?;
         }
 
         Ok(PathBuf::from(file.filename()))

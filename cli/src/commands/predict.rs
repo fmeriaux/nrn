@@ -1,4 +1,3 @@
-use crate::actions;
 use crate::display;
 use clap::Args;
 use console::style;
@@ -8,6 +7,7 @@ use nrn::io::data::load_inputs;
 use std::cmp::Ordering::Equal;
 use std::error::Error;
 use std::io::stdin;
+use crate::actions::{load_model, load_scaler};
 
 #[derive(Args, Debug)]
 pub struct PredictArgs {
@@ -25,12 +25,12 @@ pub struct PredictArgs {
 
 impl PredictArgs {
     pub fn run(self) -> Result<(), Box<dyn Error>> {
-        let model = actions::load_model(&self.model)?;
+        let model = load_model(&self.model)?;
 
         let scaler: Option<ScalerMethod> = self
             .scaler
             .iter()
-            .find_map(|s| actions::load_scaler(s).ok());
+            .find_map(|s| load_scaler(s).ok());
 
         let mut input = if let Some(input_file) = self.input {
             let input = load_inputs(&input_file)?;

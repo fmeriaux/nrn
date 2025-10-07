@@ -19,11 +19,18 @@ pub struct Dataset {
 pub struct SplitDataset {
     /// A `Dataset` containing the training samples.
     pub train: Dataset,
+    /// An optional `Dataset` containing the validation samples.
+    pub validation: Option<Dataset>,
     /// A `Dataset` containing the testing samples.
     pub test: Dataset,
 }
 
 impl Dataset {
+    /// Checks if the dataset is empty (i.e., has no features or labels).
+    pub fn is_empty(&self) -> bool {
+        self.features.is_empty() || self.labels.is_empty()
+    }
+
     /// Returns the number of samples in the dataset.
     pub fn n_samples(&self) -> usize {
         self.labels.len()
@@ -138,24 +145,49 @@ impl Dataset {
     /// Splits the dataset into training and testing sets according to the given ratio.
     ///
     /// # Parameters
-    /// - `ratio`: Proportion of samples to include in the training set (e.g., 0.8 for 80/20 split)
+    /// - `val_ratio`: The ratio of the dataset to be used for validation (between 0 and 1).
+    /// - `test_ratio`: The ratio of the dataset to be used for testing (between 0 and 1).
     ///
     /// # Important
     /// This method does **not** shuffle the dataset. It assumes the dataset has already been shuffled.
     /// If the dataset is not shuffled, the split may not be representative.
-    pub fn split(&self, ratio: f32) -> SplitDataset {
-        assert!(ratio > 0.0 && ratio < 1.0, "Ratio must be between 0 and 1");
-        let n_samples = self.features.nrows();
-        let n_train = (n_samples as f32 * ratio).round() as usize;
+    ///
+    /// # Panics
+    /// - When `val_ratio` or `test_ratio` is not between 0 and 1.
+    /// - When the sum of `val_ratio` and `test_ratio` is greater than or equal to 1.
+    //
+    pub fn split(&self, val_ratio: f32, test_ratio: f32) -> SplitDataset {
+        assert!(
+            val_ratio.min(test_ratio) > 0.0 && val_ratio.max(test_ratio) < 1.0,
+            "Ratio must be between 0 and 1"
+        );
+        assert!(
+            val_ratio + test_ratio < 1.0,
+            "Sum of ratios must be less than 1"
+        );
 
+        let n_samples = self.features.nrows();
+        //let n_train = (n_samples as f32 * ratio).round() as usize;
+
+        let size = |ratio: f32| (n_samples as f32 * ratio).round() as usize;
         let slice = |start: usize, end: usize| Dataset {
             features: self.features.slice(s![start..end, ..]).to_owned(),
             labels: self.labels.slice(s![start..end]).to_owned(),
         };
 
-        let train = slice(0, n_train);
-        let test = slice(n_train, n_samples);
-        SplitDataset { train, test }
+        let test_size = size(test_ratio);
+        let val_size = size(val_ratio);
+        let train_size = n_samples - test_size - val_size;
+
+        SplitDataset {
+            train: slice(0, train_size),
+            validation: if val_size > 0 {
+                Some(slice(train_size, train_size + val_size))
+            } else {
+                None
+            },
+            test: slice(train_size + val_size, n_samples),
+        }
     }
 
     /// Shuffles the dataset features and labels in unison using a random number generator.
@@ -227,22 +259,17 @@ impl Dataset {
 }
 
 impl SplitDataset {
-    /// Applies the specified scaling method to the training and test datasets.
-    /// The transformation is done in-place.
-    pub fn scale_inplace(&mut self, scaler: &dyn Scaler) {
-        self.train.scale_inplace(scaler);
-        self.test.scale_inplace(scaler);
-    }
-
-    /// Gives dataset groups by their usage.
-    pub fn groups(&self) -> Vec<(&str, &Dataset)> {
-        vec![("train", &self.train), ("test", &self.test)]
-    }
-
     /// Unsplits the `SplitDataset` back into a single `Dataset`.
     pub fn unsplit(self) -> Dataset {
         let mut features = self.train.features.to_owned();
         let mut labels = self.train.labels.to_owned();
+
+        if let Some(validation) = self.validation {
+            features
+                .append(Axis(0), validation.features.view())
+                .unwrap();
+            labels.append(Axis(0), validation.labels.view()).unwrap();
+        }
 
         features.append(Axis(0), self.test.features.view()).unwrap();
         labels.append(Axis(0), self.test.labels.view()).unwrap();

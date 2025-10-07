@@ -1,8 +1,7 @@
 use crate::display::*;
 use nrn::charts::RenderConfig;
+use nrn::data::Dataset;
 use nrn::data::scalers::ScalerMethod;
-use nrn::data::{Dataset, SplitDataset};
-use nrn::io::data::SplitDatasetExt;
 use nrn::io::png::save_rgb;
 use nrn::io::scalers::ScalerRecord;
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
@@ -10,14 +9,14 @@ use nrn::training::History;
 use std::error::Error;
 use std::path::Path;
 
-pub(crate) fn load_dataset<P: AsRef<Path>>(path: P) -> Result<SplitDataset, Box<dyn Error>> {
-    let dataset = SplitDataset::load(&path)?;
+pub(crate) fn load_dataset<P: AsRef<Path>>(path: P) -> Result<Dataset, Box<dyn Error>> {
+    let dataset = Dataset::load(&path)?;
     loaded(&dataset);
     Ok(dataset)
 }
 
 pub(crate) fn save_dataset<P: AsRef<Path>>(
-    dataset: SplitDataset,
+    dataset: Dataset,
     name: &str,
     plot: bool,
     path: P,
@@ -25,7 +24,7 @@ pub(crate) fn save_dataset<P: AsRef<Path>>(
     saved_at(DATASET_ICON, name, dataset.save(&path)?);
 
     if plot {
-        plot_dataset(&dataset.unsplit(), path)?;
+        plot_dataset(&dataset, path)?;
     }
 
     Ok(())

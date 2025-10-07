@@ -1,4 +1,4 @@
-use crate::actions;
+use crate::actions::save_dataset;
 use crate::display::generated;
 use clap::{Args, ValueEnum};
 use nrn::data::synth::{DatasetGenerator, RingDataset, UniformDataset};
@@ -21,16 +21,12 @@ pub struct SynthArgs {
     samples: usize,
 
     /// Number of features in the generated data
-    #[arg(short, long, default_value_t = 2, value_parser=1..)]
+    #[arg(short, long, default_value_t = 2)]
     features: usize,
 
     /// Number of clusters to generate in the dataset
-    #[arg(short, long, default_value_t = 2, value_parser=1..)]
+    #[arg(short, long, default_value_t = 2)]
     clusters: usize,
-
-    /// Specify the training ratio for the dataset split
-    #[arg(long, default_value_t = 0.8, value_parser = 0..=1)]
-    train_ratio: f32,
 
     /// Minimum value for each feature in the dataset
     #[arg(long, default_value_t = 0.0)]
@@ -61,7 +57,31 @@ impl fmt::Display for DistributionOption {
 }
 
 impl SynthArgs {
+    /// Validate the command line arguments
+    fn validate(&self) -> Result<(), String> {
+        if self.features < 1 {
+            return Err("Le nombre de features doit être au moins 1.".to_string());
+        }
+        if self.clusters < 1 {
+            return Err("Le nombre de clusters doit être au moins 1.".to_string());
+        }
+        if self.samples < self.clusters {
+            return Err(
+                "Le nombre d'échantillons doit être au moins égal au nombre de clusters."
+                    .to_string(),
+            );
+        }
+        if self.min >= self.max {
+            return Err(
+                "La valeur minimale doit être inférieure à la valeur maximale.".to_string(),
+            );
+        }
+        Ok(())
+    }
+
     pub fn run(&self) -> Result<(), Box<dyn Error>> {
+        self.validate()?;
+
         // 🗂️ GENERATE THE DATASET
         let generator: Arc<dyn DatasetGenerator> = match self.distribution {
             DistributionOption::Uniform => Arc::new(UniformDataset {
@@ -82,9 +102,7 @@ impl SynthArgs {
 
         let dataset = generator.generate(self.seed);
 
-        let split_dataset = dataset.split(self.train_ratio);
-
-        generated(&split_dataset);
+        generated(&dataset);
 
         let filename = format!(
             "{}-c{}-f{}-n{}-seed{}",
@@ -95,7 +113,7 @@ impl SynthArgs {
             self.seed
         );
 
-        actions::save_dataset(split_dataset, "DATASET", self.plot, &filename)?;
+        save_dataset(dataset, "DATASET", self.plot, &filename)?;
 
         Ok(())
     }

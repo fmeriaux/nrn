@@ -1,6 +1,5 @@
-use crate::data::{Dataset, SplitDataset};
+use crate::data::Dataset;
 use crate::io::h5;
-use hdf5_metno::Group;
 use ndarray::{Array1, Array2};
 use std::io::Result;
 use std::path::{Path, PathBuf};
@@ -21,73 +20,31 @@ pub fn load_inputs<P: AsRef<Path>>(path: P) -> Result<Array1<f32>> {
     Ok(inputs)
 }
 
-pub trait DatasetExt {
-    fn save_to_group(&self, group: &Group) -> Result<()>;
-    fn load_from_group(group: &Group) -> Result<Dataset>;
-}
+impl Dataset {
+    /// Saves the dataset to an HDF5 file.
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf> {
+        let file = h5::create_file(path)?;
 
-impl DatasetExt for Dataset {
-    /// Writes the dataset to an HDF5 group.
-    /// # Arguments
-    /// - `group`: The HDF5 group to write the dataset to.
-    fn save_to_group(&self, group: &Group) -> Result<()> {
-        group
-            .new_dataset::<f32>()
+        file.new_dataset::<f32>()
             .shape(self.features.dim())
             .create("features")?
             .write(&self.features)?;
 
-        group
-            .new_dataset::<f32>()
+        file.new_dataset::<f32>()
             .shape(&[self.labels.len()])
             .create("labels")?
             .write(&self.labels)?;
 
-        Ok(())
-    }
-
-    /// Reads a dataset from an HDF5 group.
-    /// # Arguments
-    /// - `group`: The HDF5 group to read the dataset from.
-    fn load_from_group(group: &Group) -> Result<Dataset> {
-        let features: Array2<f32> = group.dataset("features")?.read()?;
-        let labels: Array1<f32> = group.dataset("labels")?.read()?;
-
-        Ok(Dataset { features, labels })
-    }
-}
-
-pub trait SplitDatasetExt {
-    fn save<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf>;
-    fn load<P: AsRef<Path>>(path: P) -> Result<SplitDataset>;
-}
-
-impl SplitDatasetExt for SplitDataset {
-    /// Saves the split dataset to an HDF5 file.
-    /// # Arguments
-    /// - `path`: The path to the file where the dataset will be saved.
-    ///
-    /// Returns the path to the saved file.
-    fn save<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf> {
-        let file = h5::create_file(path)?;
-
-        for (usage, dataset) in self.groups().iter() {
-            let group = file.create_group(usage)?;
-            dataset.save_to_group(&group)?;
-        }
-
         Ok(PathBuf::from(file.filename()))
     }
 
-    /// Loads a split dataset from an HDF5 file.
-    /// # Arguments
-    /// - `path`: The file path to load the dataset from.
-    fn load<P: AsRef<Path>>(path: P) -> Result<SplitDataset> {
+    /// Loads a dataset from an HDF5 file.
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Dataset> {
         let file = h5::load_file(path)?;
 
-        let train = Dataset::load_from_group(&file.group("train")?)?;
-        let test = Dataset::load_from_group(&file.group("test")?)?;
+        let features: Array2<f32> = file.dataset("features")?.read()?;
+        let labels: Array1<f32> = file.dataset("labels")?.read()?;
 
-        Ok(SplitDataset { train, test })
+        Ok(Dataset { features, labels })
     }
 }
