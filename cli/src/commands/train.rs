@@ -1,23 +1,20 @@
-use crate::actions::{
-    initialize_model, load_dataset, load_model, save_model, save_training_history,
-};
+use crate::actions::*;
 use crate::display::{Summary, completed, trace};
 use crate::progression::Progression;
 use clap::*;
 use console::style;
-use ndarray::ArrayView2;
-use nrn::accuracies::{Accuracy, BINARY_ACCURACY, MULTI_CLASS_ACCURACY};
-use nrn::activations::{RELU, SIGMOID, SOFTMAX};
+use nrn::accuracies::{Accuracy, accuracy_for};
+use nrn::checkpoints::Checkpoints;
+use nrn::evaluation::EvaluationSet;
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
-use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::{Adam, Optimizer, StochasticGradientDescent};
 use nrn::schedulers;
 use nrn::schedulers::{ConstantScheduler, Scheduler, StepDecay};
-use nrn::training::{GradientClipping, History, LearningRate};
+use nrn::training::{EarlyStopping, GradientClipping, LearningRate};
 use schedulers::CosineAnnealing;
 use std::error::Error;
 use std::fmt::Display;
-use std::iter::once;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 #[derive(ValueEnum, Debug, Copy, Clone)]
@@ -129,6 +126,14 @@ pub struct TrainArgs {
     /// Specify the test ratio for the dataset split
     #[arg(long, default_value_t = 0.1)]
     test_ratio: f32,
+
+    /// Define patience for early stopping based on validation loss, put to 0 to disable early stopping
+    #[arg(long, default_value_t = 0)]
+    early_stopping: usize,
+
+    /// Restore the best model observed during training when using early stopping
+    #[arg(long, requires = "early_stopping", default_value_t = true)]
+    restore_best_model: bool,
 }
 
 impl TrainArgs {
@@ -182,7 +187,7 @@ impl TrainArgs {
         if self.val_ratio < 0.0 || self.val_ratio >= 1.0 {
             return Err("Validation ratio must be in the range [0.0, 1.0)".into());
         }
-        if self.test_ratio < 0.0 || self.test_ratio >= 1.0 {
+        if self.test_ratio <= 0.0 || self.test_ratio >= 1.0 {
             return Err("Test ratio must be in the range [0.0, 1.0)".into());
         }
         if self.val_ratio + self.test_ratio >= 1.0 {
@@ -192,25 +197,23 @@ impl TrainArgs {
         Ok(())
     }
 
-    pub fn run(self) -> Result<(), Box<dyn Error>> {
+    pub fn run(&self) -> Result<(), Box<dyn Error>> {
         self.validate()?;
 
         let loss_function: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
-
         trace(&format!(
             "Using {} loss function",
             style("Cross-Entropy").bold().blue()
         ));
 
         let optimizer: Arc<Mutex<dyn Optimizer>> = self.make_optimizer();
-        let scheduler: Arc<Mutex<dyn Scheduler>> = self.make_scheduler();
-
         trace(&format!(
             "Using {} optimizer with learning rate {}",
             style(self.optimizer).bold().blue(),
             style(self.lr).yellow()
         ));
 
+        let scheduler: Arc<Mutex<dyn Scheduler>> = self.make_scheduler();
         if !matches!(self.scheduler, SchedulerType::Constant) {
             trace(&format!(
                 "Learning rate scheduled by {}",
@@ -222,108 +225,91 @@ impl TrainArgs {
         trace(&format!("Using {}", clipping.summary()));
 
         let dataset = load_dataset(&self.dataset)?;
-        let split = dataset.split(self.val_ratio, self.test_ratio);
+        let split = dataset
+            .to_model_dataset()
+            .split(self.val_ratio, self.test_ratio);
+        completed(split.summary().as_str());
 
-        completed(& format!(
-            "Split {} | Train={}, Val={}, Test={}",
-            style("DATASET").bold().blue(),
-            style(split.train.n_samples()).yellow(),
-            style(split.validation.as_ref().map(|v| v.n_samples()).unwrap_or(0)).yellow(),
-            style(split.test.n_samples()).yellow()
-        ));
-
-        let accuracy: Arc<dyn Accuracy> = select_accuracy(split.train.n_classes());
+        let accuracy: Arc<dyn Accuracy> = accuracy_for(dataset.n_classes());
 
         // 🧠 NEURAL NETWORK INITIALIZATION
-        let (train_inputs, train_targets) = split.train.to_model_shape();
-        let (test_inputs, test_targets) = split.test.to_model_shape();
-        let train_targets = train_targets.view();
-        let test_targets = test_targets.view();
-
-        let layer_specs: Vec<NeuronLayerSpec> = self
-            .layers
-            .unwrap_or_default()
-            .into_iter()
-            .map(|neurons| NeuronLayerSpec {
-                neurons,
-                activation: RELU.clone(),
-            })
-            .chain(once(create_output_layer(split.train.n_classes())))
-            .collect();
-
         let mut model = self
             .model
             .iter()
             .find_map(|file| load_model(file).ok())
-            .unwrap_or_else(|| initialize_model(train_inputs.nrows(), &layer_specs));
+            .unwrap_or_else(|| initialize_model_with(&dataset, self.layers.clone()));
 
         // 👨‍🎓 TRAINING LOOP
-        let mut history: Option<History> =
-            History::by_interval(self.checkpoint_interval, self.epochs);
+        let mut checkpoints: Option<Checkpoints> = Checkpoints::by_interval(self.checkpoint_interval, self.epochs);
 
-        // Closure to record the training history at each checkpoint
-        let record_history =
-            |model: &NeuralNetwork, history: &mut History, train_predictions: ArrayView2<f32>| {
-                let test_predictions = model.predict(test_inputs);
-                history.checkpoint(
-                    model,
-                    &loss_function,
-                    &accuracy,
-                    train_predictions,
-                    train_targets,
-                    test_predictions.view(),
-                    test_targets,
-                );
-            };
-
-        if let Some(ref mut history) = history {
+        if let Some(ref mut checkpoints) = checkpoints {
             trace(&format!(
-                "Recording {} checkpoints, one every {} epochs",
-                style(history.model.capacity()).yellow(),
-                style(history.interval).yellow()
+                "Recording a checkpoint every {} epochs",
+                style(checkpoints.interval).yellow()
             ));
 
-            let train_activations = model.predict(train_inputs);
-            record_history(&model, history, train_activations.view());
+            let evaluations = EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
+
+            checkpoints.record(&model, &evaluations);
         };
+
+        let mut early_stopping = self.early_stopping();
 
         let progression = Progression::new(self.epochs, "Training");
         for epoch in progression.iter() {
             let train_predictions = model.train(
-                train_inputs,
-                train_targets,
+                &split.train,
                 &loss_function,
                 &optimizer,
                 &scheduler,
                 &clipping,
             );
 
-            if let Some(ref mut history) = history {
+            if let Some(ref mut checkpoints) = checkpoints {
                 let epoch_number = epoch + 1;
-                if epoch_number % history.interval == 0 || epoch_number == self.epochs {
-                    record_history(&model, history, train_predictions.view());
+                if epoch_number % checkpoints.interval == 0 || epoch_number == self.epochs {
+                    let evaluations = EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, Some(train_predictions.view()));
+                    checkpoints.record(&model, &evaluations);
+                }
+            }
+
+            if let Some(ref mut early_stopping) = early_stopping {
+                if let Some(validation) = &split.validation {
+                    let predictions = model.predict(validation.inputs.view());
+                    let loss = loss_function.compute(predictions.view(), validation.targets.view());
+
+                    if early_stopping.check(loss, &model) {
+                        trace(&format!(
+                            "Early stopping triggered at epoch {}",
+                            style(epoch + 1).yellow()
+                        ));
+                        progression.done();
+                        break;
+                    }
                 }
             }
         }
 
-        let train_predictions = model.predict(train_inputs);
-        let train_predictions = train_predictions.view();
+        let evaluations = EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
 
         completed(&format!(
-            "{} | Loss: {} | Accuracy: Train={}, Test: {}",
+            "{} | {}",
             style("Training completed").bright().green(),
-            style(loss_function.compute(train_predictions, train_targets)).yellow(),
-            style(accuracy.compute(train_predictions, train_targets)).yellow(),
-            style(accuracy.compute(model.predict(test_inputs).view(), test_targets)).yellow()
+            evaluations.summary()
         ));
 
         // 🗂️ SAVE THE TRAINED NETWORK
-        let model_file = format!("model-{}", self.dataset);
-        save_model(&model_file, &model)?;
+        let path = Path::new(&self.dataset);
+        let dataset_name = get_file_stem(&path);
+        let model_name = format!("model-{}", dataset_name);
+        save_model(path.with_file_name(&model_name), &model)?;
 
-        // 🗂️ SAVE THE TRAINING HISTORY
-        if let Some(ref history) = history {
-            save_training_history(&format!("training-{}", model_file), history)?;
+        // 🗂️ SAVE THE CHECKPOINTS
+        if let Some(ref checkpoints) = checkpoints {
+            save_checkpoints(
+                path.with_file_name(format!("training-{}", model_name)),
+                checkpoints,
+            )?;
         }
 
         Ok(())
@@ -360,6 +346,17 @@ impl TrainArgs {
         self.cycle_multiplier.unwrap_or(1)
     }
 
+    fn early_stopping(&self) -> Option<EarlyStopping> {
+        if self.early_stopping > 0 {
+            Some(EarlyStopping::new(
+                self.early_stopping,
+                self.restore_best_model,
+            ))
+        } else {
+            None
+        }
+    }
+
     fn make_scheduler(&self) -> Arc<Mutex<dyn Scheduler>> {
         match self.scheduler {
             SchedulerType::Constant => Arc::new(Mutex::new(ConstantScheduler::new(self.lr()))),
@@ -386,28 +383,6 @@ impl TrainArgs {
         match self.optimizer {
             OptimizerType::SGD => Arc::new(Mutex::new(StochasticGradientDescent::new(self.lr()))),
             OptimizerType::Adam => Arc::new(Mutex::new(Adam::with_defaults(self.lr()))),
-        }
-    }
-}
-
-fn select_accuracy(n_classes: usize) -> Arc<dyn Accuracy> {
-    if n_classes > 2 {
-        MULTI_CLASS_ACCURACY.clone()
-    } else {
-        BINARY_ACCURACY.clone()
-    }
-}
-
-fn create_output_layer(n_classes: usize) -> NeuronLayerSpec {
-    if n_classes > 2 {
-        NeuronLayerSpec {
-            neurons: n_classes,
-            activation: SOFTMAX.clone(),
-        }
-    } else {
-        NeuronLayerSpec {
-            neurons: 1,
-            activation: SIGMOID.clone(),
         }
     }
 }

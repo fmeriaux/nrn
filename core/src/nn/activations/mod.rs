@@ -19,6 +19,7 @@ use std::sync::Arc;
 use crate::initializations::Initialization;
 use ndarray::{Array2, ArrayView2};
 
+
 pub trait Activation: Send + Sync {
     /// Returns the canonical name of the activation function.
     fn name(&self) -> &'static str;

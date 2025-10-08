@@ -1,4 +1,4 @@
-use crate::actions::{load_dataset, save_dataset, save_scaler};
+use crate::actions::{get_file_stem, load_dataset, save_dataset, save_scaler};
 use crate::display::completed;
 use clap::{Args, ValueEnum};
 use console::style;
@@ -48,15 +48,19 @@ impl ScaleArgs {
 
         // Extract the filename without extension
         let path = Path::new(&self.dataset);
-        let filename = path
-            .file_stem()
-            .ok_or_else(|| panic!("Failed to get file stem from path: {}", path.display()))?;
+        let dataset_name = get_file_stem(&path);
 
-        let dataset_path = path.with_file_name(format!("scaled-{}", filename.to_string_lossy()));
-        let scaler_path = path.with_file_name(format!("scaler-{}", filename.to_string_lossy()));
+        save_dataset(
+            dataset,
+            "SCALED DATASET",
+            self.plot,
+            path.with_file_name(format!("scaled-{}", dataset_name)),
+        )?;
 
-        save_dataset(dataset, "SCALED DATASET", self.plot, &dataset_path)?;
-        save_scaler(scaler, scaler_path)?;
+        save_scaler(
+            scaler,
+            path.with_file_name(format!("scaler-{}", dataset_name)),
+        )?;
 
         Ok(())
     }

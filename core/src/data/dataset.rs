@@ -1,5 +1,5 @@
 use crate::data::scalers::Scaler;
-use ndarray::{Array1, Array2, ArrayView2, Axis, s};
+use ndarray::{Array1, Array2, Axis, s};
 use ndarray_rand::rand::Rng;
 use ndarray_rand::rand::prelude::SliceRandom;
 use std::collections::HashSet;
@@ -14,15 +14,21 @@ pub struct Dataset {
     pub labels: Array1<f32>,
 }
 
-/// A structure representing a split dataset into training and testing sets.
-#[derive(Clone)]
-pub struct SplitDataset {
+pub struct ModelDataset {
+    /// A 2D array view where each column is a sample and each row is a feature
+    pub inputs: Array2<f32>,
+    /// A 2D array where each column is a sample and each row is a target (one-hot encoded for multi-class)
+    pub targets: Array2<f32>,
+}
+
+/// A structure representing a split dataset for training, validation, and testing.
+pub struct ModelSplit {
     /// A `Dataset` containing the training samples.
-    pub train: Dataset,
+    pub train: ModelDataset,
     /// An optional `Dataset` containing the validation samples.
-    pub validation: Option<Dataset>,
+    pub validation: Option<ModelDataset>,
     /// A `Dataset` containing the testing samples.
-    pub test: Dataset,
+    pub test: ModelDataset,
 }
 
 impl Dataset {
@@ -109,7 +115,8 @@ impl Dataset {
     /// Transforms the dataset into a shape suitable for model input and output.
     ///
     /// # Returns
-    /// A tuple `(inputs, targets)` where:
+    /// A `ModelDataset` struct containing:
+    /// - `inputs` is a 2D array view of shape `(n_features, n_samples)`.
     /// - `targets` is a 2D array owned of shape `(n_classes, n_samples)` for multi-class (one-hot encoded labels),
     ///   or `(1, n_samples)` for binary labels.
     ///
@@ -122,8 +129,8 @@ impl Dataset {
     /// let (inputs, targets) = dataset.to_model_shape();
     /// // Use `inputs` and `targets` as model input/output
     /// ```
-    pub fn to_model_shape(&self) -> (ArrayView2<'_, f32>, Array2<f32>) {
-        let inputs: ArrayView2<f32> = self.features.t();
+    pub fn to_model_dataset(&self) -> ModelDataset {
+        let inputs = self.features.t().to_owned();
 
         let n_classes = self.n_classes();
 
@@ -139,55 +146,7 @@ impl Dataset {
             self.labels.to_owned().insert_axis(Axis(0))
         };
 
-        (inputs, targets)
-    }
-
-    /// Splits the dataset into training and testing sets according to the given ratio.
-    ///
-    /// # Parameters
-    /// - `val_ratio`: The ratio of the dataset to be used for validation (between 0 and 1).
-    /// - `test_ratio`: The ratio of the dataset to be used for testing (between 0 and 1).
-    ///
-    /// # Important
-    /// This method does **not** shuffle the dataset. It assumes the dataset has already been shuffled.
-    /// If the dataset is not shuffled, the split may not be representative.
-    ///
-    /// # Panics
-    /// - When `val_ratio` or `test_ratio` is not between 0 and 1.
-    /// - When the sum of `val_ratio` and `test_ratio` is greater than or equal to 1.
-    //
-    pub fn split(&self, val_ratio: f32, test_ratio: f32) -> SplitDataset {
-        assert!(
-            val_ratio.min(test_ratio) > 0.0 && val_ratio.max(test_ratio) < 1.0,
-            "Ratio must be between 0 and 1"
-        );
-        assert!(
-            val_ratio + test_ratio < 1.0,
-            "Sum of ratios must be less than 1"
-        );
-
-        let n_samples = self.features.nrows();
-        //let n_train = (n_samples as f32 * ratio).round() as usize;
-
-        let size = |ratio: f32| (n_samples as f32 * ratio).round() as usize;
-        let slice = |start: usize, end: usize| Dataset {
-            features: self.features.slice(s![start..end, ..]).to_owned(),
-            labels: self.labels.slice(s![start..end]).to_owned(),
-        };
-
-        let test_size = size(test_ratio);
-        let val_size = size(val_ratio);
-        let train_size = n_samples - test_size - val_size;
-
-        SplitDataset {
-            train: slice(0, train_size),
-            validation: if val_size > 0 {
-                Some(slice(train_size, train_size + val_size))
-            } else {
-                None
-            },
-            test: slice(train_size + val_size, n_samples),
-        }
+        ModelDataset { inputs, targets }
     }
 
     /// Shuffles the dataset features and labels in unison using a random number generator.
@@ -258,22 +217,77 @@ impl Dataset {
     }
 }
 
-impl SplitDataset {
-    /// Unsplits the `SplitDataset` back into a single `Dataset`.
-    pub fn unsplit(self) -> Dataset {
-        let mut features = self.train.features.to_owned();
-        let mut labels = self.train.labels.to_owned();
+impl ModelDataset {
+    /// Splits the model dataset into training, validation, and testing sets based on the provided ratios.
+    ///
+    /// # Parameters
+    /// - `val_ratio`: The ratio of the dataset to be used for validation (between 0 and 1).
+    /// - `test_ratio`: The ratio of the dataset to be used for testing (between 0 and 1).
+    ///
+    /// # Important
+    /// This method does **not** shuffle the dataset. It assumes the dataset has already been shuffled.
+    /// If the dataset is not shuffled, the split may not be representative.
+    ///
+    /// # Panics
+    /// - When `val_ratio` is not between 0 and 1.
+    /// - When `test_ratio` is not between 0 and 1 or is equal to 0.
+    /// - When the sum of `val_ratio` and `test_ratio` is greater than or equal to 1.
+    //
+    pub fn split(&self, val_ratio: f32, test_ratio: f32) -> ModelSplit {
+        assert!(
+            (0.0..1.0).contains(&val_ratio),
+            "Validation ratio must be between 0 and 1"
+        );
 
-        if let Some(validation) = self.validation {
-            features
-                .append(Axis(0), validation.features.view())
-                .unwrap();
-            labels.append(Axis(0), validation.labels.view()).unwrap();
+        assert!(
+            (0.0..1.0).contains(&test_ratio) && test_ratio > 0.0,
+            "Test ratio must be between 0 and 1 and greater than 0"
+        );
+
+        assert!(
+            val_ratio + test_ratio < 1.0,
+            "Sum of ratios must be less than 1"
+        );
+
+        let n_samples = self.targets.ncols();
+
+        let size = |ratio: f32| (n_samples as f32 * ratio).round() as usize;
+        let slice = |start: usize, end: usize| ModelDataset {
+            inputs: self.inputs.slice(s![.., start..end]).to_owned(),
+            targets: self.targets.slice(s![.., start..end]).to_owned(),
+        };
+
+        let test_size = size(test_ratio);
+        let val_size = size(val_ratio);
+        let train_size = n_samples - test_size - val_size;
+
+        ModelSplit {
+            train: slice(0, train_size),
+            validation: if val_size > 0 {
+                Some(slice(train_size, train_size + val_size))
+            } else {
+                None
+            },
+            test: slice(train_size + val_size, n_samples),
         }
+    }
+}
 
-        features.append(Axis(0), self.test.features.view()).unwrap();
-        labels.append(Axis(0), self.test.labels.view()).unwrap();
+impl ModelSplit {
+    /// Returns the number of training samples in the dataset.
+    pub fn train_size(&self) -> usize {
+        self.train.inputs.ncols()
+    }
 
-        Dataset { features, labels }
+    /// Returns the number of validation samples in the dataset.
+    pub fn validation_size(&self) -> usize {
+        self.validation
+            .as_ref()
+            .map_or(0, |val| val.inputs.ncols())
+    }
+
+    /// Returns the number of testing samples in the dataset.
+    pub fn test_size(&self) -> usize {
+        self.test.inputs.ncols()
     }
 }

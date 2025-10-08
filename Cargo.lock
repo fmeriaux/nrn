@@ -1098,6 +1098,7 @@ dependencies = [
  "clap",
  "console",
  "indicatif",
+ "log",
  "ndarray",
  "ndarray-rand",
  "nrn",

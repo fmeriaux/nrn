@@ -15,3 +15,4 @@ console = "0.16.1"
 ndarray = { version = "0.16.1" }
 ndarray-rand = "0.15.0"
 pathdiff = "0.2.3"
+log = "0.4.27"

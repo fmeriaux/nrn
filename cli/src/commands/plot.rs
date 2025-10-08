@@ -1,4 +1,4 @@
-use crate::actions::{load_dataset, load_training_history};
+use crate::actions::{load_dataset, load_checkpoints};
 use crate::display::warning;
 use crate::display::{ANIMATION_ICON, HISTORY_ICON, saved_at};
 use crate::progression::Progression;
@@ -10,8 +10,8 @@ use std::error::Error;
 
 #[derive(Args, Debug)]
 pub struct PlotArgs {
-    /// Name of the training history file to plot
-    history: String,
+    /// Name of the checkpoints file (Training history)
+    checkpoints: String,
 
     /// Name of the dataset used for training for decision boundary visualization (only for 2D datasets)
     #[arg(short, long)]
@@ -36,17 +36,17 @@ pub struct PlotArgs {
 
 impl PlotArgs {
     pub fn run(self) -> Result<(), Box<dyn Error>> {
-        let history = load_training_history(&self.history)?;
+        let checkpoints = load_checkpoints(&self.checkpoints)?;
         let render_cfg = RenderConfig::new(self.width as u32, self.height as u32);
 
         let (width, height) = (self.width as u32, self.height as u32);
 
-        let frame = history.draw(&render_cfg)?;
+        let frame = checkpoints.draw(&render_cfg)?;
 
         saved_at(
             HISTORY_ICON,
             "TRAINING CURVES",
-            save_rgb(frame, &self.history, width, height)?,
+            save_rgb(frame, &self.checkpoints, width, height)?,
         );
 
         if let Some(dataset) = self.dataset {
@@ -59,10 +59,10 @@ impl PlotArgs {
                 return Ok(());
             }
 
-            let interval = history.model.len() / history.model.len().min(self.frames.into());
+            let interval = checkpoints.len() / checkpoints.len().min(self.frames.into());
 
             let progression = Progression::new(
-                history.model.len(),
+                checkpoints.len(),
                 "Generating decision boundary animation",
             );
 
@@ -73,9 +73,9 @@ impl PlotArgs {
 
                 if step_number == 1
                     || step_number % interval == 0
-                    || step_number == history.model.len()
+                    || step_number == checkpoints.snapshots.len()
                 {
-                    let model = &history.model[step];
+                    let model = &checkpoints.snapshots[step];
 
                     let rgb_frame = model.draw_decision_boundary(&dataset, &render_cfg)?;
 
@@ -91,7 +91,7 @@ impl PlotArgs {
                     self.width,
                     self.height,
                     self.delay,
-                    &format!("{}", &self.history),
+                    &format!("{}", &self.checkpoints),
                 )?,
             );
         }

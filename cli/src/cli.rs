@@ -23,7 +23,7 @@ pub enum Command {
     Train(TrainArgs),
     /// Predict using a trained model
     Predict(PredictArgs),
-    /// Plot the training history
+    /// Plot training curves and decision boundaries
     Plot(PlotArgs),
 }
 
@@ -40,7 +40,7 @@ impl Command {
             Train(args) => args.run(),
             // 🔮 PREDICTION
             Predict(args) => args.run(),
-            // 📊 PLOT TRAINING HISTORY
+            // 📊 PLOT TRAINING CURVES AND DECISION BOUNDARIES
             Plot(args) => args.run(),
         }
     }

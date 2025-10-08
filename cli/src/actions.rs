@@ -1,13 +1,22 @@
 use crate::display::*;
+use nrn::activations::RELU;
 use nrn::charts::RenderConfig;
 use nrn::data::Dataset;
 use nrn::data::scalers::ScalerMethod;
 use nrn::io::png::save_rgb;
 use nrn::io::scalers::ScalerRecord;
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
-use nrn::training::History;
 use std::error::Error;
 use std::path::Path;
+use nrn::checkpoints::Checkpoints;
+
+pub(crate) fn get_file_stem<P: AsRef<Path>>(path: P) -> String {
+    let path = path.as_ref();
+    path.file_stem()
+        .unwrap_or_else(|| panic!("Failed to get file stem from path: {}", path.display()))
+        .to_string_lossy()
+        .to_string()
+}
 
 pub(crate) fn load_dataset<P: AsRef<Path>>(path: P) -> Result<Dataset, Box<dyn Error>> {
     let dataset = Dataset::load(&path)?;
@@ -39,8 +48,8 @@ pub(crate) fn save_scaler<P: AsRef<Path>>(
     Ok(())
 }
 
-pub(crate) fn load_scaler(filename: &str) -> Result<ScalerMethod, Box<dyn Error>> {
-    let scaler: ScalerMethod = ScalerRecord::load(filename)?.into();
+pub(crate) fn load_scaler<P: AsRef<Path>>(path: P) -> Result<ScalerMethod, Box<dyn Error>> {
+    let scaler: ScalerMethod = ScalerRecord::load(&path)?.into();
     loaded(&scaler);
     Ok(scaler)
 }
@@ -69,43 +78,48 @@ pub(crate) fn plot_dataset<P: AsRef<Path>>(
     Ok(())
 }
 
-pub(crate) fn initialize_model(
-    input_size: usize,
-    layer_specs: &Vec<NeuronLayerSpec>,
+pub(crate) fn initialize_model_with(
+    dataset: &Dataset,
+    layers: Option<Vec<usize>>,
 ) -> NeuralNetwork {
-    let model = NeuralNetwork::initialization(input_size, &layer_specs);
+    let layer_specs =
+        NeuronLayerSpec::network_for(layers.unwrap_or_default(), &*RELU, dataset.n_classes());
+    let model = NeuralNetwork::initialization(dataset.n_features(), &layer_specs);
     initialized(&model);
     model
 }
 
-pub(crate) fn load_model(filename: &str) -> Result<NeuralNetwork, Box<dyn Error>> {
-    let model = NeuralNetwork::load(filename)?;
+pub(crate) fn load_model<P: AsRef<Path>>(path: P) -> Result<NeuralNetwork, Box<dyn Error>> {
+    let model = NeuralNetwork::load(&path)?;
     loaded(&model);
     Ok(model)
 }
 
-pub(crate) fn save_model(filename: &str, model: &NeuralNetwork) -> Result<(), Box<dyn Error>> {
-    saved_at(MODEL_ICON, "NEURAL NETWORK", model.save(filename)?);
+pub(crate) fn save_model<P: AsRef<Path>>(
+    path: P,
+    model: &NeuralNetwork,
+) -> Result<(), Box<dyn Error>> {
+    saved_at(MODEL_ICON, "NEURAL NETWORK", model.save(&path)?);
     Ok(())
 }
 
-pub(crate) fn load_training_history(filename: &str) -> Result<History, Box<dyn Error>> {
-    let history = History::load(filename)?;
+pub(crate) fn load_checkpoints<P: AsRef<Path>>(path: P) -> Result<Checkpoints, Box<dyn Error>> {
+    let checkpoints = Checkpoints::load(&path)?;
 
     assert!(
-        history.model.len() > 2,
-        "Training history must contain more than two checkpoints to plot."
+        checkpoints.len() > 2,
+        "Training checkpoints must contain more than two checkpoints to plot."
     );
 
-    loaded(&history);
+    loaded(&checkpoints);
 
-    Ok(history)
+    Ok(checkpoints)
 }
 
-pub(crate) fn save_training_history(
-    filename: &str,
-    history: &History,
+pub(crate) fn save_checkpoints<P: AsRef<Path>>(
+    path: P,
+    checkpoints: &Checkpoints,
 ) -> Result<(), Box<dyn Error>> {
-    saved_at(HISTORY_ICON, "TRAINING HISTORY", history.save(filename)?);
+    saved_at(HISTORY_ICON, "TRAINING HISTORY", checkpoints.save(&path)?);
     Ok(())
 }

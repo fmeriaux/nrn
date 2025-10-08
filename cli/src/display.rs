@@ -1,8 +1,10 @@
 use console::{Emoji, style};
-use nrn::data::Dataset;
+use nrn::checkpoints::Checkpoints;
 use nrn::data::scalers::{Scaler, ScalerMethod};
+use nrn::data::{Dataset, ModelSplit};
+use nrn::evaluation::{Evaluation, EvaluationSet};
 use nrn::model::NeuralNetwork;
-use nrn::training::{GradientClipping, History};
+use nrn::training::GradientClipping;
 use pathdiff::diff_paths;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -37,6 +39,18 @@ impl Summary for Dataset {
     }
 }
 
+impl Summary for ModelSplit {
+    fn summary(&self) -> String {
+        format!(
+            "Split {} | Train={}, Val={}, Test={}",
+            style("DATASET").bold().blue(),
+            style(self.train_size()).yellow(),
+            style(self.validation_size()).yellow(),
+            style(self.test_size()).yellow()
+        )
+    }
+}
+
 impl Summary for ScalerMethod {
     fn summary(&self) -> String {
         format!(
@@ -57,24 +71,50 @@ impl Summary for NeuralNetwork {
     }
 }
 
-impl Summary for Option<f32> {
+impl Summary for f32 {
+    fn summary(&self) -> String {
+        format!("{}", self)
+    }
+}
+
+impl<T: Summary> Summary for Option<T> {
     fn summary(&self) -> String {
         match self {
-            Some(value) => format!("{}", value),
+            Some(value) => value.summary(),
             None => "N/A".to_string(),
         }
     }
 }
 
-impl Summary for History {
+impl Summary for Evaluation {
     fn summary(&self) -> String {
         format!(
-            "{} | Checkpoints: {} | Loss: {} | Accuracy: Train={}%, Test={}%",
-            style("TRAINING HISTORY").bold().blue(),
-            style(self.model.len()).yellow(),
-            style(self.final_loss().summary()).yellow(),
-            style(self.final_train_accuracy().summary()).yellow(),
-            style(self.final_test_accuracy().summary()).yellow()
+            "L={:.4}, A={:.1}{}",
+            style(self.loss).yellow(),
+            style(self.accuracy).yellow(),
+            style("%").yellow()
+        )
+    }
+}
+
+impl Summary for EvaluationSet {
+    fn summary(&self) -> String {
+        format!(
+            "Train({}), Val({}), Test({})",
+            self.train.summary(),
+            self.validation.summary(),
+            self.test.summary()
+        )
+    }
+}
+
+impl Summary for Checkpoints {
+    fn summary(&self) -> String {
+        format!(
+            "{} | Evaluations: {} | {}",
+            style("CHECKPOINTS").bold().blue(),
+            style(self.len()).yellow(),
+            style(self.final_evaluation().summary()).yellow(),
         )
     }
 }

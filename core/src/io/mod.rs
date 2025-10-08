@@ -7,5 +7,5 @@ pub mod bytes;
 pub mod scalers;
 pub mod data;
 pub mod model;
-pub mod training;
+pub mod checkpoints;
 pub mod classes;

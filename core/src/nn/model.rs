@@ -4,7 +4,7 @@
 //! Each layer contains its weights, biases, and activation function, enabling flexible and modular
 //! construction of multi-layer perceptron and similar models.
 
-use crate::activations::Activation;
+use crate::activations::{Activation, SIGMOID, SOFTMAX};
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
 use std::iter::once;
 use std::sync::Arc;
@@ -44,7 +44,6 @@ pub fn last_activation(activations: &[Array2<f32>]) -> Array2<f32> {
         .expect("Ensure activations is not empty.")
         .to_owned()
 }
-
 
 impl NeuronLayer {
     /// Initializes a new `NeuronLayer` with random weights and biases.
@@ -191,5 +190,71 @@ impl NeuralNetwork {
     pub fn predict_single(&self, input: ArrayView1<f32>) -> Array1<f32> {
         let inputs = input.insert_axis(Axis(1));
         self.predict(inputs).column(0).to_owned()
+    }
+}
+
+impl NeuronLayerSpec {
+    /// Creates specifications for multiple hidden layers with the same activation function.
+    /// # Arguments
+    /// - `neurons`: An iterator over the number of neurons for each hidden layer.
+    /// - `activation`: The activation function to be used for all hidden layers.
+    /// # Returns
+    /// A vector of `NeuronLayerSpec` instances, one for each hidden layer.
+    pub fn hidden<A: Activation + 'static>(
+        neurons: impl IntoIterator<Item = usize>,
+        activation: &Arc<A>,
+    ) -> Vec<Self> {
+        neurons
+            .into_iter()
+            .map(|n| NeuronLayerSpec {
+                neurons: n,
+                activation: activation.clone(),
+            })
+            .collect()
+    }
+
+    /// Creates an output layer specification based on the number of classes.
+    ///
+    /// - For binary classification (n_classes = 2): 1 neuron with sigmoid activation
+    /// - For multi-class classification (n_classes > 2): n_classes neurons with softmax activation
+    ///
+    /// # Panics
+    /// When `n_classes` is less than or equal to 1.
+    /// # Arguments
+    /// - `n_classes`: The number of classes for the output layer.
+    ///
+    pub fn output_for(n_classes: usize) -> Self {
+        assert!(
+            n_classes > 1,
+            "Number of classes must be greater than 1, got {}",
+            n_classes
+        );
+        match n_classes {
+            2 => NeuronLayerSpec {
+                neurons: 1,
+                activation: SIGMOID.clone(),
+            },
+            _ => NeuronLayerSpec {
+                neurons: n_classes,
+                activation: SOFTMAX.clone(),
+            },
+        }
+    }
+
+    /// Creates a full network specification including hidden layers and an output layer.
+    /// # Arguments
+    /// - `hidden_neurons`: An iterator over the number of neurons for each hidden layer.
+    /// - `hidden_activation`: The activation function to be used for all hidden layers.
+    /// - `n_classes`: The number of classes for the output layer.
+    /// # Returns
+    /// A vector of `NeuronLayerSpec` instances, including hidden layers and the output layer.
+    pub fn network_for<A: Activation + 'static>(
+        hidden_neurons: impl IntoIterator<Item = usize>,
+        hidden_activation: &Arc<A>,
+        n_classes: usize,
+    ) -> Vec<Self> {
+        let mut specs = Self::hidden(hidden_neurons, hidden_activation);
+        specs.push(Self::output_for(n_classes));
+        specs
     }
 }
