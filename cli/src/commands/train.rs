@@ -68,8 +68,12 @@ pub struct TrainArgs {
     checkpoint_interval: usize,
 
     /// Specify the hidden layers of the model when a new model is initialized
-    #[arg(long, value_delimiter = ',', conflicts_with = "model")]
+    #[arg(long, value_delimiter = ',', conflicts_with_all = &["auto_layers", "model"])]
     layers: Option<Vec<usize>>,
+
+    /// Automatically infer the hidden layers based on the dataset characteristics
+    #[arg(long, conflicts_with_all = &["layers", "model"], default_value_t = false)]
+    auto_layers: bool,
 
     /// Specify the optimizer to use for training
     #[arg(long, value_enum, default_value_t = OptimizerType::Adam)]
@@ -237,7 +241,7 @@ impl TrainArgs {
             .model
             .iter()
             .find_map(|file| load_model(file).ok())
-            .unwrap_or_else(|| initialize_model_with(&dataset, self.layers.clone()));
+            .unwrap_or_else(|| initialize_model_with(&dataset, self.layers.clone(), self.auto_layers));
 
         // 👨‍🎓 TRAINING LOOP
         let mut checkpoints: Option<Checkpoints> = Checkpoints::by_interval(self.checkpoint_interval, self.epochs);

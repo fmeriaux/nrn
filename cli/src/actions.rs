@@ -81,9 +81,13 @@ pub(crate) fn plot_dataset<P: AsRef<Path>>(
 pub(crate) fn initialize_model_with(
     dataset: &Dataset,
     layers: Option<Vec<usize>>,
+    auto_layers: bool,
 ) -> NeuralNetwork {
-    let layer_specs =
-        NeuronLayerSpec::network_for(layers.unwrap_or_default(), &*RELU, dataset.n_classes());
+    let layer_specs =if auto_layers {
+        NeuronLayerSpec::infer_from(dataset.n_features(), dataset.n_classes(), dataset.n_samples(), &*RELU)
+    } else {
+        NeuronLayerSpec::network_for(layers.unwrap_or_default(), &*RELU, dataset.n_classes())
+    };
     let model = NeuralNetwork::initialization(dataset.n_features(), &layer_specs);
     initialized(&model);
     model

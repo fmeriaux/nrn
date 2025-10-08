@@ -257,4 +257,48 @@ impl NeuronLayerSpec {
         specs.push(Self::output_for(n_classes));
         specs
     }
+
+    /// Infers a suitable network architecture based on dataset characteristics.
+    /// The architecture is determined by a complexity score derived from the number of features,
+    /// classes, and samples in the dataset.
+    /// # Panics
+    /// - When `n_features` is less than or equal to zero.
+    /// - When `n_classes` is less than or equal to one.
+    /// - When `n_samples` is less than or equal to zero.
+    pub fn infer_from<A: Activation + 'static>(
+        n_features: usize,
+        n_classes: usize,
+        n_samples: usize,
+        hidden_activation: &Arc<A>
+    ) -> Vec<Self> {
+        assert!(
+            n_features > 0,
+            "Number of features must be greater than zero."
+        );
+        assert!(n_classes > 1, "Number of classes must be greater than one.");
+        assert!(
+            n_samples > 0,
+            "Number of samples must be greater than zero."
+        );
+        // Complexity score combines features, classes, and samples to guide architecture decisions
+        let complexity_score = ((n_features as f64) * (n_classes as f64) / (n_samples as f64)).ln();
+
+        // Determine the number of hidden layers and neurons based on the complexity score
+        let (n_layers, n_neurons) = match complexity_score {
+            f64::NEG_INFINITY..=-3.0 => (1, n_features * 2),
+            -3.0..=-1.0 => (2, n_features),
+            -1.0..=0.0 => (3, n_features * 2),
+            _ => (3, n_features * 3),
+        };
+
+        let mut hidden_layers = Vec::with_capacity(n_layers);
+        let mut current_neurons = n_neurons.clamp(16, 512);
+
+        for _layer in 0..n_layers {
+            hidden_layers.push(current_neurons);
+            current_neurons = (current_neurons / 2).max(n_classes * 2);
+        }
+
+        Self::network_for(hidden_layers, hidden_activation, n_classes)
+    }
 }
