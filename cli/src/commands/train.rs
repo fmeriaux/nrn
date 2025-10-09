@@ -287,6 +287,14 @@ impl TrainArgs {
                             "Early stopping triggered at epoch {}",
                             style(epoch + 1).yellow()
                         ));
+                        if self.restore_best_model {
+                            model = early_stopping
+                                .best_model
+                                .as_ref()
+                                .expect("Best model should be available")
+                                .clone();
+                            trace("Restored the best model observed during training");
+                        }
                         progression.done();
                         break;
                     }
