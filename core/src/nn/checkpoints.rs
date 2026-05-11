@@ -50,6 +50,11 @@ impl Checkpoints {
         self.snapshots.len()
     }
 
+    /// Returns true if no checkpoints have been recorded.
+    pub fn is_empty(&self) -> bool {
+        self.snapshots.is_empty()
+    }
+
     /// Returns the final evaluation recorded at the last checkpoint, if available.
     pub fn final_evaluation(&self) -> Option<EvaluationSet> {
         self.evaluations.last().copied()

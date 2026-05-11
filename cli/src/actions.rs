@@ -110,10 +110,9 @@ pub(crate) fn save_model<P: AsRef<Path>>(
 pub(crate) fn load_checkpoints<P: AsRef<Path>>(path: P) -> Result<Checkpoints, Box<dyn Error>> {
     let checkpoints = Checkpoints::load(&path)?;
 
-    assert!(
-        checkpoints.len() > 2,
-        "Training checkpoints must contain more than two checkpoints to plot."
-    );
+    if checkpoints.len() <= 2 {
+        return Err("Training checkpoints must contain more than two checkpoints to plot.".into());
+    }
 
     loaded(&checkpoints);
 

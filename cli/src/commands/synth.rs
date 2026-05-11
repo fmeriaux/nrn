@@ -1,5 +1,5 @@
 use crate::actions::save_dataset;
-use crate::display::generated;
+use crate::display::{generated, warning};
 use clap::{Args, ValueEnum};
 use nrn::data::synth::{DatasetGenerator, RingDataset, UniformDataset};
 use std::error::Error;
@@ -60,21 +60,19 @@ impl SynthArgs {
     /// Validate the command line arguments
     fn validate(&self) -> Result<(), String> {
         if self.features < 1 {
-            return Err("Le nombre de features doit être au moins 1.".to_string());
+            return Err("The number of features must be at least 1.".to_string());
         }
         if self.clusters < 1 {
-            return Err("Le nombre de clusters doit être au moins 1.".to_string());
+            return Err("The number of clusters must be at least 1.".to_string());
         }
         if self.samples < self.clusters {
             return Err(
-                "Le nombre d'échantillons doit être au moins égal au nombre de clusters."
+                "The number of samples must be at least equal to the number of clusters."
                     .to_string(),
             );
         }
         if self.min >= self.max {
-            return Err(
-                "La valeur minimale doit être inférieure à la valeur maximale.".to_string(),
-            );
+            return Err("The minimum value must be less than the maximum value.".to_string());
         }
         Ok(())
     }
@@ -101,6 +99,15 @@ impl SynthArgs {
         };
 
         let dataset = generator.generate(self.seed);
+
+        if dataset.n_samples() != self.samples {
+            warning(&format!(
+                "Requested {} samples but generated {} ({} dropped due to uneven cluster division)",
+                self.samples,
+                dataset.n_samples(),
+                self.samples - dataset.n_samples()
+            ));
+        }
 
         generated(&dataset);
 

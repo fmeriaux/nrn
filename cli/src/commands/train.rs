@@ -237,11 +237,10 @@ impl TrainArgs {
         let accuracy: Arc<dyn Accuracy> = accuracy_for(dataset.n_classes());
 
         // 🧠 NEURAL NETWORK INITIALIZATION
-        let mut model = self
-            .model
-            .iter()
-            .find_map(|file| load_model(file).ok())
-            .unwrap_or_else(|| initialize_model_with(&dataset, self.layers.clone(), self.auto_layers));
+        let mut model = match &self.model {
+            Some(file) => load_model(file)?,
+            None => initialize_model_with(&dataset, self.layers.clone(), self.auto_layers),
+        };
 
         // 👨‍🎓 TRAINING LOOP
         let mut checkpoints: Option<Checkpoints> = Checkpoints::by_interval(self.checkpoint_interval, self.epochs);

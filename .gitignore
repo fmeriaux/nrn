@@ -2,3 +2,4 @@ target/
 secrets/
 .idea/
 .DS_Store
+.claude/

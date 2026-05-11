@@ -74,7 +74,7 @@ impl NeuronLayer {
     /// # Arguments
     /// - `inputs`: A 2D array representing the inputs to this layer.
     /// # Returns
-    /// - A 2D array representing the outputs of this layer after applying the sigmoid activation function.
+    /// - A 2D array representing the outputs of this layer after applying the configured activation function.
     pub fn forward(&self, inputs: &Array2<f32>) -> Array2<f32> {
         assert_eq!(
             inputs.nrows(),
@@ -114,8 +114,8 @@ impl NeuralNetwork {
     /// Creates a new `NeuronNetwork` with the specified input size and layer specifications.
     /// # Arguments
     /// - `inputs`: The number of inputs to the first layer of the network.
-    /// - `layer_specs`: A vector of `NeuronLayerSpec` representing the specifications for each layer in the network.
-    pub fn initialization(inputs: usize, layer_specs: &Vec<NeuronLayerSpec>) -> Self {
+    /// - `layer_specs`: A slice of `NeuronLayerSpec` representing the specifications for each layer in the network.
+    pub fn initialization(inputs: usize, layer_specs: &[NeuronLayerSpec]) -> Self {
         assert!(inputs > 0, "Input size must be greater than zero.");
         assert!(
             !layer_specs.is_empty(),

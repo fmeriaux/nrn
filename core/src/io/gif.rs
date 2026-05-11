@@ -38,7 +38,7 @@ pub fn save_gif_from_rgb<P: AsRef<Path>>(
         .into_iter()
         .map(|rgb_frame| {
             let mut frame = Frame::from_rgb(width, height, &rgb_frame);
-            frame.delay = frame_delay;
+            frame.delay = frame_delay / 10; // convert milliseconds to centiseconds
             frame
         })
         .collect();

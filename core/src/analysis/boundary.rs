@@ -69,7 +69,7 @@ pub fn decision_boundary(
         "Mins and maxs must have the same length"
     );
 
-    if mins.len() == 0 {
+    if mins.is_empty() {
         return Array2::zeros((0, 0));
     }
 

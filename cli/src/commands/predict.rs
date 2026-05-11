@@ -29,8 +29,9 @@ impl PredictArgs {
 
         let scaler: Option<ScalerMethod> = self
             .scaler
-            .iter()
-            .find_map(|s| load_scaler(s).ok());
+            .as_ref()
+            .map(|s| load_scaler(s))
+            .transpose()?;
 
         let mut input = if let Some(input_file) = self.input {
             let input = load_inputs(&input_file)?;
