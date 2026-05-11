@@ -124,11 +124,6 @@ impl Dataset {
     /// - If the labels are not binary (i.e., `max_label > 1`), the function one-hot encodes the labels.
     /// - For binary labels, it simply adds an axis to match the expected shape.
     ///
-    /// # Example
-    /// ```
-    /// let (inputs, targets) = dataset.to_model_shape();
-    /// // Use `inputs` and `targets` as model input/output
-    /// ```
     pub fn to_model_dataset(&self) -> ModelDataset {
         let inputs = self.features.t().to_owned();
 

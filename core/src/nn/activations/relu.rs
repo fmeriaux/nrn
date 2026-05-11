@@ -42,3 +42,46 @@ impl Activation for ReLU {
 /// Static instance of the ReLU activation wrapped in an `Arc` for shared use.
 pub static RELU: Lazy<Arc<ReLU>> = Lazy::new(|| Arc::new(ReLU));
 inventory::submit!(ActivationProvider(|| RELU.clone()));
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::array;
+
+    #[test]
+    fn apply_passes_positive_values_unchanged() {
+        let input = array![[1.0, 2.0], [3.0, 4.0]];
+        let result = RELU.apply(input.view());
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn apply_zeros_negative_values() {
+        let input = array![[-1.0, -2.0], [-3.0, -0.5]];
+        let result = RELU.apply(input.view());
+        assert_eq!(result, array![[0.0, 0.0], [0.0, 0.0]]);
+    }
+
+    #[test]
+    fn apply_mixed_values() {
+        let input = array![[-1.0, 2.0], [0.0, -3.0]];
+        let result = RELU.apply(input.view());
+        assert_eq!(result, array![[0.0, 2.0], [0.0, 0.0]]);
+    }
+
+    #[test]
+    fn derivative_is_one_for_positive_activations() {
+        let activations = array![[0.5, 1.0], [2.0, 0.1]];
+        let targets = array![[0.0, 0.0], [0.0, 0.0]];
+        let d = RELU.derivative(activations.view(), targets.view());
+        assert_eq!(d, array![[1.0, 1.0], [1.0, 1.0]]);
+    }
+
+    #[test]
+    fn derivative_is_zero_for_nonpositive_activations() {
+        let activations = array![[0.0, -1.0], [-2.0, 0.0]];
+        let targets = array![[0.0, 0.0], [0.0, 0.0]];
+        let d = RELU.derivative(activations.view(), targets.view());
+        assert_eq!(d, array![[0.0, 0.0], [0.0, 0.0]]);
+    }
+}

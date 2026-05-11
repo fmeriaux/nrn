@@ -9,12 +9,10 @@
 //!
 //! # Usage Example
 //!
-//! ```
-//!
+//! ```ignore
 //! let encoder = ImageEncoder { img_shape: (64, 64), grayscale: true };
 //! let img = std::fs::read("image.png")?;
-//! let mut data = encoder.encode(&img)?;
-//! let normalized = scaler.apply_inplace(&mut data)?;
+//! let data = encoder.encode(&img)?;
 //! ```
 //!
 use crate::data::vectorizers::VectorEncoder;

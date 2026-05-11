@@ -83,9 +83,15 @@ impl ActivationProvider {
     ///
     /// # Example
     /// ```
-    /// if let Some(activation) = ActivationProvider::get_by_name("relu") {
-    ///     // Use the activation
-    /// }
+    /// use nrn::activations::ActivationProvider;
+    /// use ndarray::array;
+    ///
+    /// let relu = ActivationProvider::get_by_name("relu").expect("relu is registered");
+    /// assert_eq!(relu.name(), "relu");
+    /// let input = array![[1.0, -1.0]];
+    /// let output = relu.apply(input.view());
+    /// assert_eq!(output[[0, 0]], 1.0); // positive value passes through
+    /// assert_eq!(output[[0, 1]], 0.0); // negative value -> zero
     /// ```
     pub fn get_by_name(name: &str) -> Option<Arc<dyn Activation>> {
         for provider in inventory::iter::<ActivationProvider> {

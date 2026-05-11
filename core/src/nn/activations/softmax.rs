@@ -75,3 +75,59 @@ impl Activation for Softmax {
 /// Static instance of the Softmax activation wrapped in an `Arc` for shared use.
 pub static SOFTMAX: Lazy<Arc<Softmax>> = Lazy::new(|| Arc::new(Softmax));
 inventory::submit!(ActivationProvider(|| SOFTMAX.clone()));
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::array;
+
+    #[test]
+    fn output_sums_to_one_per_column() {
+        // shape: (3 classes, 2 samples)
+        let input = array![[1.0, 2.0], [2.0, 1.0], [3.0, 3.0]];
+        let result = SOFTMAX.apply(input.view());
+        for col in result.columns() {
+            let sum: f32 = col.iter().sum();
+            assert!((sum - 1.0).abs() < 1e-5, "Column sum {} != 1.0", sum);
+        }
+    }
+
+    #[test]
+    fn all_outputs_positive() {
+        let input = array![[-5.0, 0.0], [0.0, 1.0], [5.0, -1.0]];
+        let result = SOFTMAX.apply(input.view());
+        for &v in result.iter() {
+            assert!(v > 0.0, "Value {} is not positive", v);
+        }
+    }
+
+    #[test]
+    fn max_input_gets_highest_probability() {
+        // Max input at row 2 -> highest probability at row 2
+        let input = array![[1.0], [2.0], [10.0]];
+        let result = SOFTMAX.apply(input.view());
+        let col = result.column(0);
+        let max_idx = col.iter().enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .unwrap().0;
+        assert_eq!(max_idx, 2);
+    }
+
+    #[test]
+    fn numerically_stable_with_large_inputs() {
+        // Sans la soustraction du max, exp(1000) overflow → NaN
+        let input = array![[1000.0], [1001.0], [1002.0]];
+        let result = SOFTMAX.apply(input.view());
+        for &v in result.iter() {
+            assert!(v.is_finite(), "Value {} is not finite", v);
+        }
+    }
+
+    #[test]
+    fn derivative_shape_matches_activations() {
+        let activations = array![[0.7, 0.2], [0.2, 0.5], [0.1, 0.3]];
+        let targets = array![[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]];
+        let d = SOFTMAX.derivative(activations.view(), targets.view());
+        assert_eq!(d.shape(), activations.shape());
+    }
+}

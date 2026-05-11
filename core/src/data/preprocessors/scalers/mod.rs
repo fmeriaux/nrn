@@ -29,12 +29,6 @@ pub trait Scaler: Send + Sync {
     /// * `input` - A mutable 2D array view representing dataset features.
     ///   The shape must be compatible with the scaler's expected input.
     ///
-    /// # Example
-    ///
-    /// ```
-    /// let mut data = ndarray::Array2::<f32>::zeros((10, 5));
-    /// scaler.apply_inplace(data.view_mut());
-    /// ```
     fn apply_inplace(&self, input: ArrayViewMut2<f32>);
 
     /// Applies the scaling transformation to a single 1D array (vector) in-place.
@@ -46,12 +40,6 @@ pub trait Scaler: Send + Sync {
     /// This method expands the 1D input into a 2D view, applies the transformation in-place,
     /// and modifies the original vector without allocation.
     ///
-    /// # Example
-    /// ```
-    /// let mut sample = array![1.0, 2.0, 3.0];
-    /// scaler.apply_single_inplace(sample.view_mut());
-    /// assert_eq!(sample, /* expected scaled value */);
-    /// ```
     fn apply_single_inplace(&self, input: ArrayViewMut1<f32>) {
         let mut expanded = input.insert_axis(Axis(0));
         self.apply_inplace(expanded.view_mut());
@@ -66,10 +54,13 @@ pub trait Scaler: Send + Sync {
 ///
 /// # Example
 /// ```
-/// use crate::data::scalers::{ScalerMethod, MinMaxScaler, Scaler};
+/// use nrn::data::scalers::{ScalerMethod, MinMaxScaler, Scaler};
+/// use ndarray::array;
 ///
-/// let scaler = ScalerMethod::MinMax(MinMaxScaler::fit(&data));
-/// let scaled = scaler.apply(&data);
+/// let mut data = array![[0.0, 5.0], [10.0, 20.0]];
+/// let scaler = ScalerMethod::MinMax(MinMaxScaler::default().fit(data.view()));
+/// scaler.apply_inplace(data.view_mut());
+/// assert!(data.iter().all(|&v| v >= 0.0 && v <= 1.0 + 1e-5));
 /// ```
 pub enum ScalerMethod {
     MinMax(MinMaxScaler),

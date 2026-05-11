@@ -302,3 +302,95 @@ impl NeuronLayerSpec {
         Self::network_for(hidden_layers, hidden_activation, n_classes)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::activations::{RELU, SIGMOID};
+    use ndarray::{Array1, Array2, array};
+
+    fn make_network(weights: Array2<f32>, biases: Array1<f32>, activation: Arc<dyn Activation>) -> NeuralNetwork {
+        NeuralNetwork {
+            layers: vec![NeuronLayer { weights, biases, activation }],
+        }
+    }
+
+    #[test]
+    fn output_shape_matches_architecture() {
+        // Network: 3 inputs -> 4 hidden (relu) -> 3 output (softmax), 5 samples
+        // Note: n_classes=2 produces 1 sigmoid neuron (binary); use 3 for multi-class
+        let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 3);
+        let model = NeuralNetwork::initialization(3, &specs);
+        let inputs = Array2::zeros((3, 5)); // (features, samples)
+        let output = model.predict(inputs.view());
+        assert_eq!(output.shape(), &[3, 5]); // (classes, samples)
+    }
+
+    #[test]
+    fn zero_weights_output_depends_only_on_bias() {
+        // weights = 0 -> pre-activation = bias, regardless of input
+        let weights = Array2::zeros((2, 3)); // 2 neurons, 3 inputs
+        let biases = Array1::from_vec(vec![1.0, -1.0]);
+        let model = make_network(weights, biases, RELU.clone());
+
+        // Any input should produce relu(1.0)=1.0 and relu(-1.0)=0.0
+        let inputs = array![[5.0, 9.0], [2.0, 7.0], [8.0, 3.0]];
+        let output = model.predict(inputs.view());
+        for col in output.columns() {
+            assert!((col[0] - 1.0).abs() < 1e-6);
+            assert!((col[1] - 0.0).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn identity_weights_with_relu_passes_positive_inputs() {
+        // weights = I, bias = 0, relu -> output == input for positive values
+        let model = make_network(Array2::eye(3), Array1::zeros(3), RELU.clone());
+        let inputs = array![[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]];
+        let output = model.predict(inputs.view());
+        assert!((&output - &inputs).mapv(f32::abs).iter().all(|&v| v < 1e-6));
+    }
+
+    #[test]
+    fn sigmoid_output_always_in_zero_one() {
+        let specs = NeuronLayerSpec::network_for(vec![], &*SIGMOID, 2);
+        let model = NeuralNetwork::initialization(4, &specs);
+        // f32 saturates to exactly 0.0 or 1.0 for large inputs, so use closed interval
+        let inputs = array![
+            [100.0, -100.0],
+            [100.0, -100.0],
+            [100.0, -100.0],
+            [100.0, -100.0]
+        ];
+        let output = model.predict(inputs.view());
+        for &v in output.iter() {
+            assert!(v >= 0.0 && v <= 1.0, "Sigmoid output {} not in [0, 1]", v);
+        }
+    }
+
+    #[test]
+    fn predict_returns_last_forward_activation() {
+        let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 2);
+        let model = NeuralNetwork::initialization(3, &specs);
+        let inputs = Array2::zeros((3, 5));
+
+        let activations = model.forward(inputs.view());
+        let predicted = model.predict(inputs.view());
+
+        assert_eq!(predicted, *activations.last().unwrap());
+    }
+
+    #[test]
+    fn predict_single_matches_predict_on_one_sample() {
+        let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 2);
+        let model = NeuralNetwork::initialization(3, &specs);
+
+        let sample = array![1.0, 2.0, 3.0];
+        let single = model.predict_single(sample.view());
+
+        let batch = array![[1.0], [2.0], [3.0]]; // (features, 1 sample)
+        let batch_output = model.predict(batch.view());
+
+        assert!((single - batch_output.column(0)).mapv(f32::abs).iter().all(|&v| v < 1e-6));
+    }
+}

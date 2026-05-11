@@ -41,3 +41,48 @@ impl Activation for Sigmoid {
 /// Static instance of the Sigmoid activation wrapped in an `Arc` for shared use.
 pub static SIGMOID: Lazy<Arc<Sigmoid>> = Lazy::new(|| Arc::new(Sigmoid));
 inventory::submit!(ActivationProvider(|| SIGMOID.clone()));
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::array;
+
+    #[test]
+    fn apply_at_zero_is_half() {
+        let input = array![[0.0]];
+        let result = SIGMOID.apply(input.view());
+        assert!((result[[0, 0]] - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn apply_large_positive_approaches_one() {
+        let input = array![[100.0]];
+        let result = SIGMOID.apply(input.view());
+        assert!((result[[0, 0]] - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn apply_large_negative_approaches_zero() {
+        let input = array![[-100.0]];
+        let result = SIGMOID.apply(input.view());
+        assert!(result[[0, 0]] < 1e-5);
+    }
+
+    #[test]
+    fn all_outputs_strictly_in_zero_one() {
+        let input = array![[-10.0, -1.0, 0.0, 1.0, 10.0]];
+        let result = SIGMOID.apply(input.view());
+        for &v in result.iter() {
+            assert!(v > 0.0 && v < 1.0, "Value {} not in (0, 1)", v);
+        }
+    }
+
+    #[test]
+    fn derivative_at_half_is_quarter() {
+        // sigma'(x) = sigma(x) * (1 - sigma(x)), at sigma(x)=0.5 -> 0.5 * 0.5 = 0.25
+        let activations = array![[0.5]];
+        let targets = array![[0.0]];
+        let d = SIGMOID.derivative(activations.view(), targets.view());
+        assert!((d[[0, 0]] - 0.25).abs() < 1e-6);
+    }
+}

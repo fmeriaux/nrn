@@ -9,11 +9,12 @@ use crate::training::LearningRate;
 /// # Example
 ///
 /// ```
-/// use your_crate::schedulers::{Scheduler, ConstantScheduler};
+/// use nrn::schedulers::{Scheduler, ConstantScheduler};
+/// use nrn::training::LearningRate;
 ///
-/// let mut scheduler = ConstantScheduler::new(0.001);
-/// assert_eq!(scheduler.step(), 0.001);
-/// assert_eq!(scheduler.step(), 0.001); // always the same
+/// let mut scheduler = ConstantScheduler::new(LearningRate::new(0.001));
+/// assert_eq!(scheduler.step().value(), 0.001);
+/// assert_eq!(scheduler.step().value(), 0.001); // always the same learning rate
 /// ```
 pub struct ConstantScheduler {
     learning_rate: LearningRate,

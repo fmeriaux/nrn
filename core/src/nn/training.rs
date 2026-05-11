@@ -244,3 +244,81 @@ impl EarlyStopping {
         self.epochs_without_improvement >= self.patience
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::activations::SIGMOID;
+    use crate::loss_functions::CROSS_ENTROPY_LOSS;
+    use crate::model::{NeuralNetwork, NeuronLayerSpec};
+    use ndarray::{Array1, array};
+
+    fn compute_loss(model: &NeuralNetwork, inputs: &Array2<f32>, targets: &Array2<f32>, loss_fn: &Arc<dyn LossFunction>) -> f32 {
+        let pred = model.predict(inputs.view());
+        loss_fn.compute(pred.view(), targets.view())
+    }
+
+    #[test]
+    fn backprop_gradients_match_numerical_approximation() {
+        // Network: 2 inputs -> 2 hidden (sigmoid) -> 1 output (sigmoid, binary)
+        // Using sigmoid everywhere to avoid relu's non-differentiable point at 0
+        let specs = NeuronLayerSpec::network_for(vec![2], &*SIGMOID, 2);
+        let mut model = NeuralNetwork::initialization(2, &specs);
+
+        // Fixed weights for reproducibility
+        model.layers[0].weights = array![[0.1, -0.2], [0.3, 0.1]];
+        model.layers[0].biases = Array1::from_vec(vec![0.05, -0.05]);
+        model.layers[1].weights = array![[0.4, -0.1]];
+        model.layers[1].biases = Array1::from_vec(vec![0.1]);
+
+        let inputs = array![[0.5, -0.3, 0.8], [0.2, 0.7, -0.5]]; // (2 features, 3 samples)
+        let targets = array![[1.0, 0.0, 1.0]]; // (1 output, 3 samples)
+
+        let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
+        let eps = 1e-4_f32;
+        // f32 finite differences amplify rounding errors for small gradients;
+        // 5% tolerates f32 noise while still catching real bugs (which cause >20% error)
+        let tolerance = 5e-2_f32;
+
+        let activations = model.forward(inputs.view());
+        let analytical_grads = model.backward(&activations, targets.view(), &loss_fn);
+
+        // Floor the denominator (~largest gradient scale) to avoid amplifying
+        // f32 noise when the gradient is small
+        let check = |analytical: f32, numerical: f32, label: &str| {
+            let rel_diff = (numerical - analytical).abs()
+                / (numerical.abs().max(analytical.abs()).max(1e-2) + 1e-8);
+            assert!(
+                rel_diff < tolerance,
+                "{label}: analytical={analytical:.6}, numerical={numerical:.6}, rel_diff={rel_diff:.6}"
+            );
+        };
+
+        for (layer_idx, layer_grads) in analytical_grads.iter().enumerate() {
+            let (rows, cols) = model.layers[layer_idx].weights.dim();
+            for i in 0..rows {
+                for j in 0..cols {
+                    let mut m_plus = model.clone();
+                    m_plus.layers[layer_idx].weights[[i, j]] += eps;
+                    let mut m_minus = model.clone();
+                    m_minus.layers[layer_idx].weights[[i, j]] -= eps;
+                    let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
+                        - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
+                        / (2.0 * eps);
+                    check(layer_grads.dw[[i, j]], numerical, &format!("W[{layer_idx}][{i},{j}]"));
+                }
+            }
+
+            for i in 0..model.layers[layer_idx].biases.len() {
+                let mut m_plus = model.clone();
+                m_plus.layers[layer_idx].biases[i] += eps;
+                let mut m_minus = model.clone();
+                m_minus.layers[layer_idx].biases[i] -= eps;
+                let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
+                    - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
+                    / (2.0 * eps);
+                check(layer_grads.db[i], numerical, &format!("b[{layer_idx}][{i}]"));
+            }
+        }
+    }
+}

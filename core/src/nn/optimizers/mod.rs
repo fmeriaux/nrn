@@ -5,12 +5,6 @@
 //! and used interchangeably in the training process. Each optimizer provides a unified interface for updating
 //! the weights and biases of a layer based on computed gradients.
 //!
-//! Example usage:
-//! ```rust
-//! use crate::optimizers::{Optimizer, StochasticGradientDescent};
-//! let mut optimizer = StochasticGradientDescent::new(0.01);
-//! optimizer.update(&mut layer, &gradients);
-//! ```
 
 mod adam;
 mod sgd;

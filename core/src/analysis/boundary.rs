@@ -41,15 +41,6 @@ use ndarray::{Array2, Axis};
 /// - **Binary**: Points where `|prediction - 0.5| < tolerance`
 /// - **Multi-class**: Points where `|max_prob - second_max_prob| < tolerance`
 ///
-/// # Examples
-///
-/// ```rust
-/// // High precision boundary detection
-/// let boundary_points = decision_boundary(&mins, &maxs, &model, 100, 0.0005);
-///
-/// // Lower precision for faster computation
-/// let boundary_points = decision_boundary(&mins, &maxs, &model, 50, 0.01);
-/// ```
 pub fn decision_boundary(
     mins: &[f32],
     maxs: &[f32],

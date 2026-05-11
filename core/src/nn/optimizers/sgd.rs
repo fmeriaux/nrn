@@ -7,12 +7,6 @@
 //!
 //! - Does not maintain any internal state (unlike Adam, RMSProp, etc.).
 //!
-//! # Example
-//! ```rust
-//! use crate::optimizers::{Optimizer, StochasticGradientDescent};
-//! let mut optimizer = StochasticGradientDescent::new(0.01);
-//! optimizer.update(&mut layer, &gradients);
-//! ```
 
 use crate::model::NeuronLayer;
 use crate::optimizers::Optimizer;

@@ -25,11 +25,12 @@ use std::path::Path;
 ///
 /// # Examples
 ///
-/// ```
+/// ```no_run
 /// use std::path::Path;
+/// use nrn::io::bytes::secure_read;
 ///
 /// let file_path = Path::new("safe_dir/data.bin");
-/// let data = io::bytes::secure_read(file_path)?;
+/// let data = secure_read(file_path)?;
 /// println!("Read {} bytes", data.len());
 /// # Ok::<(), std::io::Error>(())
 /// ```

@@ -32,10 +32,18 @@ impl LossFunction for CrossEntropyLoss {
     /// # Returns
     /// Average loss over the batch.
     fn compute(&self, predictions: ArrayView2<f32>, targets: ArrayView2<f32>) -> f32 {
-        let clipped_predictions = Self::clip_probabilities(&predictions);
-        let log_predictions = clipped_predictions.mapv(|p| p.ln());
+        let clipped = Self::clip_probabilities(&predictions);
         let n_samples = predictions.ncols() as f32;
-        -(&targets * &log_predictions).sum() / n_samples
+        let log_p = clipped.mapv(|p| p.ln());
+
+        if predictions.nrows() == 1 {
+            // Binary (1 sigmoid output): both terms needed since y can be 0
+            let log_1_p = clipped.mapv(|p| (1.0 - p).ln());
+            -(&targets * &log_p + (1.0 - &targets) * &log_1_p).sum() / n_samples
+        } else {
+            // Multi-class (softmax): one-hot y is always 1 somewhere, so -(y*log(p)) is complete
+            -(&targets * &log_p).sum() / n_samples
+        }
     }
 
     /// Computes the gradient of the loss with respect to the predictions.

@@ -6,9 +6,13 @@
 //! # Examples
 //!
 //! ```
-//! let data = array![[0.0, 128.0, 255.0], [64.0, 192.0, 32.0]];
+//! use nrn::data::scalers::{MinMaxScaler, Scaler};
+//! use ndarray::array;
+//!
+//! let mut data = array![[0.0, 5.0], [10.0, 20.0]];
 //! let scaler = MinMaxScaler::default().fit(data.view());
-//! let scaled = scaler.apply(data.view());
+//! scaler.apply_inplace(data.view_mut());
+//! assert!(data.iter().all(|&v| v >= 0.0 && v <= 1.0 + 1e-5));
 //! ```
 
 use crate::data::scalers::Scaler;
@@ -35,10 +39,6 @@ impl MinMaxScaler {
     /// # Arguments
     /// * `range` - Tuple `(min_target, max_target)` defining the scale output interval.
     ///
-    /// # Examples
-    /// ```
-    /// let scaler = MinMaxScaler::new((0.0, 1.0));
-    /// ```
     pub fn new(range: (f32, f32)) -> Self {
         Self {
             min: Array1::zeros(0),
@@ -59,10 +59,6 @@ impl MinMaxScaler {
     /// # Returns
     /// A new `MinMaxScaler` configured with min/max per feature.
     ///
-    /// # Examples
-    /// ```
-    /// let scaler = MinMaxScaler::default().fit(data.view());
-    /// ```
     pub fn fit(mut self, data: ArrayView2<f32>) -> Self {
         self.min = data.fold_axis(Axis(0), f32::INFINITY, |&a, &b| a.min(b));
         self.max = data.fold_axis(Axis(0), f32::NEG_INFINITY, |&a, &b| a.max(b));
@@ -101,11 +97,6 @@ impl Scaler for MinMaxScaler {
     ///
     /// * `data` - Mutable 2D array view of data to scale in-place.
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// scaler.apply_inplace(data.view_mut());
-    /// ```
     fn apply_inplace(&self, mut data: ArrayViewMut2<f32>) {
         assert_eq!(
             data.shape()[1],
@@ -126,5 +117,70 @@ impl Scaler for MinMaxScaler {
                 *v = ((*v - min) / denom) * scale + min_range;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::array;
+
+    #[test]
+    fn fit_computes_min_max_per_feature() {
+        let data = array![[1.0, 10.0], [3.0, 20.0], [2.0, 30.0]];
+        let scaler = MinMaxScaler::default().fit(data.view());
+        assert_eq!(scaler.min[0], 1.0);
+        assert_eq!(scaler.min[1], 10.0);
+        assert_eq!(scaler.max[0], 3.0);
+        assert_eq!(scaler.max[1], 30.0);
+    }
+
+    #[test]
+    fn min_maps_to_zero_max_maps_to_one() {
+        let data = array![[0.0, 0.0], [10.0, 100.0]];
+        let scaler = MinMaxScaler::default().fit(data.view());
+        let mut scaled = data.clone();
+        scaler.apply_inplace(scaled.view_mut());
+        assert!((scaled[[0, 0]] - 0.0).abs() < 1e-5);
+        assert!((scaled[[1, 0]] - 1.0).abs() < 1e-5);
+        assert!((scaled[[0, 1]] - 0.0).abs() < 1e-5);
+        assert!((scaled[[1, 1]] - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn all_values_within_zero_one_range() {
+        let data = array![[1.0, 5.0], [2.0, 15.0], [3.0, 25.0]];
+        let scaler = MinMaxScaler::default().fit(data.view());
+        let mut scaled = data.clone();
+        scaler.apply_inplace(scaled.view_mut());
+        for &v in scaled.iter() {
+            assert!(v >= 0.0 && v <= 1.0 + 1e-5, "Value {} out of [0, 1]", v);
+        }
+    }
+
+    #[test]
+    fn constant_feature_does_not_panic() {
+        // First feature is constant — denom would be zero without epsilon guard
+        let data = array![[5.0, 1.0], [5.0, 2.0], [5.0, 3.0]];
+        let scaler = MinMaxScaler::default().fit(data.view());
+        let mut scaled = data.clone();
+        scaler.apply_inplace(scaled.view_mut());
+        // Constant feature maps to range lower bound (0.0)
+        assert!((scaled[[0, 0]] - 0.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn apply_single_matches_batch_apply() {
+        let data = array![[1.0, 10.0], [3.0, 30.0]];
+        let scaler = MinMaxScaler::default().fit(data.view());
+
+        let mut single = ndarray::array![2.0, 20.0];
+        scaler.apply_single_inplace(single.view_mut());
+
+        let mut batch = array![[2.0, 20.0]];
+        scaler.apply_inplace(batch.view_mut());
+
+        assert!((single[0] - batch[[0, 0]]).abs() < 1e-6);
+        assert!((single[1] - batch[[0, 1]]).abs() < 1e-6);
     }
 }
