@@ -144,7 +144,10 @@ impl NeuralNetwork {
     ) {
         let gradients = self.backward(activations, targets, loss_function);
 
+        let lr = scheduler.lock().unwrap().step();
+
         let mut optimizer = optimizer.lock().unwrap();
+        optimizer.set_learning_rate(lr);
 
         for (layer_index, (layer, mut layer_gradients)) in
             self.layers.iter_mut().zip(gradients).enumerate()
@@ -155,10 +158,6 @@ impl NeuralNetwork {
         }
 
         optimizer.step();
-
-        let mut scheduler = scheduler.lock().unwrap();
-
-        optimizer.set_learning_rate(scheduler.step());
     }
 
     /// Computes the gradients for each layer using backpropagation.

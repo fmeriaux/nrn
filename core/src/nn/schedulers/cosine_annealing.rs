@@ -15,8 +15,6 @@ use core::f32::consts::PI;
 /// lr(t) = lr_min + 0.5 * (lr_max - lr_min) * (1 + cos(π * t / T))
 /// ```
 /// where `T` is the total number of steps.
-///
-/// ```
 pub struct CosineAnnealing {
     /// Minimum learning rate (reached at the end of the schedule).
     min: LearningRate,

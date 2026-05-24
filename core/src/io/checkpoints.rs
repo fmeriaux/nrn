@@ -3,7 +3,7 @@ use crate::evaluation::{EvaluationSet, Evaluation};
 use crate::io::h5;
 use crate::model::NeuralNetwork;
 use hdf5_metno::Group;
-use std::io::Result;
+use std::io::{Error, Result};
 use std::path::{Path, PathBuf};
 
 impl Evaluation {
@@ -98,30 +98,32 @@ impl Checkpoints {
 
         let evaluations_group = file.group("evaluations")?;
 
-        let mut evaluations = Vec::new();
+        let n_evaluations = evaluations_group
+            .member_names()
+            .map_err(|e| Error::from(e))?
+            .into_iter()
+            .filter(|name| name.starts_with("checkpoint"))
+            .count();
 
-        loop {
-            let checkpoint_name = format!("checkpoint{}", evaluations.len());
-            match evaluations_group.group(&checkpoint_name) {
-                Ok(checkpoint_group) => {
-                    evaluations.push(EvaluationSet::load_from(&checkpoint_group)?);
-                }
-                Err(_) => break,
-            }
+        let mut evaluations = Vec::with_capacity(n_evaluations);
+        for i in 0..n_evaluations {
+            let checkpoint_group = evaluations_group.group(&format!("checkpoint{}", i))?;
+            evaluations.push(EvaluationSet::load_from(&checkpoint_group)?);
         }
 
         let snapshots_group = file.group("snapshots")?;
 
-        let mut snapshots = Vec::new();
+        let n_snapshots = snapshots_group
+            .member_names()
+            .map_err(|e| Error::from(e))?
+            .into_iter()
+            .filter(|name| name.starts_with("checkpoint"))
+            .count();
 
-        loop {
-            let checkpoint_name = format!("checkpoint{}", snapshots.len());
-            match snapshots_group.group(&checkpoint_name) {
-                Ok(checkpoint_group) => {
-                    snapshots.push(NeuralNetwork::load_from_group(&checkpoint_group)?);
-                }
-                Err(_) => break,
-            }
+        let mut snapshots = Vec::with_capacity(n_snapshots);
+        for i in 0..n_snapshots {
+            let checkpoint_group = snapshots_group.group(&format!("checkpoint{}", i))?;
+            snapshots.push(NeuralNetwork::load_from_group(&checkpoint_group)?);
         }
 
         Ok(Checkpoints {

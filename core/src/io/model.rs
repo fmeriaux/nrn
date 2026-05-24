@@ -8,6 +8,33 @@ use std::io::ErrorKind::InvalidData;
 use std::io::{Error, Result};
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::activations::RELU;
+    use crate::model::{NeuralNetwork, NeuronLayerSpec};
+    use ndarray::Array2;
+
+    #[test]
+    fn save_load_roundtrip_predictions_are_identical() {
+        let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 2);
+        let model = NeuralNetwork::initialization(3, &specs);
+
+        let inputs = Array2::from_shape_fn((3, 5), |(i, j)| (i * 5 + j) as f32 * 0.1);
+        let predictions_before = model.predict(inputs.view());
+
+        let path = std::path::PathBuf::from(format!("target/nrn_test_model_{}", std::process::id()));
+        model.save(&path).unwrap();
+
+        let loaded = NeuralNetwork::load(&path).unwrap();
+        let predictions_after = loaded.predict(inputs.view());
+
+        let _ = std::fs::remove_file(path.with_extension("h5"));
+
+        assert_eq!(predictions_before, predictions_after);
+    }
+}
+
 impl NeuralNetwork {
     /// Saves the neural network to an HDF5 group.
     /// # Arguments
@@ -45,41 +72,44 @@ impl NeuralNetwork {
     /// # Arguments
     /// - `group`: The HDF5 group to read the network from.
     pub fn load_from_group(group: &Group) -> Result<Self> {
-        let mut layers = Vec::new();
+        let n_layers = group
+            .member_names()
+            .map_err(|e| Error::from(e))?
+            .into_iter()
+            .filter(|name| name.starts_with("layer"))
+            .count();
 
-        loop {
-            let layer_name = format!("layer{}", layers.len());
-            match group.group(&layer_name) {
-                Ok(layer_group) => {
-                    let weights: Array2<f32> = layer_group.dataset("weights")?.read()?;
-                    let biases: Array1<f32> = layer_group.dataset("biases")?.read()?;
-
-                    let activation_name: String = layer_group
-                        .attr("activation")?
-                        .read_scalar::<VarLenUnicode>()?
-                        .as_str()
-                        .to_string();
-
-                    let activation =
-                        ActivationProvider::get_by_name(&activation_name).ok_or_else(|| {
-                            Error::new(
-                                InvalidData,
-                                format!("Unknown activation function: {}", activation_name),
-                            )
-                        })?;
-
-                    layers.push(NeuronLayer {
-                        weights,
-                        biases,
-                        activation,
-                    });
-                }
-                Err(_) => break,
-            }
+        if n_layers == 0 {
+            return Err(Error::new(InvalidData, "No layers found in the HDF5 group"));
         }
 
-        if layers.is_empty() {
-            return Err(Error::new(InvalidData, "No layers found in the HDF5 group"));
+        let mut layers = Vec::with_capacity(n_layers);
+
+        for i in 0..n_layers {
+            let layer_group = group.group(&format!("layer{}", i))?;
+
+            let weights: Array2<f32> = layer_group.dataset("weights")?.read()?;
+            let biases: Array1<f32> = layer_group.dataset("biases")?.read()?;
+
+            let activation_name: String = layer_group
+                .attr("activation")?
+                .read_scalar::<VarLenUnicode>()?
+                .as_str()
+                .to_string();
+
+            let activation =
+                ActivationProvider::get_by_name(&activation_name).ok_or_else(|| {
+                    Error::new(
+                        InvalidData,
+                        format!("Unknown activation function: {}", activation_name),
+                    )
+                })?;
+
+            layers.push(NeuronLayer {
+                weights,
+                biases,
+                activation,
+            });
         }
 
         Ok(NeuralNetwork { layers })

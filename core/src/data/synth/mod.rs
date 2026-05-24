@@ -4,6 +4,61 @@ mod uniform;
 pub use ring::RingDataset;
 pub use uniform::UniformDataset;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn uniform(n_samples: usize, n_clusters: usize) -> Dataset {
+        UniformDataset { n_samples, n_features: 2, n_clusters, feature_min: 0.0, feature_max: 10.0 }
+            .generate(42)
+    }
+
+    fn ring(n_samples: usize, n_clusters: usize) -> Dataset {
+        RingDataset { n_samples, n_features: 2, n_clusters, feature_min: 0.0, feature_max: 10.0 }
+            .generate(42)
+    }
+
+    #[test]
+    fn uniform_labels_are_zero_indexed() {
+        let mut labels = uniform(90, 3).unique_labels();
+        labels.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert_eq!(labels, vec![0.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn ring_labels_are_zero_indexed() {
+        let mut labels = ring(90, 3).unique_labels();
+        labels.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert_eq!(labels, vec![0.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn sample_count_exact_when_divisible() {
+        assert_eq!(uniform(100, 5).n_samples(), 100);
+        assert_eq!(ring(100, 5).n_samples(), 100);
+    }
+
+    #[test]
+    fn sample_count_truncated_when_not_divisible() {
+        assert_eq!(uniform(100, 3).n_samples(), 99);
+        assert_eq!(ring(100, 3).n_samples(), 99);
+    }
+
+    #[test]
+    fn uniform_features_within_bounds() {
+        for &val in uniform(200, 2).features.iter() {
+            assert!(val >= 0.0 && val <= 10.0, "feature {} hors de [0, 10]", val);
+        }
+    }
+
+    #[test]
+    fn ring_features_within_bounds() {
+        for &val in ring(90, 3).features.iter() {
+            assert!(val >= 0.0 && val <= 10.0, "feature {} hors de [0, 10]", val);
+        }
+    }
+}
+
 use crate::data::dataset::Dataset;
 use ndarray::{Array1, Array2, Axis};
 use ndarray_rand::RandomExt;

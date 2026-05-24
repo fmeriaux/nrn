@@ -130,7 +130,11 @@ impl Dataset {
         let n_classes = self.n_classes();
 
         let targets: Array2<f32> = if n_classes > 2 {
-            // If labels are not binary, we need to one-hot encode them
+            // Labels must be 0-indexed integers in [0, n_classes)
+            debug_assert!(
+                self.labels.iter().all(|&l| l >= 0.0 && (l as usize) < n_classes),
+                "Labels must be 0-indexed integers in [0, n_classes). Found a label outside this range."
+            );
             let mut one_hot = Array2::zeros((n_classes, self.n_samples()));
             for (i, &label) in self.labels.iter().enumerate() {
                 one_hot[[label as usize, i]] = 1.0;
