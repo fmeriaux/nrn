@@ -180,8 +180,12 @@ impl NeuralNetwork {
     /// # Arguments
     /// - `inputs`: A 2D array representing the inputs to the network.
     pub fn predict(&self, inputs: ArrayView2<f32>) -> Array2<f32> {
-        let activations = self.forward(inputs);
-        last_activation(&activations)
+        let output = last_activation(&self.forward(inputs));
+        assert!(
+            output.iter().all(|v| v.is_finite()),
+            "non-finite predictions (NaN or inf): the model likely diverged during training"
+        );
+        output
     }
 
     /// Predicts the output of the network given a single input vector, returning the final activation.
@@ -378,6 +382,16 @@ mod tests {
         let predicted = model.predict(inputs.view());
 
         assert_eq!(predicted, *activations.last().unwrap());
+    }
+
+    #[test]
+    #[should_panic(expected = "non-finite predictions")]
+    fn predict_panics_when_model_has_diverged() {
+        // Simulates a model whose weights diverged to NaN during training
+        let mut model = make_network(Array2::zeros((1, 2)), Array1::zeros(1), SIGMOID.clone());
+        model.layers[0].weights = array![[f32::NAN, 0.0]];
+        let inputs = array![[1.0], [1.0]];
+        model.predict(inputs.view());
     }
 
     #[test]

@@ -45,8 +45,8 @@ impl Accuracy for BinaryAccuracy {
         for i in 0..n_samples {
             let pred = predictions[[0, i]];
             let exp = targets[[0, i]];
-            let pred_label = if pred >= 0.5 { 1.0 } else { 0.0 };
-            if (pred_label - exp).abs() < f32::EPSILON {
+            let pred_label = if pred >= 0.5 { 1.0_f32 } else { 0.0_f32 };
+            if pred_label == exp {
                 correct += 1;
             }
         }
@@ -56,3 +56,27 @@ impl Accuracy for BinaryAccuracy {
 
 /// Shared static instance of `BinaryAccuracy` for convenient reuse.
 pub static BINARY_ACCURACY: Lazy<Arc<BinaryAccuracy>> = Lazy::new(|| Arc::new(BinaryAccuracy));
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::array;
+
+    #[test]
+    fn threshold_at_05_predicts_positive() {
+        // pred=0.5 → threshold to 1.0 (>= 0.5) → correct when target=1.0
+        // pred=0.4999 → threshold to 0.0 → correct when target=0.0
+        let predictions = array![[0.5_f32, 0.4999]];
+        let targets = array![[1.0_f32, 0.0]];
+        let acc = BINARY_ACCURACY.compute(predictions.view(), targets.view());
+        assert!((acc - 100.0).abs() < 1e-5, "Expected 100%, got {acc}");
+    }
+
+    #[test]
+    fn all_wrong_predictions_give_zero_accuracy() {
+        let predictions = array![[0.9_f32, 0.9, 0.1]];
+        let targets = array![[0.0_f32, 0.0, 1.0]];
+        let acc = BINARY_ACCURACY.compute(predictions.view(), targets.view());
+        assert!((acc - 0.0).abs() < 1e-5, "Expected 0%, got {acc}");
+    }
+}

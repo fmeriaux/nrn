@@ -45,7 +45,7 @@ impl Accuracy for MultiClassAccuracy {
         let argmax = |col: ArrayView1<f32>| -> usize {
             col.iter()
                 .enumerate()
-                .max_by(|(_, left), (_, right)| left.partial_cmp(right).unwrap())
+                .max_by(|(_, left), (_, right)| left.total_cmp(right))
                 .map(|(idx, _)| idx)
                 .unwrap()
         };
@@ -64,3 +64,24 @@ impl Accuracy for MultiClassAccuracy {
 
 /// Shared static instance of `MultiClassAccuracy` for convenient reuse.
 pub static MULTI_CLASS_ACCURACY: Lazy<Arc<MultiClassAccuracy>> = Lazy::new(|| Arc::new(MultiClassAccuracy));
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::array;
+
+    #[test]
+    fn does_not_panic_on_nan_predictions() {
+        let predictions = array![[f32::NAN, 1.0], [0.5_f32, 0.8]];
+        let targets = array![[0.0_f32, 1.0], [1.0, 0.0]];
+        let _ = MULTI_CLASS_ACCURACY.compute(predictions.view(), targets.view());
+    }
+
+    #[test]
+    fn all_correct_gives_100_percent() {
+        let predictions = array![[0.9_f32, 0.1], [0.1, 0.9]];
+        let targets = array![[1.0_f32, 0.0], [0.0, 1.0]];
+        let acc = MULTI_CLASS_ACCURACY.compute(predictions.view(), targets.view());
+        assert!((acc - 100.0).abs() < 1e-5, "Expected 100%, got {acc}");
+    }
+}

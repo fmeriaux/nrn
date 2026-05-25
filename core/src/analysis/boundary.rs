@@ -85,7 +85,7 @@ pub fn decision_boundary(
             } else {
                 // Multi-class classification: difference between top two classes
                 let mut probabilities: Vec<f32> = pred.to_vec();
-                probabilities.sort_by(|a, b| b.partial_cmp(a).unwrap());
+                probabilities.sort_by(|a, b| b.total_cmp(a));
                 (probabilities[0] - probabilities[1]).abs() < tolerance
             }
         })
@@ -127,7 +127,9 @@ fn make_grid_and_inputs(
         .collect();
 
     // Generate all grid points using recursive backtracking
-    let total_points = resolution.pow(n_dims as u32);
+    let total_points = resolution
+        .checked_pow(n_dims as u32)
+        .expect("Grid too large: resolution^n_dims overflows usize");
     let mut nested_points = Vec::with_capacity(total_points);
 
     generate_points_recursive(
@@ -152,6 +154,30 @@ fn make_grid_and_inputs(
     let grid_points =
         Array2::from_shape_vec((total_points, n_dims), nested_points.concat()).unwrap();
     (grid_points, inputs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "Grid too large")]
+    #[cfg(target_pointer_width = "64")]
+    fn overflow_panics_with_clear_message() {
+        // 2^65 > usize::MAX on 64-bit — without checked_pow this silently wraps to 0
+        let n = (usize::BITS + 1) as usize;
+        let mins = vec![0.0f32; n];
+        let maxs = vec![1.0f32; n];
+        make_grid_and_inputs(&mins, &maxs, 2);
+    }
+
+    #[test]
+    fn small_2d_grid_has_correct_shape() {
+        // resolution=3, n_dims=2 → 3^2=9 points, each with 2 coords
+        let (grid, inputs) = make_grid_and_inputs(&[0.0, 0.0], &[1.0, 1.0], 3);
+        assert_eq!(grid.shape(), &[9, 2]);
+        assert_eq!(inputs.shape(), &[2, 9]);
+    }
 }
 
 /// Recursively generates all grid points using backtracking algorithm.

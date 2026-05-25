@@ -131,7 +131,7 @@ impl Dataset {
 
         let targets: Array2<f32> = if n_classes > 2 {
             // Labels must be 0-indexed integers in [0, n_classes)
-            debug_assert!(
+            assert!(
                 self.labels.iter().all(|&l| l >= 0.0 && (l as usize) < n_classes),
                 "Labels must be 0-indexed integers in [0, n_classes). Found a label outside this range."
             );
@@ -269,6 +269,48 @@ impl ModelDataset {
             },
             test: slice(train_size + val_size, n_samples),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::{array, Array2};
+
+    #[test]
+    #[should_panic(expected = "Labels must be 0-indexed")]
+    fn out_of_range_label_panics_with_clear_message() {
+        // labels = [0, 1, 2, 5]: n_classes=4, but label 5 >= n_classes=4
+        let features = Array2::zeros((4, 2));
+        let labels = array![0.0f32, 1.0, 2.0, 5.0];
+        let dataset = Dataset { features, labels };
+        dataset.to_model_dataset();
+    }
+
+    #[test]
+    fn valid_multiclass_labels_produce_correct_one_hot() {
+        let features = Array2::zeros((3, 2));
+        let labels = array![0.0f32, 1.0, 2.0];
+        let dataset = Dataset { features, labels };
+        let model_dataset = dataset.to_model_dataset();
+        // targets shape: (n_classes=3, n_samples=3)
+        assert_eq!(model_dataset.targets.shape(), &[3, 3]);
+        // Each column is one-hot: column i has 1.0 at row i
+        for i in 0..3 {
+            assert_eq!(model_dataset.targets[[i, i]], 1.0);
+        }
+    }
+
+    #[test]
+    fn split_ratios_produce_correct_sizes() {
+        // 100 samples, 20% test, 10% val → 70 train / 10 val / 20 test
+        let inputs = Array2::zeros((2, 100));
+        let targets = Array2::zeros((1, 100));
+        let dataset = ModelDataset { inputs, targets };
+        let split = dataset.split(0.1, 0.2);
+        assert_eq!(split.train_size(), 70);
+        assert_eq!(split.validation_size(), 10);
+        assert_eq!(split.test_size(), 20);
     }
 }
 

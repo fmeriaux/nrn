@@ -38,7 +38,7 @@ impl Activation for Softmax {
 
         for mut col in result.columns_mut() {
             // Numerical stability, subtract max value from each element
-            let max_val = *col.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+            let max_val = col.iter().copied().fold(f32::NEG_INFINITY, f32::max);
             col.mapv_inplace(|x| (x - max_val).exp());
 
             // Normalize to get probabilities
@@ -115,7 +115,6 @@ mod tests {
 
     #[test]
     fn numerically_stable_with_large_inputs() {
-        // Sans la soustraction du max, exp(1000) overflow → NaN
         let input = array![[1000.0], [1001.0], [1002.0]];
         let result = SOFTMAX.apply(input.view());
         for &v in result.iter() {
@@ -130,4 +129,5 @@ mod tests {
         let d = SOFTMAX.derivative(activations.view(), targets.view());
         assert_eq!(d.shape(), activations.shape());
     }
+
 }
