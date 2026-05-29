@@ -217,6 +217,20 @@ impl Dataset {
 }
 
 impl ModelDataset {
+    /// Returns the dataset split into shuffled mini-batches of `size` samples each.
+    /// The last batch may be smaller if `n_samples` is not divisible by `size`.
+    pub fn batches<R: Rng>(&self, size: usize, rng: &mut R) -> Vec<ModelDataset> {
+        let mut indices: Vec<usize> = (0..self.inputs.ncols()).collect();
+        indices.shuffle(rng);
+        indices
+            .chunks(size)
+            .map(|chunk| ModelDataset {
+                inputs: self.inputs.select(Axis(1), chunk),
+                targets: self.targets.select(Axis(1), chunk),
+            })
+            .collect()
+    }
+
     /// Splits the model dataset into training, validation, and testing sets based on the provided ratios.
     ///
     /// # Parameters

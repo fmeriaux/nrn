@@ -138,6 +138,10 @@ pub struct TrainArgs {
     /// Restore the best model observed during training when using early stopping
     #[arg(long, requires = "early_stopping", default_value_t = true)]
     restore_best_model: bool,
+
+    /// Batch size for mini-batch SGD. If not set, full-batch gradient descent is used.
+    #[arg(long)]
+    batch_size: Option<usize>,
 }
 
 impl TrainArgs {
@@ -260,17 +264,19 @@ impl TrainArgs {
 
         let progression = Progression::new(self.epochs, "Training");
         for epoch in progression.iter() {
-            let train_predictions = model.train(
+            model.train(
                 &split.train,
                 &loss_function,
                 &optimizer,
                 &scheduler,
                 &clipping,
+                self.batch_size,
             );
 
             if let Some(ref mut checkpoints) = checkpoints {
                 let epoch_number = epoch + 1;
                 if epoch_number % checkpoints.interval == 0 || epoch_number == self.epochs {
+                    let train_predictions = model.predict(split.train.inputs.view());
                     let evaluations = EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, Some(train_predictions.view()));
                     checkpoints.record(&model, &evaluations);
                 }

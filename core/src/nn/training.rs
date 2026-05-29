@@ -4,6 +4,7 @@ use crate::model::{last_activation, NeuralNetwork};
 use crate::nn::schedulers::Scheduler;
 use crate::optimizers::Optimizer;
 use ndarray::{Array1, Array2, ArrayView2, Axis};
+use ndarray_rand::rand;
 use std::sync::{Arc, Mutex};
 
 /// Small constant to prevent division by zero in gradient clipping.
@@ -87,16 +88,17 @@ impl Gradients {
 }
 
 impl NeuralNetwork {
-    /// Trains the network using the provided inputs and targets, updating the weights and biases.
+    /// Trains the network for one epoch using the provided dataset.
     /// # Panics
-    /// - When the `learning_rate` is less than or equal to zero.
-    /// - When the number of columns in `inputs` does not match the length of `targets`.
+    /// - When the number of columns in `inputs` does not match the number of columns in `targets`.
     /// # Arguments
     /// - `dataset`: The dataset containing inputs and targets for training.
     /// - `loss_function`: The loss function to use for computing the loss and its gradient.
     /// - `optimizer`: The optimizer to use for updating the weights and biases.
-    /// - `scheduler`: The learning rate scheduler to adjust the learning rate over time.
+    /// - `scheduler`: The learning rate scheduler, stepped once per epoch.
     /// - `clipping`: The gradient clipping strategy to apply during training.
+    /// - `batch_size`: If `Some(n)`, performs mini-batch SGD with batches of size `n`, shuffling
+    ///   the dataset each epoch. If `None`, performs full-batch gradient descent.
     pub fn train(
         &mut self,
         dataset: &ModelDataset,
@@ -104,25 +106,31 @@ impl NeuralNetwork {
         optimizer: &Arc<Mutex<dyn Optimizer>>,
         scheduler: &Arc<Mutex<dyn Scheduler>>,
         clipping: &GradientClipping,
-    ) -> Array2<f32> {
+        batch_size: Option<usize>,
+    ) {
+        let n_samples = dataset.inputs.ncols();
         assert_eq!(
-            dataset.inputs.ncols(),
+            n_samples,
             dataset.targets.ncols(),
             "Inputs and targets must have the same number of samples."
         );
 
-        let activations = self.forward(dataset.inputs.view());
+        // Scheduler steps once per epoch regardless of batch size
+        let lr = scheduler.lock().expect("scheduler mutex was poisoned").step();
+        optimizer.lock().expect("optimizer mutex was poisoned").set_learning_rate(lr);
 
-        self.update_parameters(
-            &activations,
-            dataset.targets.view(),
-            loss_function,
-            optimizer,
-            scheduler,
-            clipping,
-        );
-
-        last_activation(&activations)
+        match batch_size {
+            None => {
+                let activations = self.forward(dataset.inputs.view());
+                self.update_parameters(&activations, dataset.targets.view(), loss_function, optimizer, clipping);
+            }
+            Some(size) => {
+                for batch in dataset.batches(size, &mut rand::thread_rng()) {
+                    let activations = self.forward(batch.inputs.view());
+                    self.update_parameters(&activations, batch.targets.view(), loss_function, optimizer, clipping);
+                }
+            }
+        }
     }
 
     /// Updates the weights and biases of the network using the computed gradients from backpropagation.
@@ -131,7 +139,6 @@ impl NeuralNetwork {
     /// - `targets`: A 2D array representing the expected outputs for the inputs.
     /// - `loss_function`: The loss function to use for computing the loss and its gradient.
     /// - `optimizer`: The optimizer to use for updating the weights and biases.
-    /// - `scheduler`: The learning rate scheduler to adjust the learning rate over time.
     /// - `clipping`: The gradient clipping strategy to apply during training.
     fn update_parameters(
         &mut self,
@@ -139,15 +146,11 @@ impl NeuralNetwork {
         targets: ArrayView2<f32>,
         loss_function: &Arc<dyn LossFunction>,
         optimizer: &Arc<Mutex<dyn Optimizer>>,
-        scheduler: &Arc<Mutex<dyn Scheduler>>,
         clipping: &GradientClipping,
     ) {
         let gradients = self.backward(activations, targets, loss_function);
 
-        let lr = scheduler.lock().expect("scheduler mutex was poisoned").step();
-
         let mut optimizer = optimizer.lock().expect("optimizer mutex was poisoned");
-        optimizer.set_learning_rate(lr);
 
         for (layer_index, (layer, mut layer_gradients)) in
             self.layers.iter_mut().zip(gradients).enumerate()
