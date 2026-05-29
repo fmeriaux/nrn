@@ -1,7 +1,7 @@
-use std::{env, fs};
 use std::io::ErrorKind::PermissionDenied;
 use std::io::{Error, Result};
 use std::path::{Path, PathBuf};
+use std::{env, fs};
 
 /// Extension trait for adding secure path manipulation methods to `Path`.
 pub trait PathExt {
@@ -35,7 +35,10 @@ impl PathExt for Path {
                 }
                 current = parent;
             } else {
-                return Err(Error::new(PermissionDenied, "No existing parent directory found for path traversal check"));
+                return Err(Error::new(
+                    PermissionDenied,
+                    "No existing parent directory found for path traversal check",
+                ));
             }
         }
         // Canonicalize the nearest existing parent directory

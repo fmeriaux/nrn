@@ -1,7 +1,7 @@
 use crate::io::path::PathExt;
 use std::fs::File;
-use std::path::{Path, PathBuf};
 use std::io::Result;
+use std::path::{Path, PathBuf};
 
 pub fn save_rgb<P: AsRef<Path>>(
     frame_rgb: Vec<u8>,

@@ -9,13 +9,25 @@ mod tests {
     use super::*;
 
     fn uniform(n_samples: usize, n_clusters: usize) -> Dataset {
-        UniformDataset { n_samples, n_features: 2, n_clusters, feature_min: 0.0, feature_max: 10.0 }
-            .generate(42)
+        UniformDataset {
+            n_samples,
+            n_features: 2,
+            n_clusters,
+            feature_min: 0.0,
+            feature_max: 10.0,
+        }
+        .generate(42)
     }
 
     fn ring(n_samples: usize, n_clusters: usize) -> Dataset {
-        RingDataset { n_samples, n_features: 2, n_clusters, feature_min: 0.0, feature_max: 10.0 }
-            .generate(42)
+        RingDataset {
+            n_samples,
+            n_features: 2,
+            n_clusters,
+            feature_min: 0.0,
+            feature_max: 10.0,
+        }
+        .generate(42)
     }
 
     #[test]

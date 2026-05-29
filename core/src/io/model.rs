@@ -22,7 +22,8 @@ mod tests {
         let inputs = Array2::from_shape_fn((3, 5), |(i, j)| (i * 5 + j) as f32 * 0.1);
         let predictions_before = model.predict(inputs.view());
 
-        let path = std::path::PathBuf::from(format!("target/nrn_test_model_{}", std::process::id()));
+        let path =
+            std::path::PathBuf::from(format!("target/nrn_test_model_{}", std::process::id()));
         model.save(&path).unwrap();
 
         let loaded = NeuralNetwork::load(&path).unwrap();

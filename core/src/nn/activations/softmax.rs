@@ -101,9 +101,12 @@ mod tests {
         let input = array![[1.0], [2.0], [10.0]];
         let result = SOFTMAX.apply(input.view());
         let col = result.column(0);
-        let max_idx = col.iter().enumerate()
+        let max_idx = col
+            .iter()
+            .enumerate()
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-            .unwrap().0;
+            .unwrap()
+            .0;
         assert_eq!(max_idx, 2);
     }
 
@@ -122,5 +125,4 @@ mod tests {
         let activations = array![[0.7, 0.2], [0.2, 0.5], [0.1, 0.3]];
         SOFTMAX.derivative(activations.view());
     }
-
 }

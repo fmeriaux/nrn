@@ -1,5 +1,5 @@
-mod dataset;
 mod checkpoints;
+mod dataset;
 
 use plotters::backend::BitMapBackend;
 use plotters::chart::{ChartBuilder, ChartContext};

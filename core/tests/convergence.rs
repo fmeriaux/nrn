@@ -13,7 +13,7 @@ fn xor_converges_to_low_loss() {
     // XOR: non-linearly separable, requires at least one hidden layer
     let dataset = ModelDataset {
         inputs: array![[0.0, 0.0, 1.0, 1.0], [0.0, 1.0, 0.0, 1.0]], // (2 features, 4 samples)
-        targets: array![[0.0, 1.0, 1.0, 0.0]],                        // (1 output, 4 samples)
+        targets: array![[0.0, 1.0, 1.0, 0.0]],                      // (1 output, 4 samples)
     };
 
     let specs = NeuronLayerSpec::network_for(vec![8], &*SIGMOID, 2);
@@ -57,11 +57,21 @@ fn xor_converges_with_mini_batch() {
     let clipping = GradientClipping::None;
 
     for _ in 0..8_000 {
-        model.train(&dataset, &loss_fn, &optimizer, &scheduler, &clipping, Some(2));
+        model.train(
+            &dataset,
+            &loss_fn,
+            &optimizer,
+            &scheduler,
+            &clipping,
+            Some(2),
+        );
     }
 
     let predictions = model.predict(dataset.inputs.view());
     let loss = loss_fn.compute(predictions.view(), dataset.targets.view());
 
-    assert!(loss < 0.05, "XOR (mini-batch) did not converge: final loss = {loss:.4}");
+    assert!(
+        loss < 0.05,
+        "XOR (mini-batch) did not converge: final loss = {loss:.4}"
+    );
 }

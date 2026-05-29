@@ -1,6 +1,6 @@
 use crate::data::ModelDataset;
 use crate::loss_functions::LossFunction;
-use crate::model::{last_activation, NeuralNetwork};
+use crate::model::{NeuralNetwork, last_activation};
 use crate::nn::schedulers::Scheduler;
 use crate::optimizers::Optimizer;
 use ndarray::{Array1, Array2, ArrayView2, Axis};
@@ -116,18 +116,36 @@ impl NeuralNetwork {
         );
 
         // Scheduler steps once per epoch regardless of batch size
-        let lr = scheduler.lock().expect("scheduler mutex was poisoned").step();
-        optimizer.lock().expect("optimizer mutex was poisoned").set_learning_rate(lr);
+        let lr = scheduler
+            .lock()
+            .expect("scheduler mutex was poisoned")
+            .step();
+        optimizer
+            .lock()
+            .expect("optimizer mutex was poisoned")
+            .set_learning_rate(lr);
 
         match batch_size {
             None => {
                 let activations = self.forward(dataset.inputs.view());
-                self.update_parameters(&activations, dataset.targets.view(), loss_function, optimizer, clipping);
+                self.update_parameters(
+                    &activations,
+                    dataset.targets.view(),
+                    loss_function,
+                    optimizer,
+                    clipping,
+                );
             }
             Some(size) => {
                 for batch in dataset.batches(size, &mut rand::rng()) {
                     let activations = self.forward(batch.inputs.view());
-                    self.update_parameters(&activations, batch.targets.view(), loss_function, optimizer, clipping);
+                    self.update_parameters(
+                        &activations,
+                        batch.targets.view(),
+                        loss_function,
+                        optimizer,
+                        clipping,
+                    );
                 }
             }
         }
@@ -259,7 +277,12 @@ mod tests {
     use crate::model::{NeuralNetwork, NeuronLayerSpec};
     use ndarray::{Array1, array};
 
-    fn compute_loss(model: &NeuralNetwork, inputs: &Array2<f32>, targets: &Array2<f32>, loss_fn: &Arc<dyn LossFunction>) -> f32 {
+    fn compute_loss(
+        model: &NeuralNetwork,
+        inputs: &Array2<f32>,
+        targets: &Array2<f32>,
+        loss_fn: &Arc<dyn LossFunction>,
+    ) -> f32 {
         let pred = model.predict(inputs.view());
         loss_fn.compute(pred.view(), targets.view())
     }
@@ -311,7 +334,11 @@ mod tests {
                     let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
                         - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
                         / (2.0 * eps);
-                    check(layer_grads.dw[[i, j]], numerical, &format!("W[{layer_idx}][{i},{j}]"));
+                    check(
+                        layer_grads.dw[[i, j]],
+                        numerical,
+                        &format!("W[{layer_idx}][{i},{j}]"),
+                    );
                 }
             }
 
@@ -323,7 +350,11 @@ mod tests {
                 let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
                     - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
                     / (2.0 * eps);
-                check(layer_grads.db[i], numerical, &format!("b[{layer_idx}][{i}]"));
+                check(
+                    layer_grads.db[i],
+                    numerical,
+                    &format!("b[{layer_idx}][{i}]"),
+                );
             }
         }
     }

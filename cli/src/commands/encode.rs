@@ -1,3 +1,4 @@
+use crate::actions::save_dataset;
 use crate::display::{completed, trace};
 use crate::progression::Progression;
 use clap::{Args, Subcommand};
@@ -12,7 +13,6 @@ use nrn::io::data::save_inputs;
 use std::error::Error;
 use std::fs::read_dir;
 use std::path::Path;
-use crate::actions::save_dataset;
 
 #[derive(Args, Debug)]
 pub struct EncodeArgs {
@@ -57,7 +57,7 @@ pub struct ImgDirArgs {
 
     /// Specify the image shape for encoding
     #[arg(short, long, default_value_t = 64, value_parser = clap::value_parser!(u32).range(1..=128))]
-    shape: u32
+    shape: u32,
 }
 
 impl ImgDirArgs {

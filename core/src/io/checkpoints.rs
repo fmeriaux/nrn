@@ -1,5 +1,5 @@
 use crate::checkpoints::Checkpoints;
-use crate::evaluation::{EvaluationSet, Evaluation};
+use crate::evaluation::{Evaluation, EvaluationSet};
 use crate::io::h5;
 use crate::model::NeuralNetwork;
 use hdf5_metno::Group;

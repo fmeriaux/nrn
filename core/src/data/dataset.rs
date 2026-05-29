@@ -132,7 +132,9 @@ impl Dataset {
         let targets: Array2<f32> = if n_classes > 2 {
             // Labels must be 0-indexed integers in [0, n_classes)
             assert!(
-                self.labels.iter().all(|&l| l >= 0.0 && (l as usize) < n_classes),
+                self.labels
+                    .iter()
+                    .all(|&l| l >= 0.0 && (l as usize) < n_classes),
                 "Labels must be 0-indexed integers in [0, n_classes). Found a label outside this range."
             );
             let mut one_hot = Array2::zeros((n_classes, self.n_samples()));
@@ -289,7 +291,7 @@ impl ModelDataset {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::{array, Array2};
+    use ndarray::{Array2, array};
 
     #[test]
     #[should_panic(expected = "Labels must be 0-indexed")]
@@ -336,9 +338,7 @@ impl ModelSplit {
 
     /// Returns the number of validation samples in the dataset.
     pub fn validation_size(&self) -> usize {
-        self.validation
-            .as_ref()
-            .map_or(0, |val| val.inputs.ncols())
+        self.validation.as_ref().map_or(0, |val| val.inputs.ncols())
     }
 
     /// Returns the number of testing samples in the dataset.

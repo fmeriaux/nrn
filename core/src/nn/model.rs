@@ -273,7 +273,7 @@ impl NeuronLayerSpec {
         n_features: usize,
         n_classes: usize,
         n_samples: usize,
-        hidden_activation: &Arc<A>
+        hidden_activation: &Arc<A>,
     ) -> Vec<Self> {
         assert!(
             n_features > 0,
@@ -313,9 +313,17 @@ mod tests {
     use crate::activations::{RELU, SIGMOID};
     use ndarray::{Array1, Array2, array};
 
-    fn make_network(weights: Array2<f32>, biases: Array1<f32>, activation: Arc<dyn Activation>) -> NeuralNetwork {
+    fn make_network(
+        weights: Array2<f32>,
+        biases: Array1<f32>,
+        activation: Arc<dyn Activation>,
+    ) -> NeuralNetwork {
         NeuralNetwork {
-            layers: vec![NeuronLayer { weights, biases, activation }],
+            layers: vec![NeuronLayer {
+                weights,
+                biases,
+                activation,
+            }],
         }
     }
 
@@ -405,6 +413,11 @@ mod tests {
         let batch = array![[1.0], [2.0], [3.0]]; // (features, 1 sample)
         let batch_output = model.predict(batch.view());
 
-        assert!((single - batch_output.column(0)).mapv(f32::abs).iter().all(|&v| v < 1e-6));
+        assert!(
+            (single - batch_output.column(0))
+                .mapv(f32::abs)
+                .iter()
+                .all(|&v| v < 1e-6)
+        );
     }
 }
