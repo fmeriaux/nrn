@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 
 #[derive(ValueEnum, Debug, Copy, Clone)]
 enum OptimizerType {
-    SGD,
+    Sgd,
     Adam,
 }
 
@@ -33,7 +33,7 @@ enum SchedulerType {
 impl Display for OptimizerType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            OptimizerType::SGD => write!(f, "Stochastic Gradient Descent (SGD)"),
+            OptimizerType::Sgd => write!(f, "Stochastic Gradient Descent (SGD)"),
             OptimizerType::Adam => write!(f, "Adam"),
         }
     }
@@ -98,7 +98,7 @@ pub struct TrainArgs {
     /// Specify the step size for learning rate schedulers that require it:
     /// - cosine: number of epochs to complete a full cosine cycle
     /// - step: number of epochs between each learning rate decay
-    /// By default, this is set to the total number of epochs
+    ///   By default, this is set to the total number of epochs
     #[arg(long, requires = "scheduler")]
     steps: Option<usize>,
 
@@ -150,47 +150,42 @@ impl TrainArgs {
             return Err("The number of epochs must be greater than zero.".into());
         }
 
-        if let Some(ref layers) = self.layers {
-            if layers.iter().any(|&n| n == 0) {
+        if let Some(ref layers) = self.layers
+            && layers.contains(&0) {
                 return Err("Each hidden layer must have at least one neuron.".into());
             }
-        }
 
         if self.lr < 0.0 {
             return Err("The learning rate must be a non-negative value.".into());
         }
 
-        if let Some(lr_min) = self.lr_min {
-            if lr_min < 0.0 || lr_min >= self.lr {
+        if let Some(lr_min) = self.lr_min
+            && (lr_min < 0.0 || lr_min >= self.lr) {
                 return Err("The minimum learning rate must be non-negative and less than the initial learning rate.".into());
             }
-        }
 
         if self.decay_factor <= 0.0 {
             return Err("The decay factor must be a positive value.".into());
         }
 
-        if let Some(steps) = self.steps {
-            if steps < 1 {
+        if let Some(steps) = self.steps
+            && steps < 1 {
                 return Err("The step size must be greater than zero.".into());
             }
-        }
 
         if self.clip_norm <= 0.0 {
             return Err("The gradient clipping norm must be a positive value.".into());
         }
 
-        if let Some(clip_value) = self.clip_value {
-            if clip_value <= 0.0 {
+        if let Some(clip_value) = self.clip_value
+            && clip_value <= 0.0 {
                 return Err("The gradient clipping value must be a positive value.".into());
             }
-        }
 
-        if let Some(cycle_multiplier) = self.cycle_multiplier {
-            if cycle_multiplier < 1 {
+        if let Some(cycle_multiplier) = self.cycle_multiplier
+            && cycle_multiplier < 1 {
                 return Err("The cycle multiplier must be at least 1.".into());
             }
-        }
 
         if self.val_ratio < 0.0 || self.val_ratio >= 1.0 {
             return Err("Validation ratio must be in the range [0.0, 1.0)".into());
@@ -282,8 +277,8 @@ impl TrainArgs {
                 }
             }
 
-            if let Some(ref mut early_stopping) = early_stopping {
-                if let Some(validation) = &split.validation {
+            if let Some(ref mut early_stopping) = early_stopping
+                && let Some(validation) = &split.validation {
                     let predictions = model.predict(validation.inputs.view());
                     let loss = loss_function.compute(predictions.view(), validation.targets.view());
 
@@ -304,7 +299,6 @@ impl TrainArgs {
                         break;
                     }
                 }
-            }
         }
 
         let evaluations = EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
@@ -317,7 +311,7 @@ impl TrainArgs {
 
         // 🗂️ SAVE THE TRAINED NETWORK
         let path = Path::new(&self.dataset);
-        let dataset_name = get_file_stem(&path);
+        let dataset_name = get_file_stem(path);
         let model_name = format!("model-{}", dataset_name);
         save_model(path.with_file_name(&model_name), &model)?;
 
@@ -398,7 +392,7 @@ impl TrainArgs {
 
     fn make_optimizer(&self) -> Arc<Mutex<dyn Optimizer>> {
         match self.optimizer {
-            OptimizerType::SGD => Arc::new(Mutex::new(StochasticGradientDescent::new(self.lr()))),
+            OptimizerType::Sgd => Arc::new(Mutex::new(StochasticGradientDescent::new(self.lr()))),
             OptimizerType::Adam => Arc::new(Mutex::new(Adam::with_defaults(self.lr()))),
         }
     }

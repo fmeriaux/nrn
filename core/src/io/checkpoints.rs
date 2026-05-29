@@ -100,7 +100,7 @@ impl Checkpoints {
 
         let n_evaluations = evaluations_group
             .member_names()
-            .map_err(|e| Error::from(e))?
+            .map_err(Error::from)?
             .into_iter()
             .filter(|name| name.starts_with("checkpoint"))
             .count();
@@ -115,7 +115,7 @@ impl Checkpoints {
 
         let n_snapshots = snapshots_group
             .member_names()
-            .map_err(|e| Error::from(e))?
+            .map_err(Error::from)?
             .into_iter()
             .filter(|name| name.starts_with("checkpoint"))
             .count();

@@ -126,7 +126,7 @@ impl NeuralNetwork {
         let mut layer_input = inputs;
 
         for layer_spec in layer_specs {
-            layers.push(NeuronLayer::initialization(layer_input, &layer_spec));
+            layers.push(NeuronLayer::initialization(layer_input, layer_spec));
             layer_input = layer_spec.neurons;
         }
 
@@ -171,7 +171,7 @@ impl NeuralNetwork {
         self.layers
             .iter()
             .fold(vec![inputs.to_owned()], |mut acc, layer| {
-                acc.push(layer.forward(&acc.last().unwrap()));
+                acc.push(layer.forward(acc.last().unwrap()));
                 acc
             })
     }

@@ -113,7 +113,7 @@ impl SynthArgs {
 
         let filename = format!(
             "{}-c{}-f{}-n{}-seed{}",
-            self.distribution.to_string(),
+            self.distribution,
             self.clusters,
             dataset.n_features(),
             dataset.n_samples(),

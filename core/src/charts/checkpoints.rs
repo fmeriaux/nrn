@@ -53,8 +53,8 @@ fn draw_checkpoints(
 
         // Add 5% padding to min and max values for better visualization
         let (mins, maxs) = add_padding(
-            &vec![loss.0, acc.0],
-            &vec![loss.1, acc.1],
+            &[loss.0, acc.0],
+            &[loss.1, acc.1],
             cfg.padding_factor,
         );
 

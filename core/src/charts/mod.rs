@@ -95,8 +95,8 @@ where
     if show_legend {
         chart
             .configure_series_labels()
-            .background_style(&WHITE.mix(0.8))
-            .border_style(&BLACK)
+            .background_style(WHITE.mix(0.8))
+            .border_style(BLACK)
             .label_font((cfg.font_style, cfg.font_size))
             .legend_area_size(cfg.area_size)
             .position(SeriesLabelPosition::LowerRight)

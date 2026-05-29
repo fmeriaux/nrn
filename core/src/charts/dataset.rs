@@ -24,7 +24,7 @@ impl NeuralNetwork {
         dataset: &Dataset,
         cfg: &RenderConfig,
     ) -> Result<Vec<u8>, Box<dyn Error>> {
-        draw_data_with(&dataset, Some(self), cfg, false)
+        draw_data_with(dataset, Some(self), cfg, false)
     }
 }
 
@@ -49,7 +49,7 @@ fn draw_data_with(
 
     draw_with(cfg, |root| {
         draw_chart(
-            &root,
+            root,
             "Scatter Plot of Dataset Features",
             mins[0]..maxs[0],
             mins[1]..maxs[1],

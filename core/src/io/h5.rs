@@ -8,11 +8,11 @@ pub fn create_file<P: AsRef<Path>>(path: P) -> Result<File> {
     let filepath = Path::combine_safe_with_cwd(filepath)?;
     filepath.create_parents()?;
 
-    File::create(filepath).map_err(|e| Error::from(e))
+    File::create(filepath).map_err(Error::from)
 }
 
 pub fn load_file<P: AsRef<Path>>(path: P) -> Result<File> {
     let filepath = path.as_ref().with_extension("h5");
     let filepath = Path::combine_safe_with_cwd(filepath)?;
-    File::open(filepath).map_err(|e| Error::from(e))
+    File::open(filepath).map_err(Error::from)
 }

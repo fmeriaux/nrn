@@ -57,7 +57,7 @@ impl LossFunction for CrossEntropyLoss {
     /// the derivative of the loss with respect to each predicted probability.
     fn gradient(&self, predictions: ArrayView2<f32>, targets: ArrayView2<f32>) -> Array2<f32> {
         let clipped_predictions = Self::clip_probabilities(&predictions);
-        clipped_predictions - &targets
+        clipped_predictions - targets
     }
 }
 

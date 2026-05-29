@@ -1,0 +1,45 @@
+version: "3"
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  checks:
+    desc: Run all checks (lint + build + test) — use before committing and in CI
+    cmds:
+      - task: lint
+      - task: build
+      - task: test
+
+  build:
+    desc: Compile the release binary (target/release/nrn)
+    cmds:
+      - cargo build --release
+
+  dev:
+    desc: Compile a debug build
+    cmds:
+      - cargo build
+
+  test:
+    desc: Run all tests across the workspace
+    cmds:
+      - cargo test --workspace
+
+  lint:
+    desc: Run Clippy on the workspace
+    cmds:
+      - cargo clippy --workspace
+
+  install:
+    desc: Install the nrn binary to ~/.cargo/bin via cargo install
+    cmds:
+      - cargo install --path cli
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - cargo clean

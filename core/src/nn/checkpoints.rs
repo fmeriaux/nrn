@@ -42,7 +42,7 @@ impl Checkpoints {
     /// - `evaluations`: The evaluations of the model on the training, validation (if available), and test datasets.
     pub fn record(&mut self, model: &NeuralNetwork, evaluations: &EvaluationSet) {
         self.snapshots.push(model.clone());
-        self.evaluations.push(evaluations.clone());
+        self.evaluations.push(*evaluations);
     }
 
     /// Returns the number of recorded checkpoints.

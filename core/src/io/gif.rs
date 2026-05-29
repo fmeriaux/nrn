@@ -21,7 +21,7 @@ pub fn save_gif<P: AsRef<Path>>(
     encoder.set_repeat(Repeat::Infinite)?;
 
     for frame in frames.iter() {
-        encoder.write_frame(&frame)?;
+        encoder.write_frame(frame)?;
     }
 
     Ok(filepath.to_path_buf())

@@ -31,7 +31,7 @@ impl Dataset {
             .write(&self.features)?;
 
         file.new_dataset::<f32>()
-            .shape(&[self.labels.len()])
+            .shape([self.labels.len()])
             .create("labels")?
             .write(&self.labels)?;
 

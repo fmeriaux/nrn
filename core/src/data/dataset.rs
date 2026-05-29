@@ -84,7 +84,7 @@ impl Dataset {
     /// An `Option` containing a tuple of two vectors:
     /// - The first vector contains the minimum values for each feature.
     /// - The second vector contains the maximum values for each feature.
-    /// If the dataset has no samples, returns `None`.
+    ///   If the dataset has no samples, returns `None`.
     ///
     pub fn feature_range(&self) -> Option<(Vec<f32>, Vec<f32>)> {
         if self.features.nrows() == 0 {
@@ -172,7 +172,7 @@ impl Dataset {
     /// - The method generates a vector of indices corresponding to the number of samples in the dataset
     /// - It shuffles these indices using the provided random number generator.
     /// - It then reorders both the `features` and `labels` arrays according to
-    /// the shuffled indices, ensuring that the correspondence between features and labels is maintained.
+    ///   the shuffled indices, ensuring that the correspondence between features and labels is maintained.
     pub fn shuffle_inplace<R: Rng>(&mut self, rng: &mut R) {
         let mut indices: Vec<usize> = (0..self.features.nrows()).collect();
         indices.shuffle(rng);

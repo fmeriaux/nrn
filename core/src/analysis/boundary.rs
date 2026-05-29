@@ -133,7 +133,7 @@ fn make_grid_and_inputs(
     let mut nested_points = Vec::with_capacity(total_points);
 
     generate_points_recursive(
-        &mins,
+        mins,
         &steps,
         resolution,
         n_dims,

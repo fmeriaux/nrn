@@ -86,7 +86,7 @@ impl PredictArgs {
                 .collect::<Vec<_>>()
         };
 
-        result.sort_by(|(_, p1), (_, p2)| p2.partial_cmp(&p1).unwrap_or(Equal));
+        result.sort_by(|(_, p1), (_, p2)| p2.partial_cmp(p1).unwrap_or(Equal));
 
         println!(
             "{} for {}\n|> {}",

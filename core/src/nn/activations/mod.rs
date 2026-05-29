@@ -41,7 +41,7 @@ pub trait Activation: Send + Sync {
     ///
     /// * `activations` - A 2D array of activation values, typically the output from the forward pass.
     /// * `targets` - An optional 2D array of target values used for specific activations like softmax,
-    ///               where the derivative depends on the expected outputs.
+    ///   where the derivative depends on the expected outputs.
     ///
     /// # Returns
     ///

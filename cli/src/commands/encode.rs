@@ -85,7 +85,7 @@ impl ImgDirArgs {
         let mut labels = Vec::new();
 
         for (i, (category, label)) in classes.iter().enumerate() {
-            let total_img = read_dir(&root.join(category))?
+            let total_img = read_dir(root.join(category))?
                 .filter_map(Result::ok)
                 .count();
 
@@ -104,7 +104,7 @@ impl ImgDirArgs {
                 grayscale: self.grayscale,
             };
 
-            for entry in read_dir(&root.join(category))?.filter_map(Result::ok) {
+            for entry in read_dir(root.join(category))?.filter_map(Result::ok) {
                 progression.inc();
 
                 let img = secure_read(entry.path())?;

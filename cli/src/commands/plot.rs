@@ -91,7 +91,7 @@ impl PlotArgs {
                     self.width,
                     self.height,
                     self.delay,
-                    &format!("{}", &self.checkpoints),
+                    &self.checkpoints,
                 )?,
             );
         }

@@ -48,7 +48,7 @@ impl ScaleArgs {
 
         // Extract the filename without extension
         let path = Path::new(&self.dataset);
-        let dataset_name = get_file_stem(&path);
+        let dataset_name = get_file_stem(path);
 
         save_dataset(
             dataset,

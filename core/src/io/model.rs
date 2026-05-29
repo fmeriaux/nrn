@@ -73,7 +73,7 @@ impl NeuralNetwork {
     pub fn load_from_group(group: &Group) -> Result<Self> {
         let n_layers = group
             .member_names()
-            .map_err(|e| Error::from(e))?
+            .map_err(Error::from)?
             .into_iter()
             .filter(|name| name.starts_with("layer"))
             .count();
@@ -128,6 +128,6 @@ impl NeuralNetwork {
     /// - `path`: The path to the file to load the network from.
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         let file = h5::load_file(path)?;
-        Ok(NeuralNetwork::load_from_group(&file)?)
+        NeuralNetwork::load_from_group(&file)
     }
 }
