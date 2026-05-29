@@ -35,29 +35,23 @@ pub trait Activation: Send + Sync {
     /// This non-linear transformation enables the network to model complex patterns.
     fn apply(&self, input: ArrayView2<f32>) -> Array2<f32>;
 
-    /// Computes the derivative of the activation function for backpropagation.
+    /// Computes the element-wise derivative of the activation function for backpropagation.
     ///
     /// # Arguments
     ///
-    /// * `activations` - A 2D array of activation values, typically the output from the forward pass.
-    /// * `targets` - An optional 2D array of target values used for specific activations like softmax,
-    ///   where the derivative depends on the expected outputs.
+    /// * `activations` - A 2D array of post-activation values from the forward pass.
     ///
     /// # Returns
     ///
-    /// A 2D array containing the gradient of the loss with respect to the input of the activation function.
-    /// For element-wise activation functions like sigmoid or ReLU, this is computed element-wise.
-    /// For activations like softmax combined with cross-entropy loss, the derivative may use `targets`
-    /// to compute the combined gradient directly.
+    /// A 2D array of the same shape containing `dσ/dz` at each position, used to scale
+    /// the incoming gradient via element-wise multiplication in the chain rule.
     ///
-    /// # Explanation
+    /// # Note
     ///
-    /// The returned derivative matrix represents the local gradient needed for backpropagation.
-    /// In typical element-wise activations, this is the element-wise derivative matrix that multiplies the
-    /// gradient propagated from the next layer.
-    /// In the case of softmax (or other complex activations), the derivative may be computed differently
-    /// using the targets, reflecting the special form of the gradient when combined with loss functions.
-    fn derivative(&self, activations: ArrayView2<f32>, targets: ArrayView2<f32>) -> Array2<f32>;
+    /// This interface assumes a diagonal Jacobian (element-wise activations like ReLU and
+    /// Sigmoid). Activations with a full Jacobian (e.g. Softmax) cannot implement this
+    /// correctly; their output-layer gradient is handled separately by the loss function.
+    fn derivative(&self, activations: ArrayView2<f32>) -> Array2<f32>;
 
     /// Provides an initialization method linked to this activation.
     ///

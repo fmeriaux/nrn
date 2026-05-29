@@ -187,11 +187,15 @@ impl NeuralNetwork {
             gradients.insert(0, Gradients { dw, db });
 
             if i > 1 {
+                // The output layer's dz comes from loss_function.gradient() above, which
+                // already encodes the combined activation+loss gradient (e.g. p-y for
+                // softmax+CE). Activation::derivative is only called for hidden layers,
+                // which are always element-wise (ReLU, Sigmoid).
                 let next_layer = &self.layers[i - 1];
                 dz = next_layer.weights.t().dot(&dz)
                     * self.layers[i - 2]
                         .activation
-                        .derivative(previous_activations, targets);
+                        .derivative(previous_activations);
             }
         }
 

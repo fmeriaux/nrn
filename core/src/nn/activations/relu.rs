@@ -27,7 +27,7 @@ impl Activation for ReLU {
     ///
     /// The derivative is 1 for positive input values and 0 otherwise.
     /// This property allows gradients to flow only through activated neurons.
-    fn derivative(&self, activations: ArrayView2<f32>, _: ArrayView2<f32>) -> Array2<f32> {
+    fn derivative(&self, activations: ArrayView2<f32>) -> Array2<f32> {
         activations.mapv(|x| if x > 0.0 { 1.0 } else { 0.0 })
     }
 
@@ -72,16 +72,14 @@ mod tests {
     #[test]
     fn derivative_is_one_for_positive_activations() {
         let activations = array![[0.5, 1.0], [2.0, 0.1]];
-        let targets = array![[0.0, 0.0], [0.0, 0.0]];
-        let d = RELU.derivative(activations.view(), targets.view());
+        let d = RELU.derivative(activations.view());
         assert_eq!(d, array![[1.0, 1.0], [1.0, 1.0]]);
     }
 
     #[test]
     fn derivative_is_zero_for_nonpositive_activations() {
         let activations = array![[0.0, -1.0], [-2.0, 0.0]];
-        let targets = array![[0.0, 0.0], [0.0, 0.0]];
-        let d = RELU.derivative(activations.view(), targets.view());
+        let d = RELU.derivative(activations.view());
         assert_eq!(d, array![[0.0, 0.0], [0.0, 0.0]]);
     }
 }
