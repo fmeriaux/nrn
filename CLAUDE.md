@@ -8,22 +8,13 @@ Educational from-scratch neural network implementation in Rust (edition 2024). I
 
 ## Commands
 
+The project uses [Task](https://taskfile.dev) (`brew install go-task/tap/go-task`). Run `task` (no arguments) to list all available tasks.
+
+Key extras not covered by the Taskfile:
+
 ```sh
-# Build
-cargo build --release          # binary at target/release/nrn
-cargo build                    # debug build
-
-# Test
-cargo test                     # all tests across workspace
-cargo test -p nrn              # core crate only
-cargo test -p nrn-cli          # cli crate only
-cargo test <test_name>         # single test by name
-
-# Lint
-cargo clippy --workspace
-
-# Run (from tutorials/ for correct file path handling)
-./target/release/nrn --help
+cargo test <test_name>          # single test by name, across workspace
+cargo test -p nrn <test_name>   # core crate only
 ```
 
 **System dependency**: HDF5 C library is required (`brew install hdf5` on macOS, `sudo apt-get install libhdf5-dev` on Ubuntu).

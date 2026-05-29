@@ -73,9 +73,19 @@ rustc --version
 rustup update
 ```
 
-**HDF5** 
+**HDF5**
 
-The CLI uses the HDF5 format for datasets and models. On some systems, you may need to install the HDF5 C library (e.g., `brew install hdf5` on macOS, `sudo apt-get install libhdf5-dev` on Ubuntu).
+The CLI uses the HDF5 format for datasets and models. On some systems, you may need to install the HDF5 C library:
+
+- macOS: `brew install hdf5`
+- Ubuntu/Debian: `sudo apt-get install libhdf5-dev`
+
+**Task (optional)**
+
+The project includes a [Taskfile](https://taskfile.dev) to simplify common commands. Install with:
+
+- macOS: `brew install go-task/tap/go-task`
+- Other: see [taskfile.dev/installation](https://taskfile.dev/installation/)
 
 ### Clone the Repository
 
@@ -86,26 +96,42 @@ cd nrn
 
 ### Build the Project
 
-Compile the CLI using Cargo:
+With Task:
+
+```sh
+task build        # release binary at target/release/nrn
+task dev          # debug build
+```
+
+Or directly with Cargo:
 
 ```sh
 cargo build --release
 ```
 
-The compiled binary will be located in `target/release/nrn`.
+### Install
+
+To install `nrn` to `~/.cargo/bin` (which is already in your `PATH` if you use Rust):
+
+```sh
+task install
+```
+
+Or with Cargo directly:
+
+```sh
+cargo install --path cli --locked
+```
 
 ### Run a Quick Test
 
 You can verify your installation by running the following help command:
 
 ```sh
-target/release/nrn --help
+nrn --help
 ```
 
 This should display the list of available commands and options.
-
-> [!TIP]
-> For convenience, you may want to add `target/release` to your `PATH` or create an alias for `nrn`.
 
 ### Next Steps
 

@@ -8,7 +8,7 @@ tasks:
     silent: true
 
   checks:
-    desc: Run all checks (lint + build + test) — use before committing and in CI
+    desc: Run all checks (lint + build + test) — use before committing
     cmds:
       - task: lint
       - task: build
@@ -35,9 +35,9 @@ tasks:
       - cargo clippy --workspace
 
   install:
-    desc: Install the nrn binary to ~/.cargo/bin via cargo install
+    desc: Install the nrn binary to ~/.cargo/bin (uses locked deps)
     cmds:
-      - cargo install --path cli
+      - cargo install --path cli --locked
 
   clean:
     desc: Remove build artifacts
