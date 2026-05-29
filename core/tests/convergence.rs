@@ -85,7 +85,9 @@ fn three_class_converges_to_low_loss() {
         targets: array![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], // (3 classes, 3 samples)
     };
 
-    let specs = NeuronLayerSpec::network_for(vec![8], &*RELU, 3);
+    // Sigmoid avoids the dead-neuron risk of ReLU(0)=0 for the [0.0, 0.0] sample
+    // (He init sets biases to zero, so relu([0,0]) = 0 and its gradient is dead at epoch 0).
+    let specs = NeuronLayerSpec::network_for(vec![8], &*SIGMOID, 3);
     let mut model = NeuralNetwork::initialization(2, &specs);
 
     let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
