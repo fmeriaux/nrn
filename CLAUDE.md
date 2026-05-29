@@ -19,6 +19,23 @@ cargo test -p nrn <test_name>   # core crate only
 
 **System dependency**: HDF5 C library is required (`brew install hdf5` on macOS, `sudo apt-get install libhdf5-dev` on Ubuntu).
 
+## Commit conventions
+
+This project follows [Conventional Commits](https://conventionalcommits.org). Every commit message must be prefixed with a type:
+
+| Type | When to use |
+|------|-------------|
+| `feat:` | new feature or capability |
+| `fix:` | bug fix |
+| `refactor:` | code change that is neither a feature nor a fix |
+| `test:` | adding or updating tests |
+| `docs:` | documentation only |
+| `ci:` | CI/CD configuration |
+| `build:` | build system or dependencies (e.g. Cargo.toml) |
+| `chore:` | everything else (tooling, config files, housekeeping) |
+
+A scope can be added in parentheses: `feat(training): add cosine scheduler`.
+
 ## Workspace structure
 
 Two crates:
