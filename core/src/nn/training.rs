@@ -144,9 +144,9 @@ impl NeuralNetwork {
     ) {
         let gradients = self.backward(activations, targets, loss_function);
 
-        let lr = scheduler.lock().unwrap().step();
+        let lr = scheduler.lock().expect("scheduler mutex was poisoned").step();
 
-        let mut optimizer = optimizer.lock().unwrap();
+        let mut optimizer = optimizer.lock().expect("optimizer mutex was poisoned");
         optimizer.set_learning_rate(lr);
 
         for (layer_index, (layer, mut layer_gradients)) in
