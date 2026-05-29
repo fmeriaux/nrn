@@ -705,7 +705,7 @@ dependencies = [
  "hdf5-metno-sys",
  "hdf5-metno-types",
  "libc",
- "ndarray",
+ "ndarray 0.17.2",
  "paste",
 ]
 
@@ -1068,6 +1068,21 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "rawpointer",
+]
+
+[[package]]
+name = "ndarray"
+version = "0.17.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "520080814a7a6b4a6e9070823bb24b4531daac8c4627e08ba5de8c5ef2f2752d"
+dependencies = [
+ "matrixmultiply",
+ "num-complex",
+ "num-integer",
+ "num-traits",
+ "portable-atomic",
+ "portable-atomic-util",
+ "rawpointer",
  "serde",
 ]
 
@@ -1077,7 +1092,7 @@ version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f093b3db6fd194718dcdeea6bd8c829417deae904e3fcc7732dabcd4416d25d8"
 dependencies = [
- "ndarray",
+ "ndarray 0.16.1",
  "rand 0.8.6",
  "rand_distr",
 ]
@@ -1121,7 +1136,7 @@ dependencies = [
  "hdf5-metno",
  "image 0.25.10",
  "inventory",
- "ndarray",
+ "ndarray 0.17.2",
  "ndarray-rand",
  "once_cell",
  "plotters",
@@ -1137,7 +1152,7 @@ dependencies = [
  "clap",
  "console",
  "indicatif",
- "ndarray",
+ "ndarray 0.17.2",
  "ndarray-rand",
  "nrn",
  "pathdiff",
