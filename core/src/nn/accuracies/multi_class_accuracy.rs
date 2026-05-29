@@ -9,8 +9,8 @@
 
 use crate::accuracies::Accuracy;
 use ndarray::{ArrayView1, ArrayView2};
-use std::sync::Arc;
 use once_cell::sync::Lazy;
+use std::sync::Arc;
 
 pub struct MultiClassAccuracy;
 
@@ -63,7 +63,8 @@ impl Accuracy for MultiClassAccuracy {
 }
 
 /// Shared static instance of `MultiClassAccuracy` for convenient reuse.
-pub static MULTI_CLASS_ACCURACY: Lazy<Arc<MultiClassAccuracy>> = Lazy::new(|| Arc::new(MultiClassAccuracy));
+pub static MULTI_CLASS_ACCURACY: Lazy<Arc<MultiClassAccuracy>> =
+    Lazy::new(|| Arc::new(MultiClassAccuracy));
 
 #[cfg(test)]
 mod tests {

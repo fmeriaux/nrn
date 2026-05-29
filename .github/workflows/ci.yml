@@ -19,13 +19,16 @@ jobs:
         run: |
           rustup update stable
           rustup default stable
-          rustup component add clippy
+          rustup component add clippy rustfmt
 
       - name: Install system dependencies
         run: sudo apt-get install -y libhdf5-dev libfontconfig-dev
 
       - uses: Swatinem/rust-cache@v2
 
+      - run: cargo fmt --check
       - run: cargo clippy --workspace
+      - run: cargo clippy --workspace --all-features
       - run: cargo test --workspace
-      - run: cargo build --release
+      - run: cargo test --workspace --all-features
+      - run: cargo build --release --all-features

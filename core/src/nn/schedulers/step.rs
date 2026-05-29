@@ -38,7 +38,10 @@ impl Scheduler for StepDecay {
     /// For a continuous exponential decay, use `CosineAnnealing` instead.
     fn step(&mut self) -> LearningRate {
         let learning_rate = LearningRate::new(
-            self.initial.value() * self.decay_factor.powi((self.current_step / self.steps) as i32),
+            self.initial.value()
+                * self
+                    .decay_factor
+                    .powi((self.current_step / self.steps) as i32),
         );
         self.current_step += 1;
         learning_rate

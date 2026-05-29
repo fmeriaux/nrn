@@ -22,7 +22,10 @@ pub struct UniformDataset {
 
 impl DatasetGenerator for UniformDataset {
     fn generate_rng(&self, mut rng: &mut dyn RngCore) -> Dataset {
-        assert!(self.n_samples > 0, "Number of samples must be greater than zero.");
+        assert!(
+            self.n_samples > 0,
+            "Number of samples must be greater than zero."
+        );
 
         let samples_per_cluster = self.n_samples / self.n_clusters;
 

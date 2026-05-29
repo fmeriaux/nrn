@@ -1,9 +1,9 @@
-use std::sync::Arc;
 use crate::initializations::Initialization;
 use crate::initializations::uniform_distribution;
 use ndarray::{Array1, Array2};
 use ndarray_rand::rand_distr::Uniform;
 use once_cell::sync::Lazy;
+use std::sync::Arc;
 
 /// HeUniform initializer for neural network weights.
 ///
@@ -22,7 +22,10 @@ impl Initialization for HeUniform {
     /// Tuple of (weights, biases) as ndarray arrays.
     fn apply(&self, shape: (usize, usize)) -> (Array2<f32>, Array1<f32>) {
         let limit = (6.0 / shape.1 as f32).sqrt();
-        uniform_distribution(shape, &Uniform::new(-limit, limit).expect("valid He limits require fan_in > 0"))
+        uniform_distribution(
+            shape,
+            &Uniform::new(-limit, limit).expect("valid He limits require fan_in > 0"),
+        )
     }
 }
 

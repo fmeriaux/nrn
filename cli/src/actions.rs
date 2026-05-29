@@ -1,6 +1,7 @@
 use crate::display::*;
 use nrn::activations::RELU;
 use nrn::charts::RenderConfig;
+use nrn::checkpoints::Checkpoints;
 use nrn::data::Dataset;
 use nrn::data::scalers::ScalerMethod;
 use nrn::io::png::save_rgb;
@@ -8,7 +9,6 @@ use nrn::io::scalers::ScalerRecord;
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use std::error::Error;
 use std::path::Path;
-use nrn::checkpoints::Checkpoints;
 
 pub(crate) fn get_file_stem<P: AsRef<Path>>(path: P) -> String {
     let path = path.as_ref();
@@ -83,8 +83,13 @@ pub(crate) fn initialize_model_with(
     layers: Option<Vec<usize>>,
     auto_layers: bool,
 ) -> NeuralNetwork {
-    let layer_specs =if auto_layers {
-        NeuronLayerSpec::infer_from(dataset.n_features(), dataset.n_classes(), dataset.n_samples(), &*RELU)
+    let layer_specs = if auto_layers {
+        NeuronLayerSpec::infer_from(
+            dataset.n_features(),
+            dataset.n_classes(),
+            dataset.n_samples(),
+            &*RELU,
+        )
     } else {
         NeuronLayerSpec::network_for(layers.unwrap_or_default(), &*RELU, dataset.n_classes())
     };

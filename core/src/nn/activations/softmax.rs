@@ -48,20 +48,14 @@ impl Activation for Softmax {
         result
     }
 
-    /// Computes the derivative of the softmax function for backpropagation with cross-entropy loss.
-    ///
-    /// # Panics
-    /// Will panic if the shapes of `activations` and `targets` do not match.
-    fn derivative(&self, activations: ArrayView2<f32>, targets: ArrayView2<f32>) -> Array2<f32> {
-        assert_eq!(
-            activations.shape(),
-            targets.shape(),
-            "Softmax derivative: activations and targets must have the same shape, got {:?} and {:?}",
-            activations.shape(),
-            targets.shape()
-        );
-        let batch_size = activations.ncols() as f32;
-        (activations.to_owned() - targets) / batch_size
+    /// Not implemented: the softmax Jacobian is not diagonal and cannot be expressed as an
+    /// element-wise operation. The output-layer gradient (softmax + cross-entropy) is computed
+    /// directly by `LossFunction::gradient` in the backward pass, bypassing this method.
+    fn derivative(&self, _activations: ArrayView2<f32>) -> Array2<f32> {
+        unimplemented!(
+            "Softmax has a full (non-diagonal) Jacobian and does not support element-wise \
+             backprop. Use it only as an output activation; its gradient is handled by the loss function."
+        )
     }
 
     /// Provides the recommended initialization for layers using softmax.
@@ -107,9 +101,12 @@ mod tests {
         let input = array![[1.0], [2.0], [10.0]];
         let result = SOFTMAX.apply(input.view());
         let col = result.column(0);
-        let max_idx = col.iter().enumerate()
+        let max_idx = col
+            .iter()
+            .enumerate()
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-            .unwrap().0;
+            .unwrap()
+            .0;
         assert_eq!(max_idx, 2);
     }
 
@@ -123,11 +120,9 @@ mod tests {
     }
 
     #[test]
-    fn derivative_shape_matches_activations() {
+    #[should_panic(expected = "Softmax has a full (non-diagonal) Jacobian")]
+    fn derivative_is_not_implemented() {
         let activations = array![[0.7, 0.2], [0.2, 0.5], [0.1, 0.3]];
-        let targets = array![[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]];
-        let d = SOFTMAX.derivative(activations.view(), targets.view());
-        assert_eq!(d.shape(), activations.shape());
+        SOFTMAX.derivative(activations.view());
     }
-
 }

@@ -1,9 +1,9 @@
-use std::fs;
-use std::path::{Path, PathBuf};
-use serde::Serialize;
-use std::io::{Result, Error, ErrorKind::InvalidData};
-use serde::de::DeserializeOwned;
 use crate::io::path::PathExt;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+use std::fs;
+use std::io::{Error, ErrorKind::InvalidData, Result};
+use std::path::{Path, PathBuf};
 
 pub fn save<T: Serialize, P: AsRef<Path>>(value: &T, path: P) -> Result<PathBuf> {
     let filepath = path.as_ref().with_extension("json");

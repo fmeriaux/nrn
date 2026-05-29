@@ -1,4 +1,4 @@
-use crate::actions::{load_dataset, load_checkpoints};
+use crate::actions::{load_checkpoints, load_dataset};
 use crate::display::warning;
 use crate::display::{ANIMATION_ICON, HISTORY_ICON, saved_at};
 use crate::progression::Progression;
@@ -61,10 +61,8 @@ impl PlotArgs {
 
             let interval = checkpoints.len() / checkpoints.len().min(self.frames.into());
 
-            let progression = Progression::new(
-                checkpoints.len(),
-                "Generating decision boundary animation",
-            );
+            let progression =
+                Progression::new(checkpoints.len(), "Generating decision boundary animation");
 
             let mut decision_frames = Vec::new();
 

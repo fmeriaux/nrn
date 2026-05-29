@@ -1,5 +1,7 @@
+#[cfg(feature = "io")]
 mod image;
 
+#[cfg(feature = "io")]
 pub use image::ImageEncoder;
 
 use ndarray::Array1;

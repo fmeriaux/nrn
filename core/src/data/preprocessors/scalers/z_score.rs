@@ -111,7 +111,13 @@ mod tests {
 
     #[test]
     fn scaled_data_has_zero_mean_and_unit_variance() {
-        let data = array![[1.0, 10.0], [2.0, 20.0], [3.0, 30.0], [4.0, 40.0], [5.0, 50.0]];
+        let data = array![
+            [1.0, 10.0],
+            [2.0, 20.0],
+            [3.0, 30.0],
+            [4.0, 40.0],
+            [5.0, 50.0]
+        ];
         let scaler = ZScoreScaler::default().fit(data.view());
         let mut scaled = data.clone();
         scaler.apply_inplace(scaled.view_mut());

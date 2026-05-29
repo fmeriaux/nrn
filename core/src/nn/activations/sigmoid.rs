@@ -26,7 +26,7 @@ impl Activation for Sigmoid {
     /// Computes the derivative of the sigmoid function for backpropagation.
     ///
     /// This is used to propagate gradients during training.
-    fn derivative(&self, activations: ArrayView2<f32>, _: ArrayView2<f32>) -> Array2<f32> {
+    fn derivative(&self, activations: ArrayView2<f32>) -> Array2<f32> {
         activations.mapv(|s| s * (1.0 - s))
     }
 
@@ -81,8 +81,7 @@ mod tests {
     fn derivative_at_half_is_quarter() {
         // sigma'(x) = sigma(x) * (1 - sigma(x)), at sigma(x)=0.5 -> 0.5 * 0.5 = 0.25
         let activations = array![[0.5]];
-        let targets = array![[0.0]];
-        let d = SIGMOID.derivative(activations.view(), targets.view());
+        let d = SIGMOID.derivative(activations.view());
         assert!((d[[0, 0]] - 0.25).abs() < 1e-6);
     }
 }

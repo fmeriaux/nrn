@@ -95,13 +95,14 @@ impl Optimizer for Adam {
         state.v_weights = &state.v_weights * self.beta2 + &(dw * dw) * (1.0 - self.beta2);
         state.v_biases = &state.v_biases * self.beta2 + &(db * db) * (1.0 - self.beta2);
 
-        // Compute bias-corrected first moment estimate
-        let m_hat_weights = &state.m_weights / (1.0 - self.beta1.powi(self.time_step as i32));
-        let m_hat_biases = &state.m_biases / (1.0 - self.beta1.powi(self.time_step as i32));
+        let beta1_correction = 1.0 - self.beta1.powi(self.time_step as i32);
+        let beta2_correction = 1.0 - self.beta2.powi(self.time_step as i32);
 
-        // Compute bias-corrected second moment estimate
-        let v_hat_weights = &state.v_weights / (1.0 - self.beta2.powi(self.time_step as i32));
-        let v_hat_biases = &state.v_biases / (1.0 - self.beta2.powi(self.time_step as i32));
+        // Compute bias-corrected first and second moment estimates
+        let m_hat_weights = &state.m_weights / beta1_correction;
+        let m_hat_biases = &state.m_biases / beta1_correction;
+        let v_hat_weights = &state.v_weights / beta2_correction;
+        let v_hat_biases = &state.v_biases / beta2_correction;
 
         // Update weights and biases
         layer.weights -= &(m_hat_weights * self.learning_rate.value()

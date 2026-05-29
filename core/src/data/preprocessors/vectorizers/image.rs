@@ -20,7 +20,6 @@ use image::imageops::Nearest;
 use ndarray::Array1;
 use std::error::Error;
 
-
 /// Resizes and converts images to raw float pixel vectors.
 ///
 /// Images are resized to the configured `img_shape` and converted to grayscale or RGB mode.

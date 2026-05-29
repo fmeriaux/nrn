@@ -83,7 +83,9 @@ impl Checkpoints {
 
     /// Returns the final validation loss recorded at the last checkpoint, if available.
     pub fn final_validation_loss(&self) -> Option<f32> {
-        self.evaluations.last().and_then(|eval| eval.validation.map(|val| val.loss))
+        self.evaluations
+            .last()
+            .and_then(|eval| eval.validation.map(|val| val.loss))
     }
 
     /// Returns the test losses recorded at each checkpoint.
@@ -119,7 +121,9 @@ impl Checkpoints {
 
     /// Returns the final validation accuracy recorded at the last checkpoint, if available.
     pub fn final_validation_accuracy(&self) -> Option<f32> {
-        self.evaluations.last().and_then(|eval| eval.validation.map(|val| val.accuracy))
+        self.evaluations
+            .last()
+            .and_then(|eval| eval.validation.map(|val| val.accuracy))
     }
 
     /// Returns the test accuracies recorded at each checkpoint.

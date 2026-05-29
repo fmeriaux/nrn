@@ -52,11 +52,7 @@ fn draw_checkpoints(
             .ok_or("No data to plot")?;
 
         // Add 5% padding to min and max values for better visualization
-        let (mins, maxs) = add_padding(
-            &[loss.0, acc.0],
-            &[loss.1, acc.1],
-            cfg.padding_factor,
-        );
+        let (mins, maxs) = add_padding(&[loss.0, acc.0], &[loss.1, acc.1], cfg.padding_factor);
 
         draw_chart(
             &left,

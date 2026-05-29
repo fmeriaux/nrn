@@ -19,8 +19,8 @@ pub use he::HE_UNIFORM;
 pub use xavier::XAVIER_UNIFORM;
 
 use ndarray::{Array1, Array2};
-use ndarray_rand::rand_distr::Uniform;
 use ndarray_rand::RandomExt;
+use ndarray_rand::rand_distr::Uniform;
 
 pub trait Initialization: Send + Sync {
     /// Generates initial weights and biases according to the initialization method.
@@ -40,7 +40,10 @@ pub trait Initialization: Send + Sync {
     fn apply(&self, shape: (usize, usize)) -> (Array2<f32>, Array1<f32>);
 }
 
-fn uniform_distribution(shape: (usize, usize), distribution: &Uniform<f32>) -> (Array2<f32>, Array1<f32>) {
+fn uniform_distribution(
+    shape: (usize, usize),
+    distribution: &Uniform<f32>,
+) -> (Array2<f32>, Array1<f32>) {
     let weights = Array2::random(shape, distribution);
     let biases = Array1::zeros(shape.0);
     (weights, biases)

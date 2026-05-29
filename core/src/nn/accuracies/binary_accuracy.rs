@@ -8,8 +8,8 @@
 
 use crate::accuracies::Accuracy;
 use ndarray::ArrayView2;
-use std::sync::Arc;
 use once_cell::sync::Lazy;
+use std::sync::Arc;
 
 pub struct BinaryAccuracy;
 

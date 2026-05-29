@@ -1,5 +1,5 @@
-use crate::io::json;
 use crate::data::scalers::{MinMaxScaler, ScalerMethod, ZScoreScaler};
+use crate::io::json;
 use ndarray::Array1;
 use serde::{Deserialize, Serialize};
 use std::io::Result;

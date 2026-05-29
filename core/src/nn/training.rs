@@ -1,6 +1,6 @@
 use crate::data::ModelDataset;
 use crate::loss_functions::LossFunction;
-use crate::model::{last_activation, NeuralNetwork};
+use crate::model::{NeuralNetwork, last_activation};
 use crate::nn::schedulers::Scheduler;
 use crate::optimizers::Optimizer;
 use ndarray::{Array1, Array2, ArrayView2, Axis};
@@ -116,18 +116,36 @@ impl NeuralNetwork {
         );
 
         // Scheduler steps once per epoch regardless of batch size
-        let lr = scheduler.lock().expect("scheduler mutex was poisoned").step();
-        optimizer.lock().expect("optimizer mutex was poisoned").set_learning_rate(lr);
+        let lr = scheduler
+            .lock()
+            .expect("scheduler mutex was poisoned")
+            .step();
+        optimizer
+            .lock()
+            .expect("optimizer mutex was poisoned")
+            .set_learning_rate(lr);
 
         match batch_size {
             None => {
                 let activations = self.forward(dataset.inputs.view());
-                self.update_parameters(&activations, dataset.targets.view(), loss_function, optimizer, clipping);
+                self.update_parameters(
+                    &activations,
+                    dataset.targets.view(),
+                    loss_function,
+                    optimizer,
+                    clipping,
+                );
             }
             Some(size) => {
                 for batch in dataset.batches(size, &mut rand::rng()) {
                     let activations = self.forward(batch.inputs.view());
-                    self.update_parameters(&activations, batch.targets.view(), loss_function, optimizer, clipping);
+                    self.update_parameters(
+                        &activations,
+                        batch.targets.view(),
+                        loss_function,
+                        optimizer,
+                        clipping,
+                    );
                 }
             }
         }
@@ -187,11 +205,15 @@ impl NeuralNetwork {
             gradients.insert(0, Gradients { dw, db });
 
             if i > 1 {
+                // The output layer's dz comes from loss_function.gradient() above, which
+                // already encodes the combined activation+loss gradient (e.g. p-y for
+                // softmax+CE). Activation::derivative is only called for hidden layers,
+                // which are always element-wise (ReLU, Sigmoid).
                 let next_layer = &self.layers[i - 1];
                 dz = next_layer.weights.t().dot(&dz)
                     * self.layers[i - 2]
                         .activation
-                        .derivative(previous_activations, targets);
+                        .derivative(previous_activations);
             }
         }
 
@@ -255,7 +277,12 @@ mod tests {
     use crate::model::{NeuralNetwork, NeuronLayerSpec};
     use ndarray::{Array1, array};
 
-    fn compute_loss(model: &NeuralNetwork, inputs: &Array2<f32>, targets: &Array2<f32>, loss_fn: &Arc<dyn LossFunction>) -> f32 {
+    fn compute_loss(
+        model: &NeuralNetwork,
+        inputs: &Array2<f32>,
+        targets: &Array2<f32>,
+        loss_fn: &Arc<dyn LossFunction>,
+    ) -> f32 {
         let pred = model.predict(inputs.view());
         loss_fn.compute(pred.view(), targets.view())
     }
@@ -307,7 +334,11 @@ mod tests {
                     let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
                         - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
                         / (2.0 * eps);
-                    check(layer_grads.dw[[i, j]], numerical, &format!("W[{layer_idx}][{i},{j}]"));
+                    check(
+                        layer_grads.dw[[i, j]],
+                        numerical,
+                        &format!("W[{layer_idx}][{i},{j}]"),
+                    );
                 }
             }
 
@@ -319,8 +350,110 @@ mod tests {
                 let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
                     - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
                     / (2.0 * eps);
-                check(layer_grads.db[i], numerical, &format!("b[{layer_idx}][{i}]"));
+                check(
+                    layer_grads.db[i],
+                    numerical,
+                    &format!("b[{layer_idx}][{i}]"),
+                );
             }
         }
+    }
+
+    #[test]
+    fn backprop_gradients_match_numerical_approximation_softmax_output() {
+        // Single-layer network (inputs → softmax), no hidden layers.
+        // Tests the specific path backward() takes for a softmax output layer: it uses
+        // loss_function.gradient() (= p - y) as dz, then computes dw = dz @ x.T / m
+        // and db = sum(dz) / m. The hidden-layer chain rule is covered by the sigmoid test.
+        // A single output layer keeps gradients large (O(0.1)) and well within f32 precision.
+        let specs = NeuronLayerSpec::network_for(vec![], &*SIGMOID, 3);
+        let mut model = NeuralNetwork::initialization(2, &specs);
+
+        model.layers[0].weights = array![[0.5, -0.3], [0.2, 0.8], [-0.4, 0.1]];
+        model.layers[0].biases = Array1::from_vec(vec![0.1, -0.2, 0.1]);
+
+        // 4 samples across 3 classes
+        let inputs = array![[1.0, -1.0, 0.5, -0.5], [0.5, 0.5, -0.5, -0.5]];
+        let targets = array![
+            [1.0, 0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0]
+        ];
+
+        let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
+        let eps = 1e-4_f32;
+        let tolerance = 5e-2_f32;
+
+        let activations = model.forward(inputs.view());
+        let analytical_grads = model.backward(&activations, targets.view(), &loss_fn);
+
+        let check = |analytical: f32, numerical: f32, label: &str| {
+            let rel_diff = (numerical - analytical).abs()
+                / (numerical.abs().max(analytical.abs()).max(1e-2) + 1e-8);
+            assert!(
+                rel_diff < tolerance,
+                "{label}: analytical={analytical:.6}, numerical={numerical:.6}, rel_diff={rel_diff:.6}"
+            );
+        };
+
+        for (layer_idx, layer_grads) in analytical_grads.iter().enumerate() {
+            let (rows, cols) = model.layers[layer_idx].weights.dim();
+            for i in 0..rows {
+                for j in 0..cols {
+                    let mut m_plus = model.clone();
+                    m_plus.layers[layer_idx].weights[[i, j]] += eps;
+                    let mut m_minus = model.clone();
+                    m_minus.layers[layer_idx].weights[[i, j]] -= eps;
+                    let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
+                        - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
+                        / (2.0 * eps);
+                    check(
+                        layer_grads.dw[[i, j]],
+                        numerical,
+                        &format!("W[{layer_idx}][{i},{j}]"),
+                    );
+                }
+            }
+            for i in 0..model.layers[layer_idx].biases.len() {
+                let mut m_plus = model.clone();
+                m_plus.layers[layer_idx].biases[i] += eps;
+                let mut m_minus = model.clone();
+                m_minus.layers[layer_idx].biases[i] -= eps;
+                let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
+                    - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
+                    / (2.0 * eps);
+                check(
+                    layer_grads.db[i],
+                    numerical,
+                    &format!("b[{layer_idx}][{i}]"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn early_stopping_restores_best_model() {
+        // Sequence: loss 1.0 → 0.5 (best, saved) → 0.8 → 0.9 (patience=2 exhausted)
+        // After stop, best_model must reflect the state at loss=0.5, not the final state.
+        let specs = NeuronLayerSpec::network_for(vec![2], &*SIGMOID, 2);
+        let mut es = EarlyStopping::new(2, true);
+
+        let model_initial = NeuralNetwork::initialization(2, &specs);
+        let mut model_at_best = model_initial.clone();
+        // Give model_at_best a distinctive bias so we can tell it apart
+        model_at_best.layers[0].biases = Array1::from_vec(vec![42.0, 42.0]);
+
+        assert!(!es.check(1.0, &model_initial)); // improvement: saved
+        assert!(!es.check(0.5, &model_at_best)); // new best: overwrites saved
+        assert!(!es.check(0.8, &model_initial)); // regression: 1 epoch without improvement
+        assert!(es.check(0.9, &model_initial)); // regression: patience=2 exhausted → true
+
+        let best = es
+            .best_model
+            .expect("best_model should be Some after early stopping");
+        assert_eq!(
+            best.layers[0].biases, model_at_best.layers[0].biases,
+            "best_model should be the epoch with loss=0.5, not the final state"
+        );
     }
 }

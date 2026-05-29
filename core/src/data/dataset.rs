@@ -132,7 +132,9 @@ impl Dataset {
         let targets: Array2<f32> = if n_classes > 2 {
             // Labels must be 0-indexed integers in [0, n_classes)
             assert!(
-                self.labels.iter().all(|&l| l >= 0.0 && (l as usize) < n_classes),
+                self.labels
+                    .iter()
+                    .all(|&l| l >= 0.0 && (l as usize) < n_classes),
                 "Labels must be 0-indexed integers in [0, n_classes). Found a label outside this range."
             );
             let mut one_hot = Array2::zeros((n_classes, self.n_samples()));
@@ -217,18 +219,30 @@ impl Dataset {
 }
 
 impl ModelDataset {
-    /// Returns the dataset split into shuffled mini-batches of `size` samples each.
+    /// Returns a lazy iterator over shuffled mini-batches of `size` samples each.
     /// The last batch may be smaller if `n_samples` is not divisible by `size`.
-    pub fn batches<R: Rng>(&self, size: usize, rng: &mut R) -> Vec<ModelDataset> {
+    /// Each batch is allocated on demand rather than all upfront.
+    pub fn batches<R: Rng>(
+        &self,
+        size: usize,
+        rng: &mut R,
+    ) -> impl Iterator<Item = ModelDataset> + '_ {
         let mut indices: Vec<usize> = (0..self.inputs.ncols()).collect();
         indices.shuffle(rng);
-        indices
-            .chunks(size)
-            .map(|chunk| ModelDataset {
+        let n = indices.len();
+        let mut pos = 0;
+        std::iter::from_fn(move || {
+            if pos >= n {
+                return None;
+            }
+            let end = (pos + size).min(n);
+            let chunk = &indices[pos..end];
+            pos = end;
+            Some(ModelDataset {
                 inputs: self.inputs.select(Axis(1), chunk),
                 targets: self.targets.select(Axis(1), chunk),
             })
-            .collect()
+        })
     }
 
     /// Splits the model dataset into training, validation, and testing sets based on the provided ratios.
@@ -289,7 +303,7 @@ impl ModelDataset {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::{array, Array2};
+    use ndarray::{Array2, array};
 
     #[test]
     #[should_panic(expected = "Labels must be 0-indexed")]
@@ -336,9 +350,7 @@ impl ModelSplit {
 
     /// Returns the number of validation samples in the dataset.
     pub fn validation_size(&self) -> usize {
-        self.validation
-            .as_ref()
-            .map_or(0, |val| val.inputs.ncols())
+        self.validation.as_ref().map_or(0, |val| val.inputs.ncols())
     }
 
     /// Returns the number of testing samples in the dataset.

@@ -151,41 +151,46 @@ impl TrainArgs {
         }
 
         if let Some(ref layers) = self.layers
-            && layers.contains(&0) {
-                return Err("Each hidden layer must have at least one neuron.".into());
-            }
+            && layers.contains(&0)
+        {
+            return Err("Each hidden layer must have at least one neuron.".into());
+        }
 
         if self.lr < 0.0 {
             return Err("The learning rate must be a non-negative value.".into());
         }
 
         if let Some(lr_min) = self.lr_min
-            && (lr_min < 0.0 || lr_min >= self.lr) {
-                return Err("The minimum learning rate must be non-negative and less than the initial learning rate.".into());
-            }
+            && (lr_min < 0.0 || lr_min >= self.lr)
+        {
+            return Err("The minimum learning rate must be non-negative and less than the initial learning rate.".into());
+        }
 
         if self.decay_factor <= 0.0 {
             return Err("The decay factor must be a positive value.".into());
         }
 
         if let Some(steps) = self.steps
-            && steps < 1 {
-                return Err("The step size must be greater than zero.".into());
-            }
+            && steps < 1
+        {
+            return Err("The step size must be greater than zero.".into());
+        }
 
         if self.clip_norm <= 0.0 {
             return Err("The gradient clipping norm must be a positive value.".into());
         }
 
         if let Some(clip_value) = self.clip_value
-            && clip_value <= 0.0 {
-                return Err("The gradient clipping value must be a positive value.".into());
-            }
+            && clip_value <= 0.0
+        {
+            return Err("The gradient clipping value must be a positive value.".into());
+        }
 
         if let Some(cycle_multiplier) = self.cycle_multiplier
-            && cycle_multiplier < 1 {
-                return Err("The cycle multiplier must be at least 1.".into());
-            }
+            && cycle_multiplier < 1
+        {
+            return Err("The cycle multiplier must be at least 1.".into());
+        }
 
         if self.val_ratio < 0.0 || self.val_ratio >= 1.0 {
             return Err("Validation ratio must be in the range [0.0, 1.0)".into());
@@ -242,7 +247,8 @@ impl TrainArgs {
         };
 
         // 👨‍🎓 TRAINING LOOP
-        let mut checkpoints: Option<Checkpoints> = Checkpoints::by_interval(self.checkpoint_interval, self.epochs);
+        let mut checkpoints: Option<Checkpoints> =
+            Checkpoints::by_interval(self.checkpoint_interval, self.epochs);
 
         if let Some(ref mut checkpoints) = checkpoints {
             trace(&format!(
@@ -250,7 +256,8 @@ impl TrainArgs {
                 style(checkpoints.interval).yellow()
             ));
 
-            let evaluations = EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
+            let evaluations =
+                EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
 
             checkpoints.record(&model, &evaluations);
         };
@@ -272,36 +279,44 @@ impl TrainArgs {
                 let epoch_number = epoch + 1;
                 if epoch_number % checkpoints.interval == 0 || epoch_number == self.epochs {
                     let train_predictions = model.predict(split.train.inputs.view());
-                    let evaluations = EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, Some(train_predictions.view()));
+                    let evaluations = EvaluationSet::using_model(
+                        &model,
+                        &loss_function,
+                        &accuracy,
+                        &split,
+                        Some(train_predictions.view()),
+                    );
                     checkpoints.record(&model, &evaluations);
                 }
             }
 
             if let Some(ref mut early_stopping) = early_stopping
-                && let Some(validation) = &split.validation {
-                    let predictions = model.predict(validation.inputs.view());
-                    let loss = loss_function.compute(predictions.view(), validation.targets.view());
+                && let Some(validation) = &split.validation
+            {
+                let predictions = model.predict(validation.inputs.view());
+                let loss = loss_function.compute(predictions.view(), validation.targets.view());
 
-                    if early_stopping.check(loss, &model) {
-                        trace(&format!(
-                            "Early stopping triggered at epoch {}",
-                            style(epoch + 1).yellow()
-                        ));
-                        if self.restore_best_model {
-                            model = early_stopping
-                                .best_model
-                                .as_ref()
-                                .expect("Best model should be available")
-                                .clone();
-                            trace("Restored the best model observed during training");
-                        }
-                        progression.done();
-                        break;
+                if early_stopping.check(loss, &model) {
+                    trace(&format!(
+                        "Early stopping triggered at epoch {}",
+                        style(epoch + 1).yellow()
+                    ));
+                    if self.restore_best_model {
+                        model = early_stopping
+                            .best_model
+                            .as_ref()
+                            .expect("Best model should be available")
+                            .clone();
+                        trace("Restored the best model observed during training");
                     }
+                    progression.done();
+                    break;
                 }
+            }
         }
 
-        let evaluations = EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
+        let evaluations =
+            EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
 
         completed(&format!(
             "{} | {}",

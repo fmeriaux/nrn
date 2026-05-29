@@ -17,7 +17,7 @@ tasks:
   build:
     desc: Compile the release binary (target/release/nrn)
     cmds:
-      - cargo build --release
+      - cargo build --release --all-features
 
   dev:
     desc: Compile a debug build
@@ -28,11 +28,19 @@ tasks:
     desc: Run all tests across the workspace
     cmds:
       - cargo test --workspace
+      - cargo test --workspace --all-features
+
+  fmt:
+    desc: Format all source files
+    cmds:
+      - cargo fmt
 
   lint:
-    desc: Run Clippy on the workspace
+    desc: Check formatting and run Clippy on the workspace
     cmds:
+      - cargo fmt --check
       - cargo clippy --workspace
+      - cargo clippy --workspace --all-features
 
   install:
     desc: Install the nrn binary to ~/.cargo/bin (uses locked deps)

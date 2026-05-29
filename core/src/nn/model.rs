@@ -273,7 +273,7 @@ impl NeuronLayerSpec {
         n_features: usize,
         n_classes: usize,
         n_samples: usize,
-        hidden_activation: &Arc<A>
+        hidden_activation: &Arc<A>,
     ) -> Vec<Self> {
         assert!(
             n_features > 0,
@@ -313,9 +313,17 @@ mod tests {
     use crate::activations::{RELU, SIGMOID};
     use ndarray::{Array1, Array2, array};
 
-    fn make_network(weights: Array2<f32>, biases: Array1<f32>, activation: Arc<dyn Activation>) -> NeuralNetwork {
+    fn make_network(
+        weights: Array2<f32>,
+        biases: Array1<f32>,
+        activation: Arc<dyn Activation>,
+    ) -> NeuralNetwork {
         NeuralNetwork {
-            layers: vec![NeuronLayer { weights, biases, activation }],
+            layers: vec![NeuronLayer {
+                weights,
+                biases,
+                activation,
+            }],
         }
     }
 
@@ -405,6 +413,48 @@ mod tests {
         let batch = array![[1.0], [2.0], [3.0]]; // (features, 1 sample)
         let batch_output = model.predict(batch.view());
 
-        assert!((single - batch_output.column(0)).mapv(f32::abs).iter().all(|&v| v < 1e-6));
+        assert!(
+            (single - batch_output.column(0))
+                .mapv(f32::abs)
+                .iter()
+                .all(|&v| v < 1e-6)
+        );
+    }
+
+    // infer_from branches — complexity score = ln(n_features * n_classes / n_samples)
+    // Branch thresholds: <= -3.0 | -3.0..-1.0 | -1.0..0.0 | > 0.0
+    // Each branch selects a different number of hidden layers (1, 2, 3, 3).
+
+    #[test]
+    fn infer_from_low_complexity_gives_one_hidden_layer() {
+        // ln(2 * 2 / 1000) ≈ -5.5 → 1 hidden layer
+        let specs = NeuronLayerSpec::infer_from(2, 2, 1000, &RELU);
+        assert_eq!(specs.len(), 2, "expected 1 hidden + 1 output spec");
+    }
+
+    #[test]
+    fn infer_from_medium_complexity_gives_two_hidden_layers() {
+        // ln(2 * 2 / 20) ≈ -1.6 → 2 hidden layers
+        let specs = NeuronLayerSpec::infer_from(2, 2, 20, &RELU);
+        assert_eq!(specs.len(), 3, "expected 2 hidden + 1 output specs");
+    }
+
+    #[test]
+    fn infer_from_moderate_complexity_gives_three_hidden_layers() {
+        // ln(2 * 3 / 8) ≈ -0.29 → 3 hidden layers
+        let specs = NeuronLayerSpec::infer_from(2, 3, 8, &RELU);
+        assert_eq!(specs.len(), 4, "expected 3 hidden + 1 output specs");
+    }
+
+    #[test]
+    fn infer_from_high_complexity_gives_three_hidden_layers() {
+        // ln(5 * 5 / 10) ≈ 0.92 → 3 hidden layers (widest variant)
+        let specs = NeuronLayerSpec::infer_from(5, 5, 10, &RELU);
+        assert_eq!(specs.len(), 4, "expected 3 hidden + 1 output specs");
+        // First hidden layer uses n_features * 3 neurons (clamped to [16, 512])
+        assert_eq!(
+            specs[0].neurons, 16,
+            "first layer should use at least 16 neurons"
+        );
     }
 }

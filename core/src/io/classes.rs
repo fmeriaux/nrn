@@ -1,9 +1,9 @@
+use crate::io::path::PathExt;
 use fs::read_dir;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;
 use std::path::Path;
-use crate::io::path::PathExt;
 
 type ClassMap = BTreeMap<String, usize>;
 
