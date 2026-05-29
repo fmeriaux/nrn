@@ -8,8 +8,8 @@ io = ["hdf5-metno", "serde_json", "serde", "ndarray/serde", "image", "png", "gif
 charts = ["plotters"]
 
 [dependencies]
-ndarray = { version = "0.16.1" }
-ndarray-rand = "0.15.0"
+ndarray = { version = "0.17.2" }
+ndarray-rand = "0.16.0"
 once_cell = "1.21.3"
 inventory = "0.3"
 
