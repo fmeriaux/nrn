@@ -20,6 +20,7 @@ The command-line interface (CLI) provides several commands to generate synthetic
     - [Prerequisites](#prerequisites)
     - [Clone the Repository](#clone-the-repository)
     - [Build the Project](#build-the-project)
+    - [Install](#install)
     - [Run a Quick Test](#run-a-quick-test)
 - [Tutorials](#tutorials)
     - [Tutorial: SLP on Linearly Separable Data](#tutorial-slp-on-linearly-separable-data)
