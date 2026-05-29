@@ -48,7 +48,7 @@ impl DatasetGenerator for RingDataset {
             feature_bounds(self.feature_min, self.feature_max, &radii);
 
         let center = Array1::<f32>::from_shape_fn(self.n_features, |_| {
-            rng.gen_range(feature_min_bound..feature_max_bound)
+            rng.random_range(feature_min_bound..feature_max_bound)
         });
 
         for (cluster_idx, &(r_min, r_max)) in radii.iter().enumerate() {

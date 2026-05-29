@@ -21,7 +21,7 @@ impl Initialization for XavierUniform {
     /// Tuple of (weights, biases) as ndarray arrays.
     fn apply(&self, shape: (usize, usize)) -> (Array2<f32>, Array1<f32>) {
         let limit = (6.0 / (shape.1 + shape.0) as f32).sqrt();
-        uniform_distribution(shape, &Uniform::new(-limit, limit))
+        uniform_distribution(shape, &Uniform::new(-limit, limit).expect("valid Xavier limits require fan_in + fan_out > 0"))
     }
 }
 

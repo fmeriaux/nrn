@@ -41,7 +41,7 @@ impl DatasetGenerator for UniformDataset {
         );
 
         let centers = Array2::<f32>::from_shape_fn((self.n_clusters, self.n_features), |_| {
-            rng.gen_range(feature_min_bound..feature_max_bound)
+            rng.random_range(feature_min_bound..feature_max_bound)
         });
 
         for (cluster_idx, (center, &(radius_min, radius_max))) in

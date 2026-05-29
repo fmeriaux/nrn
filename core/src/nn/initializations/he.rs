@@ -22,7 +22,7 @@ impl Initialization for HeUniform {
     /// Tuple of (weights, biases) as ndarray arrays.
     fn apply(&self, shape: (usize, usize)) -> (Array2<f32>, Array1<f32>) {
         let limit = (6.0 / shape.1 as f32).sqrt();
-        uniform_distribution(shape, &Uniform::new(-limit, limit))
+        uniform_distribution(shape, &Uniform::new(-limit, limit).expect("valid He limits require fan_in > 0"))
     }
 }
 
