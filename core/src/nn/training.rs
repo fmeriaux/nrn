@@ -125,7 +125,7 @@ impl NeuralNetwork {
                 self.update_parameters(&activations, dataset.targets.view(), loss_function, optimizer, clipping);
             }
             Some(size) => {
-                for batch in dataset.batches(size, &mut rand::thread_rng()) {
+                for batch in dataset.batches(size, &mut rand::rng()) {
                     let activations = self.forward(batch.inputs.view());
                     self.update_parameters(&activations, batch.targets.view(), loss_function, optimizer, clipping);
                 }

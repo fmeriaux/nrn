@@ -160,7 +160,7 @@ pub fn random_points(
             row.iter_mut().for_each(|v| *v /= norm);
         }
         // For uniform distribution, we scale the points to the desired radius
-        let u: f32 = rng.sample(Uniform::new(0.0, 1.0));
+        let u: f32 = rng.sample(Uniform::new(0.0_f32, 1.0).unwrap());
         let r = ((radius_max.powf(n_features as f32) - radius_min.powf(n_features as f32)) * u
             + radius_min.powf(n_features as f32))
         .powf(1.0 / n_features as f32);
