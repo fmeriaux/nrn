@@ -23,12 +23,9 @@ impl Activation for ReLU {
         input.mapv(|x| x.max(0.0))
     }
 
-    /// Computes the derivative of the ReLU function for backpropagation.
-    ///
-    /// The derivative is 1 for positive input values and 0 otherwise.
-    /// This property allows gradients to flow only through activated neurons.
-    fn derivative(&self, activations: ArrayView2<f32>) -> Array2<f32> {
-        activations.mapv(|x| if x > 0.0 { 1.0 } else { 0.0 })
+    /// Computes ∂L/∂z = upstream ⊙ 1[a > 0].
+    fn vjp(&self, upstream: ArrayView2<f32>, activations: ArrayView2<f32>) -> Array2<f32> {
+        upstream.to_owned() * activations.mapv(|x| if x > 0.0 { 1.0 } else { 0.0 })
     }
 
     /// Provides the recommended initialization for layers using ReLU.
@@ -70,16 +67,29 @@ mod tests {
     }
 
     #[test]
-    fn derivative_is_one_for_positive_activations() {
+    fn vjp_passes_upstream_for_positive_activations() {
+        let upstream = array![[1.0, 2.0], [3.0, 4.0]];
         let activations = array![[0.5, 1.0], [2.0, 0.1]];
-        let d = RELU.derivative(activations.view());
-        assert_eq!(d, array![[1.0, 1.0], [1.0, 1.0]]);
+        assert_eq!(RELU.vjp(upstream.view(), activations.view()), upstream);
     }
 
     #[test]
-    fn derivative_is_zero_for_nonpositive_activations() {
+    fn vjp_blocks_upstream_for_nonpositive_activations() {
+        let upstream = array![[1.0, 2.0], [3.0, 4.0]];
         let activations = array![[0.0, -1.0], [-2.0, 0.0]];
-        let d = RELU.derivative(activations.view());
-        assert_eq!(d, array![[0.0, 0.0], [0.0, 0.0]]);
+        assert_eq!(
+            RELU.vjp(upstream.view(), activations.view()),
+            array![[0.0, 0.0], [0.0, 0.0]]
+        );
+    }
+
+    #[test]
+    fn vjp_mixed_activations() {
+        let upstream = array![[2.0, 3.0]];
+        let activations = array![[1.0, -1.0]];
+        assert_eq!(
+            RELU.vjp(upstream.view(), activations.view()),
+            array![[2.0, 0.0]]
+        );
     }
 }

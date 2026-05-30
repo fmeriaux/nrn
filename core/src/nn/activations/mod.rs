@@ -34,23 +34,19 @@ pub trait Activation: Send + Sync {
     /// This non-linear transformation enables the network to model complex patterns.
     fn apply(&self, input: ArrayView2<f32>) -> Array2<f32>;
 
-    /// Computes the element-wise derivative of the activation function for backpropagation.
+    /// Computes the vector-Jacobian product (VJP) for backpropagation.
+    ///
+    /// Given the upstream gradient ∂L/∂a (with respect to post-activation values),
+    /// returns ∂L/∂z (with respect to pre-activation values), correctly handling
+    /// both diagonal (ReLU, Sigmoid) and full (Softmax) Jacobians.
     ///
     /// # Arguments
-    ///
-    /// * `activations` - A 2D array of post-activation values from the forward pass.
+    /// * `upstream` - Incoming gradient ∂L/∂a, shape `(neurons, samples)`.
+    /// * `activations` - Post-activation values from the forward pass, same shape.
     ///
     /// # Returns
-    ///
-    /// A 2D array of the same shape containing `dσ/dz` at each position, used to scale
-    /// the incoming gradient via element-wise multiplication in the chain rule.
-    ///
-    /// # Note
-    ///
-    /// This interface assumes a diagonal Jacobian (element-wise activations like ReLU and
-    /// Sigmoid). Activations with a full Jacobian (e.g. Softmax) cannot implement this
-    /// correctly; their output-layer gradient is handled separately by the loss function.
-    fn derivative(&self, activations: ArrayView2<f32>) -> Array2<f32>;
+    /// ∂L/∂z — gradient with respect to the pre-activation input.
+    fn vjp(&self, upstream: ArrayView2<f32>, activations: ArrayView2<f32>) -> Array2<f32>;
 
     /// Provides an initialization method linked to this activation.
     ///
