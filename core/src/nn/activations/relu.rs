@@ -87,6 +87,9 @@ mod tests {
     fn vjp_mixed_activations() {
         let upstream = array![[2.0, 3.0]];
         let activations = array![[1.0, -1.0]];
-        assert_eq!(RELU.vjp(upstream.view(), activations.view()), array![[2.0, 0.0]]);
+        assert_eq!(
+            RELU.vjp(upstream.view(), activations.view()),
+            array![[2.0, 0.0]]
+        );
     }
 }
