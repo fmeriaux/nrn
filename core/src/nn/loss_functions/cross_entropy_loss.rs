@@ -46,18 +46,29 @@ impl LossFunction for CrossEntropyLoss {
         }
     }
 
-    /// Computes the gradient of the loss with respect to the predictions.
+    /// Computes ∂L/∂a — the gradient of the loss with respect to the predicted probabilities.
+    ///
+    /// Expects `predictions` to be clipped to a safe interior of (0, 1) by the caller;
+    /// no clipping is applied here so that the caller can pass identical values to the
+    /// activation's `vjp`, ensuring exact compositional cancellation.
     ///
     /// # Arguments
     /// * `predictions` - Same as in `compute`.
     /// * `targets` - Same as in `compute`.
     ///
     /// # Returns
-    /// Gradient array (`Array2<f32>`) of the same shape as predictions, corresponding to
-    /// the derivative of the loss with respect to each predicted probability.
+    /// Gradient array (`Array2<f32>`) of the same shape as predictions.
+    /// Binary CE: `(p - y) / (p * (1 - p))`. Multi-class CE: `-y / p`.
     fn gradient(&self, predictions: ArrayView2<f32>, targets: ArrayView2<f32>) -> Array2<f32> {
-        let clipped_predictions = Self::clip_probabilities(&predictions);
-        clipped_predictions - targets
+        if predictions.nrows() == 1 {
+            // Binary CE: ∂L/∂p = (p - y) / (p * (1 - p))
+            let p = predictions.to_owned();
+            let denom = &p * p.mapv(|x| 1.0 - x);
+            (p - targets) / denom
+        } else {
+            // Multi-class CE: ∂L/∂p_i = -y_i / p_i
+            -targets.to_owned() / predictions.to_owned()
+        }
     }
 }
 

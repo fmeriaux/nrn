@@ -23,11 +23,9 @@ impl Activation for Sigmoid {
         input.mapv(|x| 1.0 / (1.0 + (-x).exp()))
     }
 
-    /// Computes the derivative of the sigmoid function for backpropagation.
-    ///
-    /// This is used to propagate gradients during training.
-    fn derivative(&self, activations: ArrayView2<f32>) -> Array2<f32> {
-        activations.mapv(|s| s * (1.0 - s))
+    /// Computes ∂L/∂z = upstream ⊙ a(1 − a).
+    fn vjp(&self, upstream: ArrayView2<f32>, activations: ArrayView2<f32>) -> Array2<f32> {
+        upstream.to_owned() * activations.mapv(|s| s * (1.0 - s))
     }
 
     /// Provides the recommended initialization for layers using sigmoid.
@@ -78,10 +76,16 @@ mod tests {
     }
 
     #[test]
-    fn derivative_at_half_is_quarter() {
-        // sigma'(x) = sigma(x) * (1 - sigma(x)), at sigma(x)=0.5 -> 0.5 * 0.5 = 0.25
-        let activations = array![[0.5]];
-        let d = SIGMOID.derivative(activations.view());
-        assert!((d[[0, 0]] - 0.25).abs() < 1e-6);
+    fn vjp_at_half_scales_by_quarter() {
+        // a=0.5 → a(1-a)=0.25, upstream=1.0 → vjp=0.25
+        let result = SIGMOID.vjp(array![[1.0]].view(), array![[0.5]].view());
+        assert!((result[[0, 0]] - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn vjp_scales_upstream_by_local_derivative() {
+        // upstream=2.0, a=0.5 → vjp = 2.0 * 0.25 = 0.5
+        let result = SIGMOID.vjp(array![[2.0]].view(), array![[0.5]].view());
+        assert!((result[[0, 0]] - 0.5).abs() < 1e-6);
     }
 }

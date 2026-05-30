@@ -193,7 +193,17 @@ impl NeuralNetwork {
     ) -> Vec<Gradients> {
         let m = targets.ncols() as f32;
 
-        let mut dz = loss_function.gradient(last_activation(activations).view(), targets);
+        let last_act = last_activation(activations);
+        // Clip to (0, 1) interior so gradient() and vjp() see the same values;
+        // their product then cancels exactly to p − y even near saturation.
+        let safe_act = last_act.mapv(|p| p.clamp(1e-15_f32, 1.0 - 1e-15_f32));
+        let loss_grad = loss_function.gradient(safe_act.view(), targets);
+        let mut dz = self
+            .layers
+            .last()
+            .unwrap()
+            .activation
+            .vjp(loss_grad.view(), safe_act.view());
 
         let mut gradients = Vec::with_capacity(activations.len() - 1);
 
@@ -205,15 +215,11 @@ impl NeuralNetwork {
             gradients.insert(0, Gradients { dw, db });
 
             if i > 1 {
-                // The output layer's dz comes from loss_function.gradient() above, which
-                // already encodes the combined activation+loss gradient (e.g. p-y for
-                // softmax+CE). Activation::derivative is only called for hidden layers,
-                // which are always element-wise (ReLU, Sigmoid).
                 let next_layer = &self.layers[i - 1];
-                dz = next_layer.weights.t().dot(&dz)
-                    * self.layers[i - 2]
-                        .activation
-                        .derivative(previous_activations);
+                let da = next_layer.weights.t().dot(&dz);
+                dz = self.layers[i - 2]
+                    .activation
+                    .vjp(da.view(), previous_activations);
             }
         }
 
@@ -362,9 +368,9 @@ mod tests {
     #[test]
     fn backprop_gradients_match_numerical_approximation_softmax_output() {
         // Single-layer network (inputs → softmax), no hidden layers.
-        // Tests the specific path backward() takes for a softmax output layer: it uses
-        // loss_function.gradient() (= p - y) as dz, then computes dw = dz @ x.T / m
-        // and db = sum(dz) / m. The hidden-layer chain rule is covered by the sigmoid test.
+        // Verifies that loss.gradient() (→ -y/p) composed with softmax.vjp() yields the
+        // correct dz (= p - y) and that the resulting weight/bias gradients match finite
+        // differences. The hidden-layer chain rule is covered by the sigmoid test.
         // A single output layer keeps gradients large (O(0.1)) and well within f32 precision.
         let specs = NeuronLayerSpec::network_for(vec![], &*SIGMOID, 3);
         let mut model = NeuralNetwork::initialization(2, &specs);

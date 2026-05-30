@@ -8,7 +8,7 @@
 
 use crate::activations::{Activation, ActivationProvider};
 use crate::initializations::{Initialization, XAVIER_UNIFORM};
-use ndarray::{Array2, ArrayView2};
+use ndarray::{Array2, ArrayView2, Axis};
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 
@@ -48,14 +48,12 @@ impl Activation for Softmax {
         result
     }
 
-    /// Not implemented: the softmax Jacobian is not diagonal and cannot be expressed as an
-    /// element-wise operation. The output-layer gradient (softmax + cross-entropy) is computed
-    /// directly by `LossFunction::gradient` in the backward pass, bypassing this method.
-    fn derivative(&self, _activations: ArrayView2<f32>) -> Array2<f32> {
-        unimplemented!(
-            "Softmax has a full (non-diagonal) Jacobian and does not support element-wise \
-             backprop. Use it only as an output activation; its gradient is handled by the loss function."
-        )
+    /// Computes ∂L/∂z = a ⊙ (upstream − ⟨a, upstream⟩) per sample.
+    fn vjp(&self, upstream: ArrayView2<f32>, activations: ArrayView2<f32>) -> Array2<f32> {
+        let dot = (&activations * &upstream)
+            .sum_axis(Axis(0))
+            .insert_axis(Axis(0));
+        activations.to_owned() * (upstream.to_owned() - dot)
     }
 
     /// Provides the recommended initialization for layers using softmax.
@@ -120,9 +118,25 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Softmax has a full (non-diagonal) Jacobian")]
-    fn derivative_is_not_implemented() {
-        let activations = array![[0.7, 0.2], [0.2, 0.5], [0.1, 0.3]];
-        SOFTMAX.derivative(activations.view());
+    fn vjp_output_sums_to_zero_per_column() {
+        // Property: softmax VJP always produces zero-sum columns
+        let activations = array![[0.7, 0.3], [0.2, 0.3], [0.1, 0.4]];
+        let upstream = array![[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]];
+        let result = SOFTMAX.vjp(upstream.view(), activations.view());
+        for col in result.columns() {
+            let sum: f32 = col.iter().sum();
+            assert!(sum.abs() < 1e-5, "column sum {sum} != 0");
+        }
+    }
+
+    #[test]
+    fn vjp_known_values() {
+        // a=[0.7, 0.2, 0.1], u=[1, 0, 0]: dot=0.7, vjp=a*(u-dot)=[0.21, -0.14, -0.07]
+        let activations = array![[0.7], [0.2], [0.1]];
+        let upstream = array![[1.0], [0.0], [0.0]];
+        let result = SOFTMAX.vjp(upstream.view(), activations.view());
+        assert!((result[[0, 0]] - 0.21).abs() < 1e-6);
+        assert!((result[[1, 0]] - (-0.14)).abs() < 1e-6);
+        assert!((result[[2, 0]] - (-0.07)).abs() < 1e-6);
     }
 }
