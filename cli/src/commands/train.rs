@@ -1,5 +1,5 @@
 use crate::actions::*;
-use crate::display::{Summary, completed, trace};
+use crate::display::{Summary, completed, trace, warning};
 use crate::progression::Progression;
 use clap::*;
 use console::style;
@@ -247,6 +247,16 @@ impl TrainArgs {
             None => initialize_model_with(&dataset, self.layers.clone(), self.auto_layers),
         };
 
+        // Optimizer state is not persisted: a stateful optimizer resets its moments and
+        // step counter when resuming from a saved model, so its adaptive steps warm up
+        // again over the first epochs. See `make_optimizer`.
+        if self.model.is_some() && matches!(self.optimizer, OptimizerType::Adam) {
+            warning(
+                "Resuming with Adam: optimizer state is not restored, \
+                 its moments restart from zero for the first epochs",
+            );
+        }
+
         // 👨‍🎓 TRAINING LOOP
         let mut checkpoints: Option<Checkpoints> =
             Checkpoints::by_interval(self.checkpoint_interval, self.epochs);
@@ -406,6 +416,11 @@ impl TrainArgs {
         }
     }
 
+    /// Builds the optimizer for this run.
+    ///
+    /// Note: optimizer state (e.g. Adam's moment estimates and step counter) is not
+    /// persisted across runs. When resuming from a saved model with `--model`, a stateful
+    /// optimizer starts fresh; the user is warned in [`Self::run`].
     fn make_optimizer(&self) -> Arc<Mutex<dyn Optimizer>> {
         match self.optimizer {
             OptimizerType::Sgd => Arc::new(Mutex::new(StochasticGradientDescent::new(self.lr()))),
