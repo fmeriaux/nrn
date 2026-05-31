@@ -143,7 +143,11 @@ impl Dataset {
             }
             one_hot
         } else {
-            // If labels are binary, we can use them directly
+            // Binary labels are used directly; they must be exactly 0.0 or 1.0.
+            assert!(
+                self.labels.iter().all(|&l| l == 0.0 || l == 1.0),
+                "Binary labels must be 0.0 or 1.0. Found a label outside this range."
+            );
             self.labels.to_owned().insert_axis(Axis(0))
         };
 
@@ -300,6 +304,23 @@ impl ModelDataset {
     }
 }
 
+impl ModelSplit {
+    /// Returns the number of training samples in the dataset.
+    pub fn train_size(&self) -> usize {
+        self.train.inputs.ncols()
+    }
+
+    /// Returns the number of validation samples in the dataset.
+    pub fn validation_size(&self) -> usize {
+        self.validation.as_ref().map_or(0, |val| val.inputs.ncols())
+    }
+
+    /// Returns the number of testing samples in the dataset.
+    pub fn test_size(&self) -> usize {
+        self.test.inputs.ncols()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,6 +351,16 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "Binary labels must be 0.0 or 1.0")]
+    fn out_of_range_binary_label_panics_with_clear_message() {
+        // labels = [1, 2]: n_classes=2 (binary branch), but 2 is not a valid binary target
+        let features = Array2::zeros((2, 2));
+        let labels = array![1.0f32, 2.0];
+        let dataset = Dataset { features, labels };
+        dataset.to_model_dataset();
+    }
+
+    #[test]
     fn split_ratios_produce_correct_sizes() {
         // 100 samples, 20% test, 10% val → 70 train / 10 val / 20 test
         let inputs = Array2::zeros((2, 100));
@@ -339,22 +370,5 @@ mod tests {
         assert_eq!(split.train_size(), 70);
         assert_eq!(split.validation_size(), 10);
         assert_eq!(split.test_size(), 20);
-    }
-}
-
-impl ModelSplit {
-    /// Returns the number of training samples in the dataset.
-    pub fn train_size(&self) -> usize {
-        self.train.inputs.ncols()
-    }
-
-    /// Returns the number of validation samples in the dataset.
-    pub fn validation_size(&self) -> usize {
-        self.validation.as_ref().map_or(0, |val| val.inputs.ncols())
-    }
-
-    /// Returns the number of testing samples in the dataset.
-    pub fn test_size(&self) -> usize {
-        self.test.inputs.ncols()
     }
 }
