@@ -1,5 +1,5 @@
 use crate::actions::*;
-use crate::display::{Summary, completed, trace};
+use crate::display::{Summary, completed, trace, warning};
 use crate::progression::Progression;
 use clap::*;
 use console::style;
@@ -15,7 +15,7 @@ use schedulers::CosineAnnealing;
 use std::error::Error;
 use std::fmt::Display;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 #[derive(ValueEnum, Debug, Copy, Clone)]
 enum OptimizerType {
@@ -214,14 +214,14 @@ impl TrainArgs {
             style("Cross-Entropy").bold().blue()
         ));
 
-        let optimizer: Arc<Mutex<dyn Optimizer>> = self.make_optimizer();
+        let mut optimizer = self.make_optimizer();
         trace(&format!(
             "Using {} optimizer with learning rate {}",
             style(self.optimizer).bold().blue(),
             style(self.lr).yellow()
         ));
 
-        let scheduler: Arc<Mutex<dyn Scheduler>> = self.make_scheduler();
+        let mut scheduler = self.make_scheduler();
         if !matches!(self.scheduler, SchedulerType::Constant) {
             trace(&format!(
                 "Learning rate scheduled by {}",
@@ -233,6 +233,7 @@ impl TrainArgs {
         trace(&format!("Using {}", clipping.summary()));
 
         let dataset = load_dataset(&self.dataset)?;
+        dataset.validate()?;
         let split = dataset
             .to_model_dataset()
             .split(self.val_ratio, self.test_ratio);
@@ -245,6 +246,16 @@ impl TrainArgs {
             Some(file) => load_model(file)?,
             None => initialize_model_with(&dataset, self.layers.clone(), self.auto_layers),
         };
+
+        // Optimizer state is not persisted: a stateful optimizer resets its moments and
+        // step counter when resuming from a saved model, so its adaptive steps warm up
+        // again over the first epochs. See `make_optimizer`.
+        if self.model.is_some() && matches!(self.optimizer, OptimizerType::Adam) {
+            warning(
+                "Resuming with Adam: optimizer state is not restored, \
+                 its moments restart from zero for the first epochs",
+            );
+        }
 
         // 👨‍🎓 TRAINING LOOP
         let mut checkpoints: Option<Checkpoints> =
@@ -269,8 +280,8 @@ impl TrainArgs {
             model.train(
                 &split.train,
                 &loss_function,
-                &optimizer,
-                &scheduler,
+                optimizer.as_mut(),
+                scheduler.as_mut(),
                 &clipping,
                 self.batch_size,
             );
@@ -383,32 +394,35 @@ impl TrainArgs {
         }
     }
 
-    fn make_scheduler(&self) -> Arc<Mutex<dyn Scheduler>> {
+    fn make_scheduler(&self) -> Box<dyn Scheduler> {
         match self.scheduler {
-            SchedulerType::Constant => Arc::new(Mutex::new(ConstantScheduler::new(self.lr()))),
+            SchedulerType::Constant => Box::new(ConstantScheduler::new(self.lr())),
             SchedulerType::Cosine => {
                 let cosine = CosineAnnealing::new(self.lr_min(), self.lr(), self.step_size());
 
                 if self.warm_restarts {
-                    Arc::new(Mutex::new(
-                        cosine.with_restarts(true, self.cycle_multiplier()),
-                    ))
+                    Box::new(cosine.with_restarts(true, self.cycle_multiplier()))
                 } else {
-                    Arc::new(Mutex::new(cosine))
+                    Box::new(cosine)
                 }
             }
-            SchedulerType::Step => Arc::new(Mutex::new(StepDecay::new(
+            SchedulerType::Step => Box::new(StepDecay::new(
                 self.lr(),
                 self.step_size(),
                 self.decay_factor,
-            ))),
+            )),
         }
     }
 
-    fn make_optimizer(&self) -> Arc<Mutex<dyn Optimizer>> {
+    /// Builds the optimizer for this run.
+    ///
+    /// Note: optimizer state (e.g. Adam's moment estimates and step counter) is not
+    /// persisted across runs. When resuming from a saved model with `--model`, a stateful
+    /// optimizer starts fresh; the user is warned in [`Self::run`].
+    fn make_optimizer(&self) -> Box<dyn Optimizer> {
         match self.optimizer {
-            OptimizerType::Sgd => Arc::new(Mutex::new(StochasticGradientDescent::new(self.lr()))),
-            OptimizerType::Adam => Arc::new(Mutex::new(Adam::with_defaults(self.lr()))),
+            OptimizerType::Sgd => Box::new(StochasticGradientDescent::new(self.lr())),
+            OptimizerType::Adam => Box::new(Adam::with_defaults(self.lr())),
         }
     }
 }

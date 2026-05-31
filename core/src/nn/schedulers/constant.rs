@@ -37,3 +37,16 @@ impl Scheduler for ConstantScheduler {
         self.learning_rate
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn always_returns_the_same_rate() {
+        let mut s = ConstantScheduler::new(LearningRate::new(0.003));
+        for _ in 0..5 {
+            assert!((s.step().value() - 0.003).abs() < 1e-9);
+        }
+    }
+}

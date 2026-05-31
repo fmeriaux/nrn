@@ -5,7 +5,7 @@ use crate::nn::schedulers::Scheduler;
 use crate::optimizers::Optimizer;
 use ndarray::{Array1, Array2, ArrayView2, Axis};
 use ndarray_rand::rand;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 /// Small constant to prevent division by zero in gradient clipping.
 /// This value was chosen to be sufficiently small to avoid affecting the clipping behavior
@@ -103,8 +103,8 @@ impl NeuralNetwork {
         &mut self,
         dataset: &ModelDataset,
         loss_function: &Arc<dyn LossFunction>,
-        optimizer: &Arc<Mutex<dyn Optimizer>>,
-        scheduler: &Arc<Mutex<dyn Scheduler>>,
+        optimizer: &mut dyn Optimizer,
+        scheduler: &mut dyn Scheduler,
         clipping: &GradientClipping,
         batch_size: Option<usize>,
     ) {
@@ -116,14 +116,8 @@ impl NeuralNetwork {
         );
 
         // Scheduler steps once per epoch regardless of batch size
-        let lr = scheduler
-            .lock()
-            .expect("scheduler mutex was poisoned")
-            .step();
-        optimizer
-            .lock()
-            .expect("optimizer mutex was poisoned")
-            .set_learning_rate(lr);
+        let lr = scheduler.step();
+        optimizer.set_learning_rate(lr);
 
         match batch_size {
             None => {
@@ -163,12 +157,10 @@ impl NeuralNetwork {
         activations: &[Array2<f32>],
         targets: ArrayView2<f32>,
         loss_function: &Arc<dyn LossFunction>,
-        optimizer: &Arc<Mutex<dyn Optimizer>>,
+        optimizer: &mut dyn Optimizer,
         clipping: &GradientClipping,
     ) {
         let gradients = self.backward(activations, targets, loss_function);
-
-        let mut optimizer = optimizer.lock().expect("optimizer mutex was poisoned");
 
         for (layer_index, (layer, mut layer_gradients)) in
             self.layers.iter_mut().zip(gradients).enumerate()

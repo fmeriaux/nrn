@@ -8,33 +8,6 @@ use std::io::ErrorKind::InvalidData;
 use std::io::{Error, Result};
 use std::path::{Path, PathBuf};
 
-#[cfg(test)]
-mod tests {
-    use crate::activations::RELU;
-    use crate::model::{NeuralNetwork, NeuronLayerSpec};
-    use ndarray::Array2;
-
-    #[test]
-    fn save_load_roundtrip_predictions_are_identical() {
-        let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 2);
-        let model = NeuralNetwork::initialization(3, &specs);
-
-        let inputs = Array2::from_shape_fn((3, 5), |(i, j)| (i * 5 + j) as f32 * 0.1);
-        let predictions_before = model.predict(inputs.view());
-
-        let path =
-            std::path::PathBuf::from(format!("target/nrn_test_model_{}", std::process::id()));
-        model.save(&path).unwrap();
-
-        let loaded = NeuralNetwork::load(&path).unwrap();
-        let predictions_after = loaded.predict(inputs.view());
-
-        let _ = std::fs::remove_file(path.with_extension("h5"));
-
-        assert_eq!(predictions_before, predictions_after);
-    }
-}
-
 impl NeuralNetwork {
     /// Saves the neural network to an HDF5 group.
     /// # Arguments
@@ -130,5 +103,32 @@ impl NeuralNetwork {
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         let file = h5::load_file(path)?;
         NeuralNetwork::load_from_group(&file)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::activations::RELU;
+    use crate::model::{NeuralNetwork, NeuronLayerSpec};
+    use ndarray::Array2;
+
+    #[test]
+    fn save_load_roundtrip_predictions_are_identical() {
+        let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 2);
+        let model = NeuralNetwork::initialization(3, &specs);
+
+        let inputs = Array2::from_shape_fn((3, 5), |(i, j)| (i * 5 + j) as f32 * 0.1);
+        let predictions_before = model.predict(inputs.view());
+
+        let path =
+            std::path::PathBuf::from(format!("target/nrn_test_model_{}", std::process::id()));
+        model.save(&path).unwrap();
+
+        let loaded = NeuralNetwork::load(&path).unwrap();
+        let predictions_after = loaded.predict(inputs.view());
+
+        let _ = std::fs::remove_file(path.with_extension("h5"));
+
+        assert_eq!(predictions_before, predictions_after);
     }
 }

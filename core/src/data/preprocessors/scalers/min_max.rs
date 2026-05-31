@@ -154,7 +154,7 @@ mod tests {
         let mut scaled = data.clone();
         scaler.apply_inplace(scaled.view_mut());
         for &v in scaled.iter() {
-            assert!(v >= 0.0 && v <= 1.0 + 1e-5, "Value {} out of [0, 1]", v);
+            assert!((0.0..=1.0 + 1e-5).contains(&v), "Value {} out of [0, 1]", v);
         }
     }
 

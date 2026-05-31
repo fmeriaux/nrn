@@ -223,7 +223,9 @@ impl NeuronLayerSpec {
     /// - For multi-class classification (n_classes > 2): n_classes neurons with softmax activation
     ///
     /// # Panics
-    /// When `n_classes` is less than or equal to 1.
+    /// When `n_classes` is less than or equal to 1. This is a precondition the caller
+    /// must guarantee; for data-derived class counts, validate the dataset up front with
+    /// [`crate::data::Dataset::validate`], which reports the error instead of panicking.
     /// # Arguments
     /// - `n_classes`: The number of classes for the output layer.
     ///
@@ -269,6 +271,10 @@ impl NeuronLayerSpec {
     /// - When `n_features` is less than or equal to zero.
     /// - When `n_classes` is less than or equal to one.
     /// - When `n_samples` is less than or equal to zero.
+    ///
+    /// These are preconditions the caller must guarantee. For data-derived values,
+    /// validate the dataset up front with [`crate::data::Dataset::validate`], which
+    /// reports these conditions as errors instead of panicking.
     pub fn infer_from<A: Activation + 'static>(
         n_features: usize,
         n_classes: usize,
@@ -376,7 +382,11 @@ mod tests {
         ];
         let output = model.predict(inputs.view());
         for &v in output.iter() {
-            assert!(v >= 0.0 && v <= 1.0, "Sigmoid output {} not in [0, 1]", v);
+            assert!(
+                (0.0..=1.0).contains(&v),
+                "Sigmoid output {} not in [0, 1]",
+                v
+            );
         }
     }
 
