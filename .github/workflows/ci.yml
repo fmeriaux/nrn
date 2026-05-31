@@ -22,7 +22,7 @@ jobs:
           rustup component add clippy rustfmt
 
       - name: Install system dependencies
-        run: sudo apt-get install -y libhdf5-dev libfontconfig-dev
+        run: sudo apt-get install -y libfontconfig-dev
 
       - name: Install Task
         run: sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin

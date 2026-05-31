@@ -1,9 +1,0 @@
-# cargo-audit configuration.
-#
-# `paste` 1.0.15 is flagged as unmaintained (RUSTSEC-2024-0436). It carries no
-# known vulnerability — only an "unmaintained" notice — and reaches us purely
-# transitively through `image` (via rav1e/ravif) and `hdf5-metno`, both pulled
-# in by the `io` feature. There is no upstream fix to bump to yet, so ignore the
-# advisory to keep `task audit` actionable; revisit when those crates drop it.
-[advisories]
-ignore = ["RUSTSEC-2024-0436"]
