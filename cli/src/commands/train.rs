@@ -233,6 +233,7 @@ impl TrainArgs {
         trace(&format!("Using {}", clipping.summary()));
 
         let dataset = load_dataset(&self.dataset)?;
+        dataset.validate()?;
         let split = dataset
             .to_model_dataset()
             .split(self.val_ratio, self.test_ratio);
