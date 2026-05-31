@@ -33,3 +33,8 @@ jobs:
       - run: task lint
       - run: task test
       - run: task build
+
+      # Run after the build so the toolchain and rust-cache are already warm.
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - run: task audit

@@ -42,6 +42,11 @@ tasks:
       - cargo clippy --workspace --all-targets -- -D warnings
       - cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+  audit:
+    desc: Scan dependencies for security advisories (requires cargo-audit)
+    cmds:
+      - cargo audit
+
   coverage:
     desc: Measure test coverage of the core crate (requires cargo-llvm-cov)
     cmds:
