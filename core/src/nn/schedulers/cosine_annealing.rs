@@ -95,3 +95,50 @@ impl Scheduler for CosineAnnealing {
         lr
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn starts_at_max_and_ends_at_min() {
+        let (min, max, steps) = (0.001, 0.1, 10);
+        let mut s = CosineAnnealing::new(LearningRate::new(min), LearningRate::new(max), steps);
+        // First step (cos(0) = 1) yields the maximum.
+        assert!((s.step().value() - max).abs() < 1e-6);
+        // Exhaust the remaining steps of the cycle.
+        for _ in 1..steps {
+            s.step();
+        }
+        // Past the end of the cycle (no restarts) the minimum is returned.
+        assert!((s.step().value() - min).abs() < 1e-6);
+    }
+
+    #[test]
+    fn midpoint_is_average_of_min_and_max() {
+        let (min, max, steps) = (0.0, 1.0, 4);
+        let mut s = CosineAnnealing::new(LearningRate::new(min), LearningRate::new(max), steps);
+        s.step(); // step 0
+        s.step(); // step 1
+        // step 2 of 4: cos(π/2) = 0 → lr = (min + max) / 2.
+        assert!((s.step().value() - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn warm_restart_resets_to_max_and_grows_period() {
+        let (min, max, steps) = (0.0, 1.0, 2);
+        let mut s = CosineAnnealing::new(LearningRate::new(min), LearningRate::new(max), steps)
+            .with_restarts(true, 2);
+        let first = s.step().value(); // step 0 → max
+        s.step(); // step 1 → triggers restart, period grows to 4
+        let after_restart = s.step().value(); // step 0 of new cycle → max again
+        assert!((first - max).abs() < 1e-6);
+        assert!((after_restart - max).abs() < 1e-6);
+    }
+
+    #[test]
+    #[should_panic(expected = "Maximum learning rate must be greater than minimum")]
+    fn rejects_max_not_greater_than_min() {
+        CosineAnnealing::new(LearningRate::new(0.1), LearningRate::new(0.1), 10);
+    }
+}

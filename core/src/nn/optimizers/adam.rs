@@ -115,3 +115,76 @@ impl Optimizer for Adam {
         self.time_step += 1;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::activations::RELU;
+    use ndarray::{Array1, Array2, array};
+
+    fn layer(weights: Array2<f32>, biases: Array1<f32>) -> NeuronLayer {
+        NeuronLayer {
+            weights,
+            biases,
+            activation: RELU.clone(),
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "Beta1 must be in (0, 1)")]
+    fn adam_rejects_invalid_beta1() {
+        Adam::new(LearningRate::new(0.01), 1.5, 0.999, 1e-8);
+    }
+
+    #[test]
+    fn adam_first_step_moves_by_approximately_learning_rate() {
+        // On the first update, m_hat = grad and v_hat = grad^2, so the step is
+        // lr * grad / |grad| = lr * sign(grad), independent of the gradient magnitude.
+        let lr = 0.01;
+        let mut opt = Adam::with_defaults(LearningRate::new(lr));
+        let mut l = layer(array![[1.0, 1.0]], array![1.0]);
+        let grads = Gradients {
+            dw: array![[2.0, -3.0]],
+            db: array![0.5],
+        };
+        opt.update(0, &mut l, &grads);
+        assert!((l.weights[[0, 0]] - (1.0 - lr)).abs() < 1e-4); // +grad → decrease
+        assert!((l.weights[[0, 1]] - (1.0 + lr)).abs() < 1e-4); // -grad → increase
+        assert!((l.biases[0] - (1.0 - lr)).abs() < 1e-4);
+    }
+
+    #[test]
+    fn adam_zero_gradient_leaves_params_unchanged() {
+        let mut opt = Adam::with_defaults(LearningRate::new(0.1));
+        let mut l = layer(array![[1.0, -2.0]], array![3.0]);
+        let grads = Gradients {
+            dw: Array2::zeros((1, 2)),
+            db: Array1::zeros(1),
+        };
+        opt.update(0, &mut l, &grads);
+        assert!((l.weights[[0, 0]] - 1.0).abs() < 1e-6);
+        assert!((l.weights[[0, 1]] - (-2.0)).abs() < 1e-6);
+        assert!((l.biases[0] - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn adam_minimizes_simple_quadratic() {
+        // f(w) = 0.5 * w^2 has gradient w and minimum at 0; Adam should drive w → 0.
+        let mut opt = Adam::with_defaults(LearningRate::new(0.1));
+        let mut l = layer(array![[5.0]], array![0.0]);
+        for _ in 0..200 {
+            let w = l.weights[[0, 0]];
+            let grads = Gradients {
+                dw: array![[w]],
+                db: array![0.0],
+            };
+            opt.update(0, &mut l, &grads);
+            opt.step();
+        }
+        assert!(
+            l.weights[[0, 0]].abs() < 0.5,
+            "weight should approach 0, got {}",
+            l.weights[[0, 0]]
+        );
+    }
+}
