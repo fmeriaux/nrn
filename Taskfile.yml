@@ -39,8 +39,18 @@ tasks:
     desc: Check formatting and run Clippy on the workspace
     cmds:
       - cargo fmt --check
-      - cargo clippy --workspace
-      - cargo clippy --workspace --all-features
+      - cargo clippy --workspace --all-targets -- -D warnings
+      - cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  coverage:
+    desc: Measure test coverage of the core crate (requires cargo-llvm-cov)
+    cmds:
+      - cargo llvm-cov -p nrn --all-features --summary-only
+
+  coverage-html:
+    desc: Generate an HTML coverage report for core and open it
+    cmds:
+      - cargo llvm-cov -p nrn --all-features --html --open
 
   install:
     desc: Install the nrn binary to ~/.cargo/bin (uses locked deps)

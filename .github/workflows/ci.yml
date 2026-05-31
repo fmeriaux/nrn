@@ -24,11 +24,12 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get install -y libhdf5-dev libfontconfig-dev
 
+      - name: Install Task
+        run: sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
+
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo fmt --check
-      - run: cargo clippy --workspace
-      - run: cargo clippy --workspace --all-features
-      - run: cargo test --workspace
-      - run: cargo test --workspace --all-features
-      - run: cargo build --release --all-features
+      # Checks are defined in the Taskfile so CI and local runs stay in sync.
+      - run: task lint
+      - run: task test
+      - run: task build
