@@ -1,5 +1,5 @@
 use ndarray::array;
-use nrn::activations::{RELU, SIGMOID};
+use nrn::activations::SIGMOID;
 use nrn::data::ModelDataset;
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};

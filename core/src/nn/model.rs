@@ -376,7 +376,11 @@ mod tests {
         ];
         let output = model.predict(inputs.view());
         for &v in output.iter() {
-            assert!(v >= 0.0 && v <= 1.0, "Sigmoid output {} not in [0, 1]", v);
+            assert!(
+                (0.0..=1.0).contains(&v),
+                "Sigmoid output {} not in [0, 1]",
+                v
+            );
         }
     }
 
