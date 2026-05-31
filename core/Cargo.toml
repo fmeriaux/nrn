@@ -17,7 +17,15 @@ inventory = "0.3"
 hdf5-metno = { version = "0.12.4", optional = true }
 serde_json = { version = "1.0.143", optional = true }
 serde = { version = "1.0.228", features = ["derive"], optional = true }
-image = { version = "0.25.10", optional = true }
+# Only the input formats `encode` needs to decode. Dropping the default feature
+# set (notably `avif`) keeps rav1e — and the unmaintained `paste` — out of the
+# tree.
+image = { version = "0.25.10", optional = true, default-features = false, features = [
+    "png",
+    "jpeg",
+    "gif",
+    "bmp",
+] }
 png = { version = "0.18.0", optional = true }
 gif = { version = "0.14.2", optional = true }
 plotters = { version = "0.3.7", optional = true }
