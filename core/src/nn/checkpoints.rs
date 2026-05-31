@@ -191,7 +191,11 @@ mod tests {
     use ndarray::array;
 
     /// Builds an `EvaluationSet` with explicit metric values, optionally including a validation split.
-    fn eval_set(train: (f32, f32), validation: Option<(f32, f32)>, test: (f32, f32)) -> EvaluationSet {
+    fn eval_set(
+        train: (f32, f32),
+        validation: Option<(f32, f32)>,
+        test: (f32, f32),
+    ) -> EvaluationSet {
         EvaluationSet {
             train: Evaluation {
                 loss: train.0,
@@ -273,8 +277,14 @@ mod tests {
     fn series_and_finals_track_recorded_values() {
         let mut cp = Checkpoints::by_interval(1, 2).unwrap();
         let model = dummy_model();
-        cp.record(&model, &eval_set((1.0, 50.0), Some((1.2, 45.0)), (1.5, 40.0)));
-        cp.record(&model, &eval_set((0.5, 70.0), Some((0.6, 65.0)), (0.8, 60.0)));
+        cp.record(
+            &model,
+            &eval_set((1.0, 50.0), Some((1.2, 45.0)), (1.5, 40.0)),
+        );
+        cp.record(
+            &model,
+            &eval_set((0.5, 70.0), Some((0.6, 65.0)), (0.8, 60.0)),
+        );
 
         assert_eq!(cp.train_losses(), vec![1.0, 0.5]);
         assert_eq!(cp.validation_losses(), vec![1.2, 0.6]);
@@ -307,8 +317,14 @@ mod tests {
     fn ranges_span_all_splits() {
         let mut cp = Checkpoints::by_interval(1, 2).unwrap();
         let model = dummy_model();
-        cp.record(&model, &eval_set((1.0, 50.0), Some((1.2, 45.0)), (1.5, 40.0)));
-        cp.record(&model, &eval_set((0.5, 70.0), Some((0.6, 65.0)), (0.8, 90.0)));
+        cp.record(
+            &model,
+            &eval_set((1.0, 50.0), Some((1.2, 45.0)), (1.5, 40.0)),
+        );
+        cp.record(
+            &model,
+            &eval_set((0.5, 70.0), Some((0.6, 65.0)), (0.8, 90.0)),
+        );
 
         // loss spans the smallest validation loss to the largest train loss
         assert_eq!(cp.loss_range(), Some((0.5, 1.5)));

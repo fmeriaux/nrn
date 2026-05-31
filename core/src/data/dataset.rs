@@ -559,7 +559,12 @@ mod tests {
         };
         let scaler = MinMaxScaler::default().fit(dataset.features.view());
         dataset.scale_inplace(&scaler);
-        assert!(dataset.features.iter().all(|&v| (0.0..=1.0 + 1e-5).contains(&v)));
+        assert!(
+            dataset
+                .features
+                .iter()
+                .all(|&v| (0.0..=1.0 + 1e-5).contains(&v))
+        );
     }
 
     #[test]
@@ -578,8 +583,14 @@ mod tests {
 
     #[test]
     fn dataset_error_messages_are_descriptive() {
-        assert_eq!(DatasetError::NoFeatures.to_string(), "dataset has no features");
-        assert_eq!(DatasetError::NoSamples.to_string(), "dataset has no samples");
+        assert_eq!(
+            DatasetError::NoFeatures.to_string(),
+            "dataset has no features"
+        );
+        assert_eq!(
+            DatasetError::NoSamples.to_string(),
+            "dataset has no samples"
+        );
         assert_eq!(
             DatasetError::TooFewClasses(1).to_string(),
             "a classifier needs at least 2 classes, but found 1"

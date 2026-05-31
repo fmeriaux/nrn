@@ -514,7 +514,10 @@ mod tests {
             dw: array![[5.0]],
             db: array![5.0],
         };
-        value.clip_by(&GradientClipping::Value { min: -1.0, max: 1.0 });
+        value.clip_by(&GradientClipping::Value {
+            min: -1.0,
+            max: 1.0,
+        });
         assert_eq!(value.dw, array![[1.0]]);
 
         // Norm rescales to the max norm.
@@ -523,8 +526,7 @@ mod tests {
             db: array![0.0],
         };
         norm.clip_by(&GradientClipping::Norm { max_norm: 1.0 });
-        let total =
-            (norm.dw.mapv(|x| x.powi(2)).sum() + norm.db.mapv(|x| x.powi(2)).sum()).sqrt();
+        let total = (norm.dw.mapv(|x| x.powi(2)).sum() + norm.db.mapv(|x| x.powi(2)).sum()).sqrt();
         assert!((total - 1.0).abs() < 1e-4);
     }
 }

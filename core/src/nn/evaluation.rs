@@ -136,14 +136,14 @@ mod tests {
         let predictions = array![[0.99, 0.01]];
         let targets = array![[1.0, 0.0]];
 
-        let eval = Evaluation::from_predictions(
-            &loss(),
-            &accuracy(),
-            predictions.view(),
-            targets.view(),
-        );
+        let eval =
+            Evaluation::from_predictions(&loss(), &accuracy(), predictions.view(), targets.view());
 
-        assert!(eval.loss >= 0.0 && eval.loss < 0.1, "loss was {}", eval.loss);
+        assert!(
+            eval.loss >= 0.0 && eval.loss < 0.1,
+            "loss was {}",
+            eval.loss
+        );
         assert_eq!(eval.accuracy, 100.0);
     }
 
