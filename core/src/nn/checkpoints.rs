@@ -181,3 +181,154 @@ impl Range for Vec<f32> {
         Some((min, max))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::activations::SIGMOID;
+    use crate::evaluation::Evaluation;
+    use crate::model::{NeuralNetwork, NeuronLayer};
+    use ndarray::array;
+
+    /// Builds an `EvaluationSet` with explicit metric values, optionally including a validation split.
+    fn eval_set(
+        train: (f32, f32),
+        validation: Option<(f32, f32)>,
+        test: (f32, f32),
+    ) -> EvaluationSet {
+        EvaluationSet {
+            train: Evaluation {
+                loss: train.0,
+                accuracy: train.1,
+            },
+            validation: validation.map(|(loss, accuracy)| Evaluation { loss, accuracy }),
+            test: Evaluation {
+                loss: test.0,
+                accuracy: test.1,
+            },
+        }
+    }
+
+    /// A minimal single-layer network used as a snapshot payload.
+    fn dummy_model() -> NeuralNetwork {
+        NeuralNetwork {
+            layers: vec![NeuronLayer {
+                weights: array![[0.0, 0.0]],
+                biases: array![0.0],
+                activation: SIGMOID.clone(),
+            }],
+        }
+    }
+
+    #[test]
+    fn by_interval_zero_returns_none() {
+        assert!(Checkpoints::by_interval(0, 100).is_none());
+    }
+
+    #[test]
+    fn by_interval_reserves_capacity_for_each_step_plus_initial() {
+        // 100 epochs / interval 10 → 10 checkpoints + 1 initial state
+        let cp = Checkpoints::by_interval(10, 100).unwrap();
+        assert_eq!(cp.interval, 10);
+        assert!(cp.snapshots.capacity() >= 11);
+        assert!(cp.evaluations.capacity() >= 11);
+        assert!(cp.is_empty());
+        assert_eq!(cp.len(), 0);
+    }
+
+    #[test]
+    fn by_interval_larger_than_epochs_keeps_at_least_one_step() {
+        // interval > epochs → step would be 0, clamped to 1 (+1 initial)
+        let cp = Checkpoints::by_interval(200, 100).unwrap();
+        assert!(cp.snapshots.capacity() >= 2);
+    }
+
+    #[test]
+    fn record_appends_snapshot_and_evaluation() {
+        let mut cp = Checkpoints::by_interval(1, 2).unwrap();
+        let model = dummy_model();
+
+        cp.record(&model, &eval_set((1.0, 50.0), None, (1.5, 40.0)));
+        cp.record(&model, &eval_set((0.5, 70.0), None, (0.8, 60.0)));
+
+        assert_eq!(cp.len(), 2);
+        assert!(!cp.is_empty());
+        assert_eq!(cp.snapshots.len(), 2);
+        assert_eq!(cp.evaluations.len(), 2);
+    }
+
+    #[test]
+    fn empty_checkpoints_have_no_final_metrics() {
+        let cp = Checkpoints::by_interval(1, 1).unwrap();
+        assert!(cp.final_evaluation().is_none());
+        assert!(cp.final_train_loss().is_none());
+        assert!(cp.final_validation_loss().is_none());
+        assert!(cp.final_test_loss().is_none());
+        assert!(cp.final_train_accuracy().is_none());
+        assert!(cp.final_validation_accuracy().is_none());
+        assert!(cp.final_test_accuracy().is_none());
+        assert!(cp.loss_range().is_none());
+        assert!(cp.accuracy_range().is_none());
+        assert!(cp.validation_losses().is_empty());
+        assert!(cp.validation_accuracies().is_empty());
+    }
+
+    #[test]
+    fn series_and_finals_track_recorded_values() {
+        let mut cp = Checkpoints::by_interval(1, 2).unwrap();
+        let model = dummy_model();
+        cp.record(
+            &model,
+            &eval_set((1.0, 50.0), Some((1.2, 45.0)), (1.5, 40.0)),
+        );
+        cp.record(
+            &model,
+            &eval_set((0.5, 70.0), Some((0.6, 65.0)), (0.8, 60.0)),
+        );
+
+        assert_eq!(cp.train_losses(), vec![1.0, 0.5]);
+        assert_eq!(cp.validation_losses(), vec![1.2, 0.6]);
+        assert_eq!(cp.test_losses(), vec![1.5, 0.8]);
+        assert_eq!(cp.train_accuracies(), vec![50.0, 70.0]);
+        assert_eq!(cp.validation_accuracies(), vec![45.0, 65.0]);
+        assert_eq!(cp.test_accuracies(), vec![40.0, 60.0]);
+
+        assert_eq!(cp.final_train_loss(), Some(0.5));
+        assert_eq!(cp.final_validation_loss(), Some(0.6));
+        assert_eq!(cp.final_test_loss(), Some(0.8));
+        assert_eq!(cp.final_train_accuracy(), Some(70.0));
+        assert_eq!(cp.final_validation_accuracy(), Some(65.0));
+        assert_eq!(cp.final_test_accuracy(), Some(60.0));
+        assert!(cp.final_evaluation().is_some());
+    }
+
+    #[test]
+    fn validation_metrics_are_skipped_when_absent() {
+        let mut cp = Checkpoints::by_interval(1, 1).unwrap();
+        cp.record(&dummy_model(), &eval_set((1.0, 50.0), None, (1.5, 40.0)));
+
+        assert!(cp.validation_losses().is_empty());
+        assert!(cp.validation_accuracies().is_empty());
+        assert!(cp.final_validation_loss().is_none());
+        assert!(cp.final_validation_accuracy().is_none());
+    }
+
+    #[test]
+    fn ranges_span_all_splits() {
+        let mut cp = Checkpoints::by_interval(1, 2).unwrap();
+        let model = dummy_model();
+        cp.record(
+            &model,
+            &eval_set((1.0, 50.0), Some((1.2, 45.0)), (1.5, 40.0)),
+        );
+        cp.record(
+            &model,
+            &eval_set((0.5, 70.0), Some((0.6, 65.0)), (0.8, 90.0)),
+        );
+
+        // loss spans the smallest validation loss to the largest train loss
+        assert_eq!(cp.loss_range(), Some((0.5, 1.5)));
+        // accuracy spans the smallest test accuracy to the largest test accuracy
+        assert_eq!(cp.accuracy_range(), Some((40.0, 90.0)));
+    }
+}

@@ -55,3 +55,33 @@ pub fn accuracy_for(n_classes: usize) -> Arc<dyn Accuracy> {
         _ => MULTI_CLASS_ACCURACY.clone(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::array;
+
+    #[test]
+    fn two_classes_selects_binary_accuracy() {
+        // One output row → binary metric. Perfect predictions score 100%.
+        let accuracy = accuracy_for(2);
+        let predictions = array![[0.9, 0.1]];
+        let targets = array![[1.0, 0.0]];
+        assert_eq!(accuracy.compute(predictions.view(), targets.view()), 100.0);
+    }
+
+    #[test]
+    fn more_than_two_classes_selects_multi_class_accuracy() {
+        // Three output rows → multi-class (argmax) metric. Perfect predictions score 100%.
+        let accuracy = accuracy_for(3);
+        let predictions = array![[0.8, 0.1], [0.1, 0.8], [0.1, 0.1]];
+        let targets = array![[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]];
+        assert_eq!(accuracy.compute(predictions.view(), targets.view()), 100.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Number of classes must be greater than 1")]
+    fn fewer_than_two_classes_panics() {
+        accuracy_for(1);
+    }
+}

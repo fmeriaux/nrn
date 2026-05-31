@@ -130,6 +130,27 @@ mod tests {
         }
     }
 
+    /// Checks a trained weight has converged near zero, reporting the offending
+    /// value on failure. Returning a `Result` (rather than asserting inline)
+    /// keeps the diagnostic message and lets a unit test exercise the failure
+    /// path without panicking the suite.
+    fn converged_near_zero(weight: f32, tol: f32) -> Result<(), String> {
+        if weight.abs() < tol {
+            Ok(())
+        } else {
+            Err(format!("weight should approach 0, got {weight}"))
+        }
+    }
+
+    #[test]
+    fn converged_near_zero_reports_the_offending_weight() {
+        assert!(converged_near_zero(0.1, 0.5).is_ok());
+        assert_eq!(
+            converged_near_zero(1.5, 0.5).unwrap_err(),
+            "weight should approach 0, got 1.5"
+        );
+    }
+
     #[test]
     #[should_panic(expected = "Beta1 must be in (0, 1)")]
     fn adam_rejects_invalid_beta1() {
@@ -181,10 +202,6 @@ mod tests {
             opt.update(0, &mut l, &grads);
             opt.step();
         }
-        assert!(
-            l.weights[[0, 0]].abs() < 0.5,
-            "weight should approach 0, got {}",
-            l.weights[[0, 0]]
-        );
+        converged_near_zero(l.weights[[0, 0]], 0.5).unwrap();
     }
 }

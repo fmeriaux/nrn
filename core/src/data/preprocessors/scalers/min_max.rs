@@ -136,6 +136,15 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "Shape mismatch: data columns")]
+    fn apply_rejects_feature_count_mismatch() {
+        // Fitted on 2 features, applied to 3-column data → guard must fire.
+        let scaler = MinMaxScaler::default().fit(array![[0.0, 0.0], [1.0, 1.0]].view());
+        let mut wrong = array![[0.0, 0.0, 0.0]];
+        scaler.apply_inplace(wrong.view_mut());
+    }
+
+    #[test]
     fn min_maps_to_zero_max_maps_to_one() {
         let data = array![[0.0, 0.0], [10.0, 100.0]];
         let scaler = MinMaxScaler::default().fit(data.view());

@@ -5,7 +5,7 @@ pub use ring::RingDataset;
 pub use uniform::UniformDataset;
 
 use crate::data::dataset::Dataset;
-use ndarray::{Array1, Array2, Axis};
+use ndarray::{Array1, Array2, ArrayViewMut1, Axis};
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand::prelude::StdRng;
 use ndarray_rand::rand::{Rng, RngCore, SeedableRng};
@@ -80,6 +80,17 @@ fn calculate_radius(feature_min: f32, feature_max: f32, n_clusters: usize) -> f3
     (feature_max - feature_min) / (2.5 * n_clusters as f32)
 }
 
+/// Scales a vector to unit length in place.
+///
+/// A zero vector is left untouched: dividing by its (zero) norm would produce
+/// `NaN`s, so the degenerate case is guarded explicitly.
+fn normalize_to_unit(mut row: ArrayViewMut1<f32>) {
+    let norm = row.iter().map(|v| v.powi(2)).sum::<f32>().sqrt();
+    if norm != 0.0 {
+        row.iter_mut().for_each(|v| *v /= norm);
+    }
+}
+
 /// Create a random set of points uniformly distributed on a sphere with a given radius range
 /// # Arguments
 /// - `rng`: A mutable reference to a random number generator.
@@ -100,10 +111,7 @@ pub fn random_points(
 
     // Normalize each row to unit length, ensuring points are uniformly distributed on the sphere
     for mut row in points.axis_iter_mut(Axis(0)) {
-        let norm = row.iter().map(|v| v.powi(2)).sum::<f32>().sqrt();
-        if norm != 0.0 {
-            row.iter_mut().for_each(|v| *v /= norm);
-        }
+        normalize_to_unit(row.view_mut());
         // For uniform distribution, we scale the points to the desired radius
         let u: f32 = rng.sample(Uniform::new(0.0_f32, 1.0).unwrap());
         let r = ((radius_max.powf(n_features as f32) - radius_min.powf(n_features as f32)) * u
@@ -122,6 +130,7 @@ pub fn random_points(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ndarray::array;
 
     fn uniform(n_samples: usize, n_clusters: usize) -> Dataset {
         UniformDataset {
@@ -191,5 +200,23 @@ mod tests {
                 val
             );
         }
+    }
+
+    #[test]
+    fn normalize_to_unit_scales_nonzero_vector_to_unit_length() {
+        let mut row = array![3.0, 4.0]; // norm = 5
+        normalize_to_unit(row.view_mut());
+        let norm = row.iter().map(|v| v.powi(2)).sum::<f32>().sqrt();
+        assert!((norm - 1.0).abs() < 1e-6);
+        assert!((row[0] - 0.6).abs() < 1e-6);
+        assert!((row[1] - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn normalize_to_unit_leaves_zero_vector_untouched() {
+        // A zero-norm row must stay at the origin, not become NaN.
+        let mut row = array![0.0, 0.0, 0.0];
+        normalize_to_unit(row.view_mut());
+        assert_eq!(row, array![0.0, 0.0, 0.0]);
     }
 }

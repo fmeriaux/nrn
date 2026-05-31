@@ -110,6 +110,15 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "Shape mismatch: data columns")]
+    fn apply_rejects_feature_count_mismatch() {
+        // Fitted on 2 features, applied to 3-column data → guard must fire.
+        let scaler = ZScoreScaler::default().fit(array![[1.0, 2.0], [3.0, 4.0]].view());
+        let mut wrong = array![[0.0, 0.0, 0.0]];
+        scaler.apply_inplace(wrong.view_mut());
+    }
+
+    #[test]
     fn scaled_data_has_zero_mean_and_unit_variance() {
         let data = array![
             [1.0, 10.0],

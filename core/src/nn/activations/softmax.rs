@@ -24,16 +24,7 @@ impl Activation for Softmax {
     ///
     /// For numerical stability, the maximum value in each column is subtracted before exponentiation.
     /// The result is normalized so that each column sums to 1, representing a probability distribution.
-    ///
-    /// # Panics
-    /// Panics if the input is not a 2D array.
     fn apply(&self, input: ArrayView2<f32>) -> Array2<f32> {
-        assert_eq!(
-            input.ndim(),
-            2,
-            "Softmax apply: input must be 2D, got shape {:?}",
-            input.shape()
-        );
         let mut result = input.to_owned();
 
         for mut col in result.columns_mut() {

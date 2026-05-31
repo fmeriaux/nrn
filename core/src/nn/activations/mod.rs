@@ -92,3 +92,19 @@ impl ActivationProvider {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_by_name_returns_registered_activation() {
+        let relu = ActivationProvider::get_by_name("relu").expect("relu is registered");
+        assert_eq!(relu.name(), "relu");
+    }
+
+    #[test]
+    fn get_by_name_returns_none_for_unknown_activation() {
+        assert!(ActivationProvider::get_by_name("not-an-activation").is_none());
+    }
+}

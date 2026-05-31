@@ -374,7 +374,10 @@ impl ModelSplit {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::scalers::MinMaxScaler;
     use ndarray::{Array1, Array2, array};
+    use ndarray_rand::rand::SeedableRng;
+    use ndarray_rand::rand::prelude::StdRng;
 
     #[test]
     #[should_panic(expected = "Labels must be 0-indexed")]
@@ -398,6 +401,16 @@ mod tests {
         for i in 0..3 {
             assert_eq!(model_dataset.targets[[i, i]], 1.0);
         }
+    }
+
+    #[test]
+    fn binary_labels_produce_single_row_targets() {
+        let features = Array2::zeros((3, 2));
+        let labels = array![0.0f32, 1.0, 0.0];
+        let model_dataset = Dataset { features, labels }.to_model_dataset();
+        // Binary labels stay as a single (1, n_samples) row, not one-hot encoded.
+        assert_eq!(model_dataset.targets.shape(), &[1, 3]);
+        assert_eq!(model_dataset.targets.row(0).to_vec(), vec![0.0, 1.0, 0.0]);
     }
 
     #[test]
@@ -452,5 +465,135 @@ mod tests {
         assert_eq!(split.train_size(), 70);
         assert_eq!(split.validation_size(), 10);
         assert_eq!(split.test_size(), 20);
+    }
+
+    #[test]
+    fn split_without_validation_yields_no_validation_set() {
+        // val_ratio 0.0 → the validation split is None.
+        let inputs = Array2::zeros((2, 100));
+        let targets = Array2::zeros((1, 100));
+        let split = ModelDataset { inputs, targets }.split(0.0, 0.2);
+        assert!(split.validation.is_none());
+        assert_eq!(split.train_size(), 80);
+        assert_eq!(split.test_size(), 20);
+    }
+
+    #[test]
+    fn from_vec_rejects_inconsistent_image_sizes() {
+        // Images of differing lengths cannot form a rectangular matrix → Err.
+        let mut rng = StdRng::seed_from_u64(0);
+        let images = vec![array![0.0f32, 1.0], array![2.0, 3.0, 4.0]];
+        let labels = vec![0usize, 1];
+        assert!(Dataset::from_vec(&mut rng, images, labels).is_err());
+    }
+
+    #[test]
+    fn is_empty_reflects_missing_features_or_labels() {
+        let populated = Dataset {
+            features: Array2::zeros((2, 2)),
+            labels: array![0.0f32, 1.0],
+        };
+        assert!(!populated.is_empty());
+
+        let no_features = Dataset {
+            features: Array2::zeros((0, 0)),
+            labels: array![0.0f32],
+        };
+        assert!(no_features.is_empty());
+
+        let no_labels = Dataset {
+            features: Array2::zeros((2, 2)),
+            labels: Array1::zeros(0),
+        };
+        assert!(no_labels.is_empty());
+    }
+
+    #[test]
+    fn unique_labels_deduplicates_values() {
+        let dataset = Dataset {
+            features: Array2::zeros((4, 1)),
+            labels: array![0.0f32, 1.0, 1.0, 2.0],
+        };
+        let mut unique = dataset.unique_labels();
+        unique.sort_by(f32::total_cmp);
+        assert_eq!(unique, vec![0.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn get_features_for_label_selects_matching_rows() {
+        let dataset = Dataset {
+            features: array![[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]],
+            labels: array![0.0f32, 1.0, 0.0],
+        };
+        let rows = dataset.get_features_for_label(0.0);
+        assert_eq!(rows.shape(), &[2, 2]);
+        assert_eq!(rows.row(0).to_vec(), vec![1.0, 1.0]);
+        assert_eq!(rows.row(1).to_vec(), vec![3.0, 3.0]);
+    }
+
+    #[test]
+    fn feature_range_returns_per_feature_min_max() {
+        let dataset = Dataset {
+            features: array![[1.0, 10.0], [3.0, 5.0], [-2.0, 8.0]],
+            labels: array![0.0f32, 1.0, 0.0],
+        };
+        let (mins, maxs) = dataset.feature_range().unwrap();
+        assert_eq!(mins, vec![-2.0, 5.0]);
+        assert_eq!(maxs, vec![3.0, 10.0]);
+    }
+
+    #[test]
+    fn feature_range_is_none_without_samples() {
+        let dataset = Dataset {
+            features: Array2::zeros((0, 2)),
+            labels: Array1::zeros(0),
+        };
+        assert!(dataset.feature_range().is_none());
+    }
+
+    #[test]
+    fn scale_inplace_applies_scaler_to_features() {
+        let mut dataset = Dataset {
+            features: array![[0.0, 0.0], [10.0, 20.0]],
+            labels: array![0.0f32, 1.0],
+        };
+        let scaler = MinMaxScaler::default().fit(dataset.features.view());
+        dataset.scale_inplace(&scaler);
+        assert!(
+            dataset
+                .features
+                .iter()
+                .all(|&v| (0.0..=1.0 + 1e-5).contains(&v))
+        );
+    }
+
+    #[test]
+    fn from_vec_builds_dataset_from_images() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let images = vec![array![0.0f32, 1.0], array![2.0, 3.0], array![4.0, 5.0]];
+        let labels = vec![0usize, 1, 2];
+
+        let dataset = Dataset::from_vec(&mut rng, images, labels).unwrap();
+        assert_eq!(dataset.features.shape(), &[3, 2]);
+        assert_eq!(dataset.labels.len(), 3);
+        let mut unique = dataset.unique_labels();
+        unique.sort_by(f32::total_cmp);
+        assert_eq!(unique, vec![0.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn dataset_error_messages_are_descriptive() {
+        assert_eq!(
+            DatasetError::NoFeatures.to_string(),
+            "dataset has no features"
+        );
+        assert_eq!(
+            DatasetError::NoSamples.to_string(),
+            "dataset has no samples"
+        );
+        assert_eq!(
+            DatasetError::TooFewClasses(1).to_string(),
+            "a classifier needs at least 2 classes, but found 1"
+        );
     }
 }

@@ -95,3 +95,108 @@ impl EvaluationSet {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::accuracies::BINARY_ACCURACY;
+    use crate::activations::SIGMOID;
+    use crate::data::ModelDataset;
+    use crate::loss_functions::CROSS_ENTROPY_LOSS;
+    use crate::model::{NeuralNetwork, NeuronLayer};
+    use ndarray::array;
+
+    fn loss() -> Arc<dyn LossFunction> {
+        CROSS_ENTROPY_LOSS.clone()
+    }
+
+    fn accuracy() -> Arc<dyn Accuracy> {
+        BINARY_ACCURACY.clone()
+    }
+
+    /// A 2-input → 1-output sigmoid network whose weights/bias are zeroed,
+    /// so every prediction is exactly 0.5 regardless of the input.
+    fn constant_half_model() -> NeuralNetwork {
+        NeuralNetwork {
+            layers: vec![NeuronLayer {
+                weights: array![[0.0, 0.0]],
+                biases: array![0.0],
+                activation: SIGMOID.clone(),
+            }],
+        }
+    }
+
+    fn dataset(inputs: ndarray::Array2<f32>, targets: ndarray::Array2<f32>) -> ModelDataset {
+        ModelDataset { inputs, targets }
+    }
+
+    #[test]
+    fn from_predictions_scores_perfect_classification() {
+        // Confident, correct binary predictions → ~0 loss, 100% accuracy.
+        let predictions = array![[0.99, 0.01]];
+        let targets = array![[1.0, 0.0]];
+
+        let eval =
+            Evaluation::from_predictions(&loss(), &accuracy(), predictions.view(), targets.view());
+
+        assert!(
+            eval.loss >= 0.0 && eval.loss < 0.1,
+            "loss was {}",
+            eval.loss
+        );
+        assert_eq!(eval.accuracy, 100.0);
+    }
+
+    #[test]
+    fn using_model_matches_from_predictions() {
+        let model = constant_half_model();
+        let data = dataset(array![[0.2, 0.8], [0.3, 0.7]], array![[1.0, 0.0]]);
+
+        let from_model = Evaluation::using_model(&model, &loss(), &accuracy(), &data);
+        let from_preds = Evaluation::from_predictions(
+            &loss(),
+            &accuracy(),
+            model.predict(data.inputs.view()).view(),
+            data.targets.view(),
+        );
+
+        assert_eq!(from_model.loss, from_preds.loss);
+        assert_eq!(from_model.accuracy, from_preds.accuracy);
+    }
+
+    #[test]
+    fn evaluation_set_without_validation_or_cached_predictions() {
+        let model = constant_half_model();
+        let split = ModelSplit {
+            train: dataset(array![[0.1, 0.9], [0.2, 0.8]], array![[1.0, 0.0]]),
+            validation: None,
+            test: dataset(array![[0.4, 0.6], [0.5, 0.5]], array![[0.0, 1.0]]),
+        };
+
+        let set = EvaluationSet::using_model(&model, &loss(), &accuracy(), &split, None);
+
+        assert!(set.validation.is_none());
+        // Constant-0.5 predictions: train/test losses are equal and finite.
+        assert!(set.train.loss.is_finite());
+        assert_eq!(set.train.loss, set.test.loss);
+    }
+
+    #[test]
+    fn evaluation_set_uses_cached_train_predictions_and_validation() {
+        let model = constant_half_model();
+        let split = ModelSplit {
+            train: dataset(array![[0.1, 0.9], [0.2, 0.8]], array![[1.0, 0.0]]),
+            validation: Some(dataset(array![[0.3, 0.7], [0.6, 0.4]], array![[1.0, 0.0]])),
+            test: dataset(array![[0.4, 0.6], [0.5, 0.5]], array![[0.0, 1.0]]),
+        };
+
+        // Provide perfect cached predictions for the train split.
+        let cached = array![[0.99, 0.01]];
+        let set =
+            EvaluationSet::using_model(&model, &loss(), &accuracy(), &split, Some(cached.view()));
+
+        // Train metrics come from the cached predictions, not the constant-0.5 model.
+        assert_eq!(set.train.accuracy, 100.0);
+        assert!(set.validation.is_some());
+    }
+}
