@@ -3,10 +3,10 @@ use nrn::activations::SIGMOID;
 use nrn::data::ModelDataset;
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
-use nrn::optimizers::{Adam, Optimizer};
-use nrn::schedulers::{ConstantScheduler, Scheduler};
+use nrn::optimizers::Adam;
+use nrn::schedulers::ConstantScheduler;
 use nrn::training::{GradientClipping, LearningRate};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 #[test]
 fn xor_converges_to_low_loss() {
@@ -20,14 +20,19 @@ fn xor_converges_to_low_loss() {
     let mut model = NeuralNetwork::initialization(2, &specs);
 
     let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
-    let optimizer: Arc<Mutex<dyn Optimizer>> =
-        Arc::new(Mutex::new(Adam::with_defaults(LearningRate::new(0.1))));
-    let scheduler: Arc<Mutex<dyn Scheduler>> =
-        Arc::new(Mutex::new(ConstantScheduler::new(LearningRate::new(0.1))));
+    let mut optimizer = Adam::with_defaults(LearningRate::new(0.1));
+    let mut scheduler = ConstantScheduler::new(LearningRate::new(0.1));
     let clipping = GradientClipping::None;
 
     for _ in 0..10_000 {
-        model.train(&dataset, &loss_fn, &optimizer, &scheduler, &clipping, None);
+        model.train(
+            &dataset,
+            &loss_fn,
+            &mut optimizer,
+            &mut scheduler,
+            &clipping,
+            None,
+        );
     }
 
     let predictions = model.predict(dataset.inputs.view());
@@ -50,18 +55,16 @@ fn xor_converges_with_mini_batch() {
     let mut model = NeuralNetwork::initialization(2, &specs);
 
     let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
-    let optimizer: Arc<Mutex<dyn Optimizer>> =
-        Arc::new(Mutex::new(Adam::with_defaults(LearningRate::new(0.01))));
-    let scheduler: Arc<Mutex<dyn Scheduler>> =
-        Arc::new(Mutex::new(ConstantScheduler::new(LearningRate::new(0.01))));
+    let mut optimizer = Adam::with_defaults(LearningRate::new(0.01));
+    let mut scheduler = ConstantScheduler::new(LearningRate::new(0.01));
     let clipping = GradientClipping::None;
 
     for _ in 0..8_000 {
         model.train(
             &dataset,
             &loss_fn,
-            &optimizer,
-            &scheduler,
+            &mut optimizer,
+            &mut scheduler,
             &clipping,
             Some(2),
         );
@@ -91,14 +94,19 @@ fn three_class_converges_to_low_loss() {
     let mut model = NeuralNetwork::initialization(2, &specs);
 
     let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
-    let optimizer: Arc<Mutex<dyn Optimizer>> =
-        Arc::new(Mutex::new(Adam::with_defaults(LearningRate::new(0.05))));
-    let scheduler: Arc<Mutex<dyn Scheduler>> =
-        Arc::new(Mutex::new(ConstantScheduler::new(LearningRate::new(0.05))));
+    let mut optimizer = Adam::with_defaults(LearningRate::new(0.05));
+    let mut scheduler = ConstantScheduler::new(LearningRate::new(0.05));
     let clipping = GradientClipping::None;
 
     for _ in 0..5_000 {
-        model.train(&dataset, &loss_fn, &optimizer, &scheduler, &clipping, None);
+        model.train(
+            &dataset,
+            &loss_fn,
+            &mut optimizer,
+            &mut scheduler,
+            &clipping,
+            None,
+        );
     }
 
     let predictions = model.predict(dataset.inputs.view());
