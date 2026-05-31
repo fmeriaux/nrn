@@ -456,6 +456,17 @@ mod tests {
     }
 
     #[test]
+    fn early_stopping_skips_snapshot_when_restore_disabled() {
+        // With restore_best_model = false, an improvement must NOT clone the model.
+        let specs = NeuronLayerSpec::network_for(vec![2], &*SIGMOID, 2);
+        let model = NeuralNetwork::initialization(2, &specs);
+        let mut es = EarlyStopping::new(2, false);
+
+        assert!(!es.check(1.0, &model)); // improvement, but no snapshot is taken
+        assert!(es.best_model.is_none());
+    }
+
+    #[test]
     fn clip_rescales_gradients_above_the_max_norm() {
         // dw norm = sqrt(3^2 + 4^2) = 5, db = 0 → total norm 5, clipped to 1.0.
         let mut grads = Gradients {
