@@ -57,3 +57,62 @@ impl VectorEncoder for ImageEncoder {
         Ok(Array1::from(pixels).map(|&p| p as f32))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{ImageFormat, RgbImage};
+    use std::io::Cursor;
+
+    /// Encodes a small solid-colour RGB image to in-memory PNG bytes.
+    fn png_bytes(width: u32, height: u32, color: [u8; 3]) -> Vec<u8> {
+        let img = RgbImage::from_pixel(width, height, image::Rgb(color));
+        let mut bytes = Vec::new();
+        img.write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
+            .expect("PNG encoding should succeed");
+        bytes
+    }
+
+    #[test]
+    fn encode_rgb_resizes_and_flattens_to_three_channels() {
+        let bytes = png_bytes(8, 8, [10, 20, 30]);
+        let encoder = ImageEncoder {
+            img_shape: (2, 2),
+            grayscale: false,
+        };
+
+        let vector = encoder.encode(&bytes).unwrap();
+
+        // 2x2 pixels x 3 channels, raw intensities in [0, 255].
+        assert_eq!(vector.len(), 12);
+        assert!(vector.iter().all(|&p| (0.0..=255.0).contains(&p)));
+        // Solid colour survives the nearest-neighbour resize: every pixel is (10, 20, 30).
+        assert_eq!(vector[0], 10.0);
+        assert_eq!(vector[1], 20.0);
+        assert_eq!(vector[2], 30.0);
+    }
+
+    #[test]
+    fn encode_grayscale_collapses_to_one_channel() {
+        let bytes = png_bytes(8, 8, [255, 255, 255]);
+        let encoder = ImageEncoder {
+            img_shape: (4, 4),
+            grayscale: true,
+        };
+
+        let vector = encoder.encode(&bytes).unwrap();
+
+        // 4x4 pixels x 1 channel; a fully white image maps to luma 255.
+        assert_eq!(vector.len(), 16);
+        assert!(vector.iter().all(|&p| p == 255.0));
+    }
+
+    #[test]
+    fn encode_rejects_non_image_bytes() {
+        let encoder = ImageEncoder {
+            img_shape: (2, 2),
+            grayscale: false,
+        };
+        assert!(encoder.encode(b"not an image").is_err());
+    }
+}
