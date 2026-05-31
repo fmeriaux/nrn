@@ -334,6 +334,38 @@ mod tests {
     }
 
     #[test]
+    fn layer_accessors_report_dimensions_and_spec() {
+        // 2 neurons, each taking 3 inputs.
+        let layer = NeuronLayer {
+            weights: Array2::zeros((2, 3)),
+            biases: Array1::zeros(2),
+            activation: RELU.clone(),
+        };
+        assert_eq!(layer.size(), 2);
+        assert_eq!(layer.input_size(), 3);
+
+        let spec = layer.spec();
+        assert_eq!(spec.neurons, 2);
+        assert_eq!(spec.activation.name(), "relu");
+    }
+
+    #[test]
+    fn network_reports_specs_input_size_and_summary() {
+        // 3 inputs -> 4 relu -> 3 softmax
+        let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 3);
+        let model = NeuralNetwork::initialization(3, &specs);
+
+        assert_eq!(model.input_size(), 3);
+
+        let reported = model.specs();
+        assert_eq!(reported.len(), 2);
+        assert_eq!(reported[0].neurons, 4);
+        assert_eq!(reported[1].neurons, 3);
+
+        assert_eq!(model.summary(), "[3] -> 4-relu -> 3-softmax");
+    }
+
+    #[test]
     fn output_shape_matches_architecture() {
         // Network: 3 inputs -> 4 hidden (relu) -> 3 output (softmax), 5 samples
         // Note: n_classes=2 produces 1 sigmoid neuron (binary); use 3 for multi-class

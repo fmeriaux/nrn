@@ -84,3 +84,53 @@ impl Scaler for ScalerMethod {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::array;
+
+    #[test]
+    fn apply_single_inplace_scales_a_lone_vector() {
+        // `apply_single_inplace` treats each element as its own feature (column),
+        // so fit on three features each spanning [0, 10].
+        let data = array![[0.0, 0.0, 0.0], [10.0, 10.0, 10.0]];
+        let scaler = MinMaxScaler::default().fit(data.view());
+
+        let mut vector = array![0.0, 5.0, 10.0];
+        scaler.apply_single_inplace(vector.view_mut());
+
+        assert!((vector[0] - 0.0).abs() < 1e-5);
+        assert!((vector[1] - 0.5).abs() < 1e-5);
+        assert!((vector[2] - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn method_min_max_delegates_name_and_transform() {
+        let data = array![[0.0, 5.0], [10.0, 20.0]];
+        let method = ScalerMethod::MinMax(MinMaxScaler::default().fit(data.view()));
+
+        assert_eq!(method.name(), "min-max");
+
+        let mut to_scale = data.clone();
+        method.apply_inplace(to_scale.view_mut());
+        assert!(to_scale.iter().all(|&v| (0.0..=1.0 + 1e-5).contains(&v)));
+    }
+
+    #[test]
+    fn method_z_score_delegates_name_and_transform() {
+        let data = array![[0.0, 5.0], [10.0, 20.0]];
+        let method = ScalerMethod::ZScore(ZScoreScaler::default().fit(data.view()));
+
+        assert_eq!(method.name(), "z-score");
+
+        // Features run along columns (fit averages over Axis(0)); each should be
+        // centred near zero mean after standardization.
+        let mut to_scale = data.clone();
+        method.apply_inplace(to_scale.view_mut());
+        for col in to_scale.columns() {
+            let mean: f32 = col.sum() / col.len() as f32;
+            assert!(mean.abs() < 1e-5, "column mean was {}", mean);
+        }
+    }
+}

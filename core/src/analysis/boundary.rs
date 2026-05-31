@@ -211,6 +211,9 @@ fn generate_points_recursive(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::activations::{SIGMOID, SOFTMAX};
+    use crate::model::NeuronLayer;
+    use ndarray::array;
 
     #[test]
     #[should_panic(expected = "Grid too large")]
@@ -229,5 +232,71 @@ mod tests {
         let (grid, inputs) = make_grid_and_inputs(&[0.0, 0.0], &[1.0, 1.0], 3);
         assert_eq!(grid.shape(), &[9, 2]);
         assert_eq!(inputs.shape(), &[2, 9]);
+    }
+
+    /// A 2-input → 1-output sigmoid network. With weights [1, 0] and zero bias,
+    /// the prediction is `sigmoid(x0)`, which equals exactly 0.5 when x0 == 0.
+    fn binary_model() -> NeuralNetwork {
+        NeuralNetwork {
+            layers: vec![NeuronLayer {
+                weights: array![[1.0, 0.0]],
+                biases: array![0.0],
+                activation: SIGMOID.clone(),
+            }],
+        }
+    }
+
+    /// A 2-input → 3-output softmax network with symmetric weights for two of the
+    /// classes, so a tie (equal top-two probabilities) occurs along x0 == 0.
+    fn multiclass_model() -> NeuralNetwork {
+        NeuralNetwork {
+            layers: vec![NeuronLayer {
+                weights: array![[1.0, 0.0], [-1.0, 0.0], [0.0, 0.0]],
+                biases: array![0.0, 0.0, -10.0],
+                activation: SOFTMAX.clone(),
+            }],
+        }
+    }
+
+    #[test]
+    fn binary_boundary_returns_points_near_threshold() {
+        // Odd resolution includes x0 == 0, where sigmoid(x0) == 0.5 exactly.
+        let boundary = decision_boundary(&[-1.0, -1.0], &[1.0, 1.0], &binary_model(), 5, 1e-3);
+        assert!(boundary.nrows() > 0);
+        assert_eq!(boundary.ncols(), 2);
+        // Every returned point sits on the x0 == 0 line.
+        assert!(boundary.column(0).iter().all(|&x| x.abs() < 1e-5));
+    }
+
+    #[test]
+    fn multiclass_boundary_returns_points_on_the_tie_line() {
+        let boundary = decision_boundary(&[-2.0, -2.0], &[2.0, 2.0], &multiclass_model(), 5, 1e-2);
+        assert!(boundary.nrows() > 0);
+        assert_eq!(boundary.ncols(), 2);
+        assert!(boundary.column(0).iter().all(|&x| x.abs() < 1e-5));
+    }
+
+    #[test]
+    fn empty_bounds_return_empty_array() {
+        let boundary = decision_boundary(&[], &[], &binary_model(), 5, 1e-3);
+        assert_eq!(boundary.shape(), &[0, 0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Resolution must be at least 2")]
+    fn resolution_below_two_panics() {
+        decision_boundary(&[0.0], &[1.0], &binary_model(), 1, 1e-3);
+    }
+
+    #[test]
+    #[should_panic(expected = "Mins and maxs must have the same length")]
+    fn mismatched_bounds_length_panics() {
+        decision_boundary(&[0.0, 0.0], &[1.0], &binary_model(), 3, 1e-3);
+    }
+
+    #[test]
+    #[should_panic(expected = "Each min value must be less than")]
+    fn min_not_below_max_panics() {
+        decision_boundary(&[1.0, 0.0], &[1.0, 1.0], &binary_model(), 3, 1e-3);
     }
 }

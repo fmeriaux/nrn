@@ -75,4 +75,27 @@ mod tests {
         assert_eq!(l.weights, array![[1.0, -2.0]]);
         assert_eq!(l.biases, array![3.0]);
     }
+
+    #[test]
+    fn set_learning_rate_changes_the_update_magnitude() {
+        let mut opt = StochasticGradientDescent::new(LearningRate::new(0.1));
+        opt.set_learning_rate(LearningRate::new(1.0));
+
+        let mut l = layer(array![[1.0]], array![0.0]);
+        let grads = Gradients {
+            dw: array![[0.5]],
+            db: array![0.0],
+        };
+        opt.update(0, &mut l, &grads);
+        // With learning rate 1.0 the full gradient is subtracted: 1.0 - 1.0 * 0.5.
+        assert!((l.weights[[0, 0]] - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn step_is_a_noop_for_stateless_sgd() {
+        // SGD keeps no internal state, so it relies on the trait's default `step`.
+        let mut opt = StochasticGradientDescent::new(LearningRate::new(0.1));
+        opt.step();
+        assert_eq!(opt.learning_rate.value(), 0.1);
+    }
 }
