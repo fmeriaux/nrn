@@ -15,6 +15,8 @@ Key extras not covered by the Taskfile:
 ```sh
 cargo test <test_name>          # single test by name, across workspace
 cargo test -p nrn <test_name>   # core crate only
+task coverage                   # core coverage summary (needs cargo-llvm-cov)
+task coverage-html              # HTML coverage report, opened in a browser
 ```
 
 **System dependency**: HDF5 C library is required (`brew install hdf5` on macOS, `sudo apt-get install libhdf5-dev` on Ubuntu).
@@ -55,15 +57,24 @@ Arrays use `(features, samples)` shape throughout — columns are samples, rows 
 - **`model.rs`**: `NeuralNetwork` (Vec of `NeuronLayer`) and `NeuronLayerSpec`. Key methods: `forward()` returns all intermediate activations as `Vec<Array2<f32>>`; `predict()` returns only the last activation. `NeuronLayerSpec::output_for(n_classes)` auto-selects sigmoid (binary, 2 classes → 1 neuron) or softmax (multi-class).
 - **`training.rs`**: `train()` is implemented on `NeuralNetwork` — runs forward + backward + parameter update per epoch (or per mini-batch). `GradientClipping` (None / L2 Norm / Value). `EarlyStopping` with optional best-model restore.
 - **`activations/`**: `Activation` trait registered via the `inventory` crate for dynamic lookup by name (`ActivationProvider::get_by_name`). Built-ins: ReLU (He init), Sigmoid (Xavier init), Softmax (Xavier init).
-- **`optimizers/`**: `Optimizer` trait with SGD and Adam implementations. Wrapped in `Arc<Mutex<dyn Optimizer>>` to allow shared mutable access during training.
-- **`schedulers/`**: `Scheduler` trait stepping once per epoch. Implementations: `ConstantScheduler`, `StepDecay`, `CosineAnnealing` (with optional warm restarts).
-- **`loss_functions/`**: Cross-entropy loss (the only loss function; used for both binary and multi-class).
+- **`optimizers/`**: `Optimizer` trait with SGD and Adam implementations. Passed to `train()` as `&mut dyn Optimizer`.
+- **`schedulers/`**: `Scheduler` trait stepping once per epoch, passed as `&mut dyn Scheduler`. Implementations: `ConstantScheduler`, `StepDecay`, `CosineAnnealing` (with optional warm restarts).
+- **`loss_functions/`**: `LossFunction` trait; cross-entropy is the only implementation (used for both binary and multi-class).
+- **`accuracies/`**: `Accuracy` trait. `accuracy_for(n_classes)` picks `BINARY_ACCURACY` (2 classes) or `MULTI_CLASS_ACCURACY` (argmax match).
+- **`evaluation.rs`**: `Evaluation` (loss + accuracy for one dataset) and `EvaluationSet` (train / optional validation / test), computed from a model or from precomputed predictions.
+- **`checkpoints.rs`**: `Checkpoints` records model snapshots and `EvaluationSet`s at a fixed epoch interval; exposes per-split loss/accuracy series and their ranges for plotting.
+- **`initializations/`**: weight initializers (`he`, `xavier`) selected per activation.
 
 ### Data (`core/src/data/`)
 
 - **`dataset.rs`**: `Dataset` (raw, row-major) → `ModelDataset` (training-ready, column-major). `ModelDataset::batches()` shuffles and chunks for mini-batch SGD. `ModelDataset::split()` produces `ModelSplit` (train/val/test) — expects pre-shuffled data.
-- **`preprocessors/scalers/`**: `Scaler` trait with `MinMax` and `ZScore` implementations. Scaler params are serialized to JSON for reuse at prediction time.
+- **`preprocessors/scalers/`**: `Scaler` trait with `MinMax` and `ZScore` implementations; `ScalerMethod` enum dispatches to them for CLI/serialization. Scaler params are serialized to JSON for reuse at prediction time.
+- **`preprocessors/vectorizers/`**: flattens images into feature vectors (behind the `io` feature).
 - **`data/synth/`**: Synthetic dataset generators (`uniform`, `ring` distributions).
+
+### Analysis (`core/src/analysis/`)
+
+- **`boundary.rs`**: `decision_boundary()` samples a grid over the input bounds and returns the points near the decision threshold (binary: prediction ≈ 0.5; multi-class: top two class probabilities nearly equal). Pure computation — no plotting.
 
 ### I/O (`core/src/io/`, behind `io` feature)
 
