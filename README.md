@@ -76,13 +76,6 @@ rustc --version
 rustup update
 ```
 
-**HDF5**
-
-The CLI uses the HDF5 format for datasets and models. On some systems, you may need to install the HDF5 C library:
-
-- macOS: `brew install hdf5`
-- Ubuntu/Debian: `sudo apt-get install libhdf5-dev`
-
 **Task (optional)**
 
 The project includes a [Taskfile](https://taskfile.dev) to simplify common commands. Install with:
@@ -158,7 +151,7 @@ Below is a typical workflow using the CLI to generate a synthetic dataset, visua
 nrn synth --seed 1024 --distribution uniform --samples 500 --features 2 --clusters 2 --plot
 ```
 **Output files:**
-- `uniform-c2-f2-n500-seed1024.h5`: generated synthetic dataset (required for next steps).
+- `uniform-c2-f2-n500-seed1024.safetensors`: generated synthetic dataset (required for next steps).
 - `uniform-c2-f2-n500-seed1024.png`: dataset visualization (only if two features).
 
 > [!IMPORTANT]
@@ -176,7 +169,7 @@ See the [Data Scaling and Normalization](#data-scaling-and-normalization) sectio
 nrn scale uniform-c2-f2-n500-seed1024 z-score --plot
 ```
 **Output files:**
-- `scaled-uniform-c2-f2-n500-seed1024.h5`: scaled dataset, ready for training.
+- `scaled-uniform-c2-f2-n500-seed1024.safetensors`: scaled dataset, ready for training.
 - `scaled-uniform-c2-f2-n500-seed1024.png`: visualization of the scaled data.
 - `scaler-uniform-c2-f2-n500-seed1024.json`: scaling parameters (mean, std; required for prediction to ensure consistency).
 
@@ -192,8 +185,8 @@ nrn scale uniform-c2-f2-n500-seed1024 z-score --plot
 nrn train scaled-uniform-c2-f2-n500-seed1024 --epochs 1000
 ```
 **Output files:**
-- `model-scaled-uniform-c2-f2-n200-seed1024.h5`: trained model (architecture and weights; required for prediction).
-- `training-model-scaled-uniform-c2-f2-n200-seed1024.h5`: training history (loss, accuracy; for analysis and visualization).
+- `model-scaled-uniform-c2-f2-n200-seed1024.safetensors`: trained model (architecture and weights; required for prediction).
+- `training-model-scaled-uniform-c2-f2-n200-seed1024.safetensors`: training history (loss, accuracy; for analysis and visualization).
 
 > [!NOTE]
 > The network architecture is generated automatically based on the dataset and parameters (here, `[2] -> 1-sigmoid` means two input features, no hidden layers, and one output neuron with a sigmoid activation). The model and history filenames are prefixed with the dataset name to ensure traceability and avoid confusion when working with multiple datasets or experiments.
@@ -244,7 +237,7 @@ Predictions for [-1.3665887, -0.14052105]
 
 - The entered values are automatically normalized (here, [-0.23714493, -1.3086028]).
 - The result displays the probability for each class; the predicted class is the one with the highest percentage.
-- To predict multiple examples at once, you can provide an HDF5 file with the `--input` option (only `.h5` files are supported).
+- To predict multiple examples at once, you can provide a `.safetensors` file with the `--input` option.
 
 ### Tutorial: MLP on Non-Linear Data
 
@@ -262,7 +255,7 @@ To solve this problem, we need to add at least one hidden layer, turning our net
 nrn synth --seed 1024 --distribution ring --samples 500 --features 2 --clusters 2 --plot
 ```
 **Output files:**
-- `ring-c2-f2-n500-seed1024.h5`: generated synthetic dataset (rings; required for next steps).
+- `ring-c2-f2-n500-seed1024.safetensors`: generated synthetic dataset (rings; required for next steps).
 - `ring-c2-f2-n500-seed1024.png`: dataset visualization (only if two features).
 
 #### Example of generated dataset:
@@ -277,7 +270,7 @@ Scales the features using z-score normalization and visualizes the scaled data.
 nrn scale ring-c2-f2-n500-seed1024 z-score --plot
 ```
 **Output files:**
-- `scaled-ring-c2-f2-n500-seed1024.h5`: scaled dataset, ready for training.
+- `scaled-ring-c2-f2-n500-seed1024.safetensors`: scaled dataset, ready for training.
 - `scaled-ring-c2-f2-n500-seed1024.png`: visualization of the scaled data.
 - `scaler-ring-c2-f2-n500-seed1024.json`: scaling parameters (mean, std; required for prediction).
 
@@ -292,8 +285,8 @@ nrn scale ring-c2-f2-n500-seed1024 z-score --plot
 nrn train scaled-ring-c2-f2-n500-seed1024 --layers 16,8 --epochs 30000
 ```
 **Output files:**
-- `model-scaled-ring-c2-f2-n500-seed1024.h5`: trained MLP model (required for prediction).
-- `training-model-scaled-ring-c2-f2-n500-seed1024.h5`: training history (for analysis and visualization).
+- `model-scaled-ring-c2-f2-n500-seed1024.safetensors`: trained MLP model (required for prediction).
+- `training-model-scaled-ring-c2-f2-n500-seed1024.safetensors`: training history (for analysis and visualization).
 
 Trains an MLP with two hidden layers, 16 and 8 neurons (you can adjust the number and size of hidden layers as needed).
 The CLI automatically detects the architecture: `[2] -> 16-relu -> 8-relu -> 1-sigmoid`. 
@@ -326,7 +319,7 @@ This tutorial demonstrates how to use a Multi-Layer Perceptron (MLP) to solve a 
 nrn synth --seed 1024 --distribution ring --samples 600 --features 2 --clusters 3 --plot
 ```
 **Output files:**
-- `ring-c3-f2-n600-seed1024.h5`: generated synthetic dataset (required for next steps).
+- `ring-c3-f2-n600-seed1024.safetensors`: generated synthetic dataset (required for next steps).
 - `ring-c3-f2-n600-seed1024.png`: dataset visualization (only if two features).
 
 > [!NOTE]
@@ -344,7 +337,7 @@ Normalize the features using z-score normalization and visualize the scaled data
 nrn scale ring-c3-f2-n600-seed1024 z-score --plot
 ```
 **Output files:**
-- `scaled-ring-c3-f2-n600-seed1024.h5`: scaled dataset, ready for training.
+- `scaled-ring-c3-f2-n600-seed1024.safetensors`: scaled dataset, ready for training.
 - `scaled-ring-c3-f2-n600-seed1024.png`: visualization of the scaled data.
 - `scaler-ring-c3-f2-n600-seed1024.json`: scaling parameters (mean, std; required for prediction).
 
@@ -358,8 +351,8 @@ nrn scale ring-c3-f2-n600-seed1024 z-score --plot
 nrn train scaled-ring-c3-f2-n600-seed1024 --layers 16,8 --epochs 70000
 ```
 **Output files:**
-- `model-scaled-ring-c3-f2-n600-seed1024.h5`: trained MLP model (required for prediction).
-- `training-model-scaled-ring-c3-f2-n600-seed1024.h5`: training history (for analysis and visualization).
+- `model-scaled-ring-c3-f2-n600-seed1024.safetensors`: trained MLP model (required for prediction).
+- `training-model-scaled-ring-c3-f2-n600-seed1024.safetensors`: training history (for analysis and visualization).
 
 > [!NOTE]
 > The number of epochs is set to 70,000 to ensure proper convergence on this more complex multi-class problem. You may adjust this value depending on your hardware and the desired training duration.
@@ -388,7 +381,7 @@ nrn plot training-model-scaled-ring-c3-f2-n600-seed1024 --dataset scaled-ring-c3
 nrn predict model-scaled-ring-c3-f2-n600-seed1024 --scaler scaler-ring-c3-f2-n600-seed1024
 ```
 - The model outputs a probability for each class (thanks to Softmax). The predicted class is the one with the highest probability.
-- You can provide new data interactively or via an HDF5 file (see previous tutorials for details).
+- You can provide new data interactively or via a `.safetensors` file (see previous tutorials for details).
 
 **Example output:**
 
@@ -416,26 +409,26 @@ You can search online for the MNIST dataset or use any similar dataset of handwr
 To convert a directory of images into a dataset suitable for training, use:
 
 ```sh
-nrn encode img-dir --seed 42 --input digits/ --output digits.h5 --grayscale --shape 28
+nrn encode img-dir --seed 42 --input digits/ --output digits.safetensors --grayscale --shape 28
 ```
 - The directory structure must be `<input-dir>/<class-name>/<image>.png` (e.g., `digits/7/img_001.png`).
 - `<class-name>` should be a digit from 0 to 9.
 - `--seed` is required and ensures reproducible shuffling.
 - `--input` (`-i`) is the path to the root directory of images.
-- `--output` (`-o`) is the path to save the encoded dataset (HDF5 file).
+- `--output` (`-o`) is the path to save the encoded dataset (`.safetensors` file).
 - `--grayscale` converts images to grayscale, reducing data size.
 - `--shape` (`-s`) resizes images to the given shape (28 to limit the number of features to 784).
 
 > [!NOTE]
-> The output HDF5 file contains two groups: `train` and `test`, each with `features` and `labels` datasets. The split is performed automatically and reproducibly with the chosen seed. Always use the same seed to reproduce the same split.
+> The output file stores the dataset as `features` and `labels` tensors. Images are shuffled reproducibly with the chosen seed; always use the same seed to reproduce the same ordering.
 
 To encode a single image for prediction:
 
 ```sh
-nrn encode img --input digit.png --output digit.h5 --grayscale --shape 28
+nrn encode img --input digit.png --output digit.safetensors --grayscale --shape 28
 ```
 - `--input` (`-i`): path to the image file to encode.
-- `--output` (`-o`): path to save the encoded image (HDF5 file).
+- `--output` (`-o`): path to save the encoded image (`.safetensors` file).
 - `--grayscale`: convert to grayscale.
 - `--shape` (`-s`): resize to the specified shape (28 for MNIST).
 
@@ -449,7 +442,7 @@ After encoding, scale the dataset using min-max normalization:
 ```sh
 nrn scale mnist min-max
 ```
-- This creates a scaled dataset (e.g., `scaled-digits.h5`) and a scaler file (e.g., `scaler-digits.json`).
+- This creates a scaled dataset (e.g., `scaled-digits.safetensors`) and a scaler file (e.g., `scaler-digits.json`).
 - Always use the scaler file generated from the training dataset for all predictions.
 
 For information on scaling methods, refer to the [Data Scaling and Normalization](#data-scaling-and-normalization) section above.
@@ -497,11 +490,11 @@ To predict the digit from a new image:
 
 1. Encode the image:
    ```sh
-   nrn encode img --input digit.png --output digit.h5 --grayscale --shape 28
+   nrn encode img --input digit.png --output digit.safetensors --grayscale --shape 28
    ```
 2. Predict using the trained model and the scaler from the original training dataset:
    ```sh
-   nrn predict model-scaled-digits --scaler scaler-digits.json -i digit.h5
+   nrn predict model-scaled-digits --scaler scaler-digits.json -i digit.safetensors
    ```
 - The scaler **must** be the one generated from the original training dataset to ensure consistent preprocessing.
 - The output will show the probability for each digit (0-9); the highest value is the predicted class.

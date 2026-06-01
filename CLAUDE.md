@@ -19,7 +19,7 @@ task coverage                   # core coverage summary (needs cargo-llvm-cov)
 task coverage-html              # HTML coverage report, opened in a browser
 ```
 
-**System dependency**: HDF5 C library is required (`brew install hdf5` on macOS, `sudo apt-get install libhdf5-dev` on Ubuntu).
+All serialization formats are pure Rust — no system C library is required to build or run.
 
 ## Commit conventions
 
@@ -43,7 +43,7 @@ A scope can be added in parentheses: `feat(training): add cosine scheduler`.
 Two crates:
 
 - **`core/`** (crate `nrn`) — neural network library, no binary. Two optional feature flags:
-  - `io`: enables HDF5/JSON/image I/O (`hdf5-metno`, `serde`, `image`, `png`, `gif`)
+  - `io`: enables safetensors/JSON/image I/O (`safetensors`, `serde`, `serde_json`, `image`, `png`, `gif`)
   - `charts`: enables plotting (`plotters`)
 - **`cli/`** (crate `nrn-cli`) — `nrn` binary built on top of `core` with `features = ["io", "charts"]`, using `clap` for argument parsing
 
@@ -78,7 +78,7 @@ Arrays use `(features, samples)` shape throughout — columns are samples, rows 
 
 ### I/O (`core/src/io/`, behind `io` feature)
 
-HDF5 is the primary format for datasets, models, and training checkpoints. Scalers are stored as JSON. The `io` module handles all serialization/deserialization including the activation name → `Arc<dyn Activation>` round-trip via `ActivationProvider::get_by_name`.
+[safetensors](https://github.com/huggingface/safetensors) is the primary format for datasets, models, and training checkpoints: `f32` tensors plus a `__metadata__` string map (activation names, intervals, snapshot counts). Checkpoint evaluation series are stored as `f32` tensors too. Scalers are stored as JSON. `io/tensors.rs` holds the shared `View` adapter and (de)serialization helpers; the `io` module handles the activation name → `Arc<dyn Activation>` round-trip via `ActivationProvider::get_by_name`.
 
 ### CLI (`cli/src/`)
 
