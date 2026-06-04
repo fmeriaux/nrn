@@ -300,7 +300,7 @@ impl TrainArgs {
                 }
                 return Err(format!(
                     "Model diverged at epoch {} (NaN/Inf in weights). \
-                     Try a lower --lr or stronger gradient clipping.",
+                     Try: --scheduler cosine, a lower --lr, or stronger gradient clipping.",
                     epoch + 1
                 )
                 .into());
