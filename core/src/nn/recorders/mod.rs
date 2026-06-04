@@ -27,6 +27,47 @@ impl Recorder for NoOpRecorder {
     }
 }
 
+/// Orchestrates when model snapshots are written during training.
+///
+/// Wraps a [`Recorder`] and adds interval-based scheduling so the training
+/// loop stays free of checkpoint-timing decisions.  The concrete recorder
+/// (file-backed or no-op) is supplied by the caller.
+pub struct Checkpoints {
+    recorder: Box<dyn Recorder>,
+    interval: usize,
+    total_epochs: usize,
+}
+
+impl Checkpoints {
+    /// Creates a `Checkpoints` backed by the given recorder.
+    pub fn new(recorder: Box<dyn Recorder>, interval: usize, total_epochs: usize) -> Self {
+        Checkpoints {
+            recorder,
+            interval,
+            total_epochs,
+        }
+    }
+
+    /// Returns `true` if `epoch` (0-indexed) is a checkpoint boundary.
+    pub fn is_due(&self, epoch: usize) -> bool {
+        let n = epoch + 1;
+        self.interval > 0 && (n % self.interval == 0 || n == self.total_epochs)
+    }
+
+    /// Records the model state unconditionally.
+    ///
+    /// Use for: initial snapshot before training, divergence recovery,
+    /// early stopping flush when the interval didn't already capture the epoch.
+    pub fn record(&mut self, model: &NeuralNetwork, eval: &EvaluationSet) -> Result<()> {
+        self.recorder.record(model, eval)
+    }
+
+    /// Returns the history directory, or `None` when checkpointing is disabled.
+    pub fn dir(&self) -> Option<&Path> {
+        self.recorder.dir()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -62,5 +103,36 @@ mod tests {
     #[test]
     fn noop_recorder_dir_is_none() {
         assert!(NoOpRecorder.dir().is_none());
+    }
+
+    #[test]
+    fn checkpoints_is_due_respects_interval() {
+        let c = Checkpoints::new(Box::new(NoOpRecorder), 5, 20);
+        assert!(!c.is_due(0)); // epoch 1
+        assert!(!c.is_due(3)); // epoch 4
+        assert!(c.is_due(4)); // epoch 5 — boundary
+        assert!(!c.is_due(5)); // epoch 6
+        assert!(c.is_due(9)); // epoch 10 — boundary
+        assert!(c.is_due(19)); // epoch 20 — last epoch
+    }
+
+    #[test]
+    fn checkpoints_is_due_false_when_interval_zero() {
+        let c = Checkpoints::new(Box::new(NoOpRecorder), 0, 10);
+        for epoch in 0..10 {
+            assert!(!c.is_due(epoch));
+        }
+    }
+
+    #[test]
+    fn checkpoints_record_delegates_to_recorder() {
+        let mut c = Checkpoints::new(Box::new(NoOpRecorder), 5, 10);
+        assert!(c.record(&sample_model(), &sample_eval()).is_ok());
+    }
+
+    #[test]
+    fn checkpoints_dir_is_none_for_noop() {
+        let c = Checkpoints::new(Box::new(NoOpRecorder), 5, 10);
+        assert!(c.dir().is_none());
     }
 }
