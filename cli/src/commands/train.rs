@@ -257,23 +257,23 @@ impl TrainArgs {
             );
         }
 
-        // Compute names up front so the writer can be created before the loop.
+        // Compute names up front so the recorder can be initialised before the loop.
         let path = Path::new(&self.dataset);
         let dataset_name = get_file_stem(path);
         let model_name = format!("model-{}", dataset_name);
         let history_dir = path.with_file_name(format!("training-{}", model_name));
 
         // 👨‍🎓 TRAINING LOOP
-        let mut writer: Option<SnapshotRecorder> = if self.checkpoint_interval > 0 {
+        let mut recorder: Option<SnapshotRecorder> = if self.checkpoint_interval > 0 {
             trace(&format!(
                 "Recording a checkpoint every {} epochs",
                 style(self.checkpoint_interval).yellow()
             ));
-            let mut w = create_snapshot_recorder(&history_dir, self.checkpoint_interval)?;
+            let mut rec = create_snapshot_recorder(&history_dir, self.checkpoint_interval)?;
             let evaluations =
                 EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
-            w.record(&model, &evaluations)?;
-            Some(w)
+            rec.record(&model, &evaluations)?;
+            Some(rec)
         } else {
             None
         };
@@ -317,15 +317,15 @@ impl TrainArgs {
                         EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
                     // No checkpoint was written for this epoch yet (divergence precedes the
                     // checkpoint block), so always record the recovered model.
-                    if let Some(ref mut w) = writer {
-                        w.record(&model, &evals)?;
+                    if let Some(ref mut rec) = recorder {
+                        rec.record(&model, &evals)?;
                     }
                     final_evaluations = Some(evals);
                     break;
                 }
 
-                if let Some(ref writer) = writer {
-                    saved_at(HISTORY_ICON, "TRAINING HISTORY", writer.dir());
+                if let Some(ref recorder) = recorder {
+                    saved_at(HISTORY_ICON, "TRAINING HISTORY", recorder.dir());
                 }
                 return Err(format!(
                     "Model diverged at epoch {} (NaN/Inf in weights). \
@@ -337,7 +337,7 @@ impl TrainArgs {
             }
 
             let mut wrote_this_epoch = false;
-            if let Some(ref mut writer) = writer {
+            if let Some(ref mut recorder) = recorder {
                 let epoch_number = epoch + 1;
                 if epoch_number % self.checkpoint_interval == 0 || epoch_number == self.epochs {
                     let train_predictions = model.predict(split.train.inputs.view());
@@ -348,7 +348,7 @@ impl TrainArgs {
                         &split,
                         Some(train_predictions.view()),
                     );
-                    writer.record(&model, &evaluations)?;
+                    recorder.record(&model, &evaluations)?;
                     wrote_this_epoch = true;
                 }
             }
@@ -379,8 +379,8 @@ impl TrainArgs {
                         EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
                     // Write to history only when the interval block didn't already
                     // capture this epoch (avoids a duplicate snapshot).
-                    if !wrote_this_epoch && let Some(ref mut writer) = writer {
-                        writer.record(&model, &stop_evals)?;
+                    if !wrote_this_epoch && let Some(ref mut recorder) = recorder {
+                        recorder.record(&model, &stop_evals)?;
                     }
                     final_evaluations = Some(stop_evals);
                     break;
@@ -402,8 +402,8 @@ impl TrainArgs {
         save_model(path.with_file_name(&model_name), &model)?;
 
         // 🗂️ DISPLAY TRAINING HISTORY LOCATION
-        if let Some(ref writer) = writer {
-            saved_at(HISTORY_ICON, "TRAINING HISTORY", writer.dir());
+        if let Some(ref recorder) = recorder {
+            saved_at(HISTORY_ICON, "TRAINING HISTORY", recorder.dir());
         }
 
         Ok(())
