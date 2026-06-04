@@ -1,11 +1,11 @@
 use crate::actions::*;
-use crate::display::{Summary, completed, trace, warning};
+use crate::display::{HISTORY_ICON, Summary, completed, saved_at, trace, warning};
 use crate::progression::Progression;
 use clap::*;
 use console::style;
 use nrn::accuracies::{Accuracy, accuracy_for};
-use nrn::checkpoints::Checkpoints;
 use nrn::evaluation::EvaluationSet;
+use nrn::io::training_history::TrainingHistoryWriter;
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::optimizers::{Adam, Optimizer, StochasticGradientDescent};
 use nrn::schedulers;
@@ -257,23 +257,40 @@ impl TrainArgs {
             );
         }
 
-        // 👨‍🎓 TRAINING LOOP
-        let mut checkpoints: Option<Checkpoints> =
-            Checkpoints::by_interval(self.checkpoint_interval, self.epochs);
+        // Compute names up front so the writer can be created before the loop.
+        let path = Path::new(&self.dataset);
+        let dataset_name = get_file_stem(path);
+        let model_name = format!("model-{}", dataset_name);
+        let history_dir = path.with_file_name(format!("training-{}", model_name));
 
-        if let Some(ref mut checkpoints) = checkpoints {
+        // 👨‍🎓 TRAINING LOOP
+        let mut writer: Option<TrainingHistoryWriter> = if self.checkpoint_interval > 0 {
             trace(&format!(
                 "Recording a checkpoint every {} epochs",
-                style(checkpoints.interval).yellow()
+                style(self.checkpoint_interval).yellow()
             ));
-
+            let mut w = create_history_writer(&history_dir, self.checkpoint_interval)?;
             let evaluations =
                 EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
-
-            checkpoints.record(&model, &evaluations);
+            w.record(&model, &evaluations)?;
+            Some(w)
+        } else {
+            None
         };
 
         let mut early_stopping = self.early_stopping();
+        // Seed the best model with the pre-training state so that divergence at epoch 1
+        // (before any es.check() call) can still recover instead of erroring out.
+        // Only seed when a validation split exists: without one es.check() is never called,
+        // so best_model would stay at the untrained initial state and silently "recover" to it.
+        if let Some(ref mut es) = early_stopping
+            && split.validation.is_some()
+        {
+            es.seed_best_model(&model);
+        }
+        // Holds the final evaluations when early stopping fires, so the post-loop
+        // summary can reuse them instead of running a second forward pass.
+        let mut final_evaluations: Option<EvaluationSet> = None;
 
         let progression = Progression::new(self.epochs, "Training");
         for epoch in progression.iter() {
@@ -286,9 +303,43 @@ impl TrainArgs {
                 self.batch_size,
             );
 
-            if let Some(ref mut checkpoints) = checkpoints {
+            if !model.is_finite() {
+                let recovered = early_stopping.as_mut().and_then(|es| es.best_model.take());
+
+                if let Some(best) = recovered {
+                    progression.done();
+                    warning(&format!(
+                        "Model diverged at epoch {} (NaN/Inf); recovered best model from early stopping.",
+                        epoch + 1
+                    ));
+                    model = best;
+                    let evals =
+                        EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
+                    // No checkpoint was written for this epoch yet (divergence precedes the
+                    // checkpoint block), so always record the recovered model.
+                    if let Some(ref mut w) = writer {
+                        w.record(&model, &evals)?;
+                    }
+                    final_evaluations = Some(evals);
+                    break;
+                }
+
+                if let Some(ref writer) = writer {
+                    saved_at(HISTORY_ICON, "TRAINING HISTORY", writer.dir());
+                }
+                return Err(format!(
+                    "Model diverged at epoch {} (NaN/Inf in weights). \
+                     Try: --early-stopping with --restore-best-model, --scheduler cosine, \
+                     a lower --lr, or stronger gradient clipping.",
+                    epoch + 1
+                )
+                .into());
+            }
+
+            let mut wrote_this_epoch = false;
+            if let Some(ref mut writer) = writer {
                 let epoch_number = epoch + 1;
-                if epoch_number % checkpoints.interval == 0 || epoch_number == self.epochs {
+                if epoch_number % self.checkpoint_interval == 0 || epoch_number == self.epochs {
                     let train_predictions = model.predict(split.train.inputs.view());
                     let evaluations = EvaluationSet::using_model(
                         &model,
@@ -297,7 +348,8 @@ impl TrainArgs {
                         &split,
                         Some(train_predictions.view()),
                     );
-                    checkpoints.record(&model, &evaluations);
+                    writer.record(&model, &evaluations)?;
+                    wrote_this_epoch = true;
                 }
             }
 
@@ -308,7 +360,9 @@ impl TrainArgs {
                 let loss = loss_function.compute(predictions.view(), validation.targets.view());
 
                 if early_stopping.check(loss, &model) {
-                    trace(&format!(
+                    // Clear the progress bar before printing so it doesn't overwrite messages.
+                    progression.done();
+                    completed(&format!(
                         "Early stopping triggered at epoch {}",
                         style(epoch + 1).yellow()
                     ));
@@ -320,14 +374,23 @@ impl TrainArgs {
                             .clone();
                         trace("Restored the best model observed during training");
                     }
-                    progression.done();
+                    // Compute once; reused for both the snapshot and the post-loop summary.
+                    let stop_evals =
+                        EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
+                    // Write to history only when the interval block didn't already
+                    // capture this epoch (avoids a duplicate snapshot).
+                    if !wrote_this_epoch && let Some(ref mut writer) = writer {
+                        writer.record(&model, &stop_evals)?;
+                    }
+                    final_evaluations = Some(stop_evals);
                     break;
                 }
             }
         }
 
-        let evaluations =
-            EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
+        let evaluations = final_evaluations.unwrap_or_else(|| {
+            EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None)
+        });
 
         completed(&format!(
             "{} | {}",
@@ -336,17 +399,11 @@ impl TrainArgs {
         ));
 
         // 🗂️ SAVE THE TRAINED NETWORK
-        let path = Path::new(&self.dataset);
-        let dataset_name = get_file_stem(path);
-        let model_name = format!("model-{}", dataset_name);
         save_model(path.with_file_name(&model_name), &model)?;
 
-        // 🗂️ SAVE THE CHECKPOINTS
-        if let Some(ref checkpoints) = checkpoints {
-            save_checkpoints(
-                path.with_file_name(format!("training-{}", model_name)),
-                checkpoints,
-            )?;
+        // 🗂️ DISPLAY TRAINING HISTORY LOCATION
+        if let Some(ref writer) = writer {
+            saved_at(HISTORY_ICON, "TRAINING HISTORY", writer.dir());
         }
 
         Ok(())

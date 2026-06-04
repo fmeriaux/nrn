@@ -94,6 +94,11 @@ impl NeuronLayer {
         self.weights.nrows()
     }
 
+    /// Returns `true` when all weights and biases in this layer are finite (no NaN or Inf).
+    pub fn is_finite(&self) -> bool {
+        self.weights.iter().all(|v| v.is_finite()) && self.biases.iter().all(|v| v.is_finite())
+    }
+
     /// Returns the number of inputs to this layer.
     /// For example, this is the number of neurons in the previous layer,
     /// or the input size for the first layer.
@@ -174,6 +179,11 @@ impl NeuralNetwork {
                 acc.push(layer.forward(acc.last().unwrap()));
                 acc
             })
+    }
+
+    /// Returns `true` when all layers are finite (no NaN or Inf in any weight or bias).
+    pub fn is_finite(&self) -> bool {
+        self.layers.iter().all(|layer| layer.is_finite())
     }
 
     /// Predicts the output of the network given the inputs, returning the final activations.
@@ -437,11 +447,30 @@ mod tests {
     #[test]
     #[should_panic(expected = "non-finite predictions")]
     fn predict_panics_when_model_has_diverged() {
-        // Simulates a model whose weights diverged to NaN during training
         let mut model = make_network(Array2::zeros((1, 2)), Array1::zeros(1), SIGMOID.clone());
         model.layers[0].weights = array![[f32::NAN, 0.0]];
         let inputs = array![[1.0], [1.0]];
         model.predict(inputs.view());
+    }
+
+    #[test]
+    fn is_finite_returns_true_for_valid_weights() {
+        let model = make_network(Array2::zeros((1, 2)), Array1::zeros(1), SIGMOID.clone());
+        assert!(model.is_finite());
+    }
+
+    #[test]
+    fn is_finite_detects_nan_in_weights() {
+        let mut model = make_network(Array2::zeros((1, 2)), Array1::zeros(1), SIGMOID.clone());
+        model.layers[0].weights[[0, 0]] = f32::NAN;
+        assert!(!model.is_finite());
+    }
+
+    #[test]
+    fn is_finite_detects_inf_in_biases() {
+        let mut model = make_network(Array2::zeros((1, 2)), Array1::zeros(1), SIGMOID.clone());
+        model.layers[0].biases[0] = f32::INFINITY;
+        assert!(!model.is_finite());
     }
 
     #[test]

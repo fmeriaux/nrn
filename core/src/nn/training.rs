@@ -250,6 +250,14 @@ impl EarlyStopping {
         }
     }
 
+    /// Seeds `best_model` with the given model so divergence at epoch 1 (before any
+    /// `check` call) can still recover. No-op when `restore_best_model` is false.
+    pub fn seed_best_model(&mut self, model: &NeuralNetwork) {
+        if self.restore_best_model {
+            self.best_model = Some(model.clone());
+        }
+    }
+
     /// Checks if training should be stopped based on the current loss.
     pub fn check(&mut self, current_loss: f32, model: &NeuralNetwork) -> bool {
         if current_loss < self.best_loss {

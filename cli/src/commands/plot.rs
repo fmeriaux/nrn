@@ -1,4 +1,4 @@
-use crate::actions::{load_checkpoints, load_dataset};
+use crate::actions::{load_dataset, load_history};
 use crate::display::warning;
 use crate::display::{ANIMATION_ICON, HISTORY_ICON, saved_at};
 use crate::progression::Progression;
@@ -10,7 +10,7 @@ use std::error::Error;
 
 #[derive(Args, Debug)]
 pub struct PlotArgs {
-    /// Name of the checkpoints file (Training history)
+    /// Path to the training history directory
     checkpoints: String,
 
     /// Name of the dataset used for training for decision boundary visualization (only for 2D datasets)
@@ -36,7 +36,7 @@ pub struct PlotArgs {
 
 impl PlotArgs {
     pub fn run(self) -> Result<(), Box<dyn Error>> {
-        let checkpoints = load_checkpoints(&self.checkpoints)?;
+        let checkpoints = load_history(&self.checkpoints)?;
         let render_cfg = RenderConfig::new(self.width as u32, self.height as u32);
 
         let (width, height) = (self.width as u32, self.height as u32);
@@ -59,24 +59,20 @@ impl PlotArgs {
                 return Ok(());
             }
 
-            let interval = checkpoints.len() / checkpoints.len().min(self.frames.into());
+            let n = checkpoints.len();
+            let interval = n / n.min(self.frames.into());
 
-            let progression =
-                Progression::new(checkpoints.len(), "Generating decision boundary animation");
+            let progression = Progression::new(n, "Generating decision boundary animation");
 
             let mut decision_frames = Vec::new();
 
             for step in progression.iter() {
                 let step_number = step + 1;
 
-                if step_number == 1
-                    || step_number % interval == 0
-                    || step_number == checkpoints.snapshots.len()
-                {
-                    let model = &checkpoints.snapshots[step];
-
+                if step_number == 1 || step_number % interval == 0 || step_number == n {
+                    // Load one model at a time — no full snapshot array in memory.
+                    let model = checkpoints.model_at(step)?;
                     let rgb_frame = model.draw_decision_boundary(&dataset, &render_cfg)?;
-
                     decision_frames.push(rgb_frame);
                 }
             }
