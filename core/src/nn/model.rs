@@ -94,6 +94,11 @@ impl NeuronLayer {
         self.weights.nrows()
     }
 
+    /// Returns `true` when all weights and biases in this layer are finite (no NaN or Inf).
+    pub fn is_finite(&self) -> bool {
+        self.weights.iter().all(|v| v.is_finite()) && self.biases.iter().all(|v| v.is_finite())
+    }
+
     /// Returns the number of inputs to this layer.
     /// For example, this is the number of neurons in the previous layer,
     /// or the input size for the first layer.
@@ -176,12 +181,9 @@ impl NeuralNetwork {
             })
     }
 
-    /// Returns `true` when all weights and biases in every layer are finite (no NaN or Inf).
+    /// Returns `true` when all layers are finite (no NaN or Inf in any weight or bias).
     pub fn is_finite(&self) -> bool {
-        self.layers.iter().all(|layer| {
-            layer.weights.iter().all(|v| v.is_finite())
-                && layer.biases.iter().all(|v| v.is_finite())
-        })
+        self.layers.iter().all(|layer| layer.is_finite())
     }
 
     /// Predicts the output of the network given the inputs, returning the final activations.

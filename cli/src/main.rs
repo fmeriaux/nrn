@@ -9,8 +9,8 @@ pub mod display;
 mod progression;
 
 fn main() {
-    if let Err(e) = CliArgs::parse().command.run() {
+    CliArgs::parse().command.run().unwrap_or_else(|e| {
         error(&e.to_string());
         std::process::exit(1);
-    }
+    });
 }
