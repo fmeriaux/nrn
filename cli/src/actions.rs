@@ -163,9 +163,12 @@ pub(crate) fn load_snapshot<P: AsRef<Path>>(
 pub(crate) fn create_snapshot_recorder<P: AsRef<Path>>(
     path: P,
     interval: usize,
+    dataset: &str,
     overwrite: bool,
 ) -> Result<SnapshotRecorder, Box<dyn Error>> {
-    Ok(SnapshotRecorder::create(path, interval, overwrite)?)
+    Ok(SnapshotRecorder::create(
+        path, interval, dataset, overwrite,
+    )?)
 }
 
 pub(crate) fn resume_snapshot_recorder<P: AsRef<Path>>(

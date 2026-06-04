@@ -58,6 +58,7 @@ fn train_creates_history_dir_and_plot_generates_png_and_gif() {
         dir,
         &[
             "train",
+            "start",
             ds_name,
             "--epochs",
             "20",
@@ -122,6 +123,7 @@ fn load_history_rejects_too_few_snapshots() {
         dir,
         &[
             "train",
+            "start",
             ds_name,
             "--epochs",
             "2",
@@ -170,6 +172,7 @@ fn early_stopping_writes_final_snapshot() {
         .current_dir(dir)
         .args([
             "train",
+            "start",
             ds_name,
             "--epochs",
             "30",
@@ -231,6 +234,7 @@ fn no_duplicate_snapshot_when_early_stop_fires_on_interval_boundary() {
         .current_dir(dir)
         .args([
             "train",
+            "start",
             ds_name,
             "--epochs",
             "20",
@@ -303,6 +307,7 @@ fn divergence_with_early_stopping_recovers_best_model() {
         .current_dir(dir)
         .args([
             "train",
+            "start",
             ds_name,
             "--epochs",
             "50",

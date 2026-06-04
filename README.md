@@ -184,7 +184,7 @@ nrn scale uniform-c2-f2-n500-seed1024 z-score --plot
 #### 3. Train a Single-Layer Perceptron (SLP)
 
 ```sh
-nrn train scaled-uniform-c2-f2-n500-seed1024 --epochs 1000
+nrn train start scaled-uniform-c2-f2-n500-seed1024 --epochs 1000
 ```
 **Output files:**
 - `model-scaled-uniform-c2-f2-n500-seed1024.safetensors`: trained model (architecture and weights; required for prediction).
@@ -284,7 +284,7 @@ nrn scale ring-c2-f2-n500-seed1024 z-score --plot
 #### 3. Train a Multi-Layer Perceptron (MLP)
 
 ```sh
-nrn train scaled-ring-c2-f2-n500-seed1024 --layers 16,8 --epochs 30000
+nrn train start scaled-ring-c2-f2-n500-seed1024 --layers 16,8 --epochs 30000
 ```
 **Output files:**
 - `model-scaled-ring-c2-f2-n500-seed1024.safetensors`: trained MLP model (required for prediction).
@@ -350,7 +350,7 @@ nrn scale ring-c3-f2-n600-seed1024 z-score --plot
 #### 3. Train a Multi-Layer Perceptron (MLP)
 
 ```sh
-nrn train scaled-ring-c3-f2-n600-seed1024 --layers 16,8 --epochs 70000
+nrn train start scaled-ring-c3-f2-n600-seed1024 --layers 16,8 --epochs 70000
 ```
 **Output files:**
 - `model-scaled-ring-c3-f2-n600-seed1024.safetensors`: trained MLP model (required for prediction).
@@ -463,18 +463,24 @@ For MNIST, a typical architecture is:
 Train the model with:
 
 ```sh
-nrn train scaled-digits --layers 128,128 --epochs 1000
+nrn train start scaled-digits --layers 128,128 --epochs 1000
 ```
 - Training on the full MNIST dataset requires significant RAM and CPU/GPU resources.
 - For quick tests, use a subset of the data.
 
-You can re-train a previous model by providing the model file, in this case skip the `--layers` option:
+To resume from a training checkpoint (continues history, restores the exact epoch count):
 
 ```sh
-nrn train scaled-digits --model model-scaled-digits --epochs 1000
+nrn train resume training-model-scaled-digits --epochs 1000
+# Resume from a specific snapshot instead of the last one:
+nrn train resume training-model-scaled-digits --from 50 --epochs 1000
 ```
 
-The model file will be updated with the new weights after training.
+To load an external model file and start fresh (snapshot count resets to 0):
+
+```sh
+nrn train start scaled-digits --model model-scaled-digits --epochs 1000
+```
 
 ### Visualizing Training
 After training, visualize the training history:

@@ -10,4 +10,4 @@ pub use plot::PlotArgs;
 pub use predict::PredictArgs;
 pub use scale::ScaleArgs;
 pub use synth::SynthArgs;
-pub use train::TrainArgs;
+pub use train::TrainCommand;

@@ -14,9 +14,24 @@ use std::io::ErrorKind::InvalidData;
 use std::io::{Error, Result};
 use std::path::{Path, PathBuf};
 
+/// Top-level metadata for a training history directory.
+/// Written once by [`SnapshotRecorder::create`] into `meta.json`.
+#[derive(Serialize, Deserialize)]
+pub struct SnapshotMeta {
+    pub dataset: String,
+    pub interval: usize,
+}
+
+impl SnapshotMeta {
+    /// Loads the metadata from `meta.json` inside `dir`.
+    pub fn load<P: AsRef<Path>>(dir: P) -> Result<Self> {
+        let dir = Path::combine_safe_with_cwd(dir)?;
+        json::load(dir.join("meta"))
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct SnapshotEvals {
-    interval: usize,
     epoch: usize,
     train: MetricPair,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -48,7 +63,12 @@ impl SnapshotRecorder {
     /// Returns an error if `snapshot-*` subdirectories already exist and
     /// `overwrite` is `false`. When `overwrite` is `true`, all existing
     /// `snapshot-*` subdirectories are removed before starting.
-    pub fn create<P: AsRef<Path>>(path: P, interval: usize, overwrite: bool) -> Result<Self> {
+    pub fn create<P: AsRef<Path>>(
+        path: P,
+        interval: usize,
+        dataset: &str,
+        overwrite: bool,
+    ) -> Result<Self> {
         let dir = Path::combine_safe_with_cwd(path)?;
         fs::create_dir_all(&dir)?;
 
@@ -79,6 +99,14 @@ impl SnapshotRecorder {
                 fs::remove_dir_all(&p)?;
             }
         }
+
+        json::save(
+            &SnapshotMeta {
+                dataset: dataset.to_string(),
+                interval,
+            },
+            dir.join("meta"),
+        )?;
 
         Ok(SnapshotRecorder {
             dir,
@@ -133,7 +161,6 @@ impl Recorder for SnapshotRecorder {
         tensors::save(snapshot_dir.join("model"), entries, metadata)?;
 
         let evals = SnapshotEvals {
-            interval: self.interval,
             epoch: self.count * self.interval,
             train: MetricPair {
                 loss: evaluation.train.loss,
@@ -186,9 +213,11 @@ impl TrainingHistory {
 
         indexed.sort_by_key(|(idx, _)| *idx);
 
+        let interval = SnapshotMeta::load(&dir).map(|m| m.interval).unwrap_or(0);
+
         if indexed.is_empty() {
             return Ok(TrainingHistory {
-                interval: 0,
+                interval,
                 evaluations: Vec::new(),
                 snapshot_paths: Vec::new(),
             });
@@ -197,14 +226,9 @@ impl TrainingHistory {
         let n = indexed.len();
         let mut evaluations = Vec::with_capacity(n);
         let mut snapshot_paths = Vec::with_capacity(n);
-        let mut interval = 0usize;
 
-        for (i, (_, path)) in indexed.into_iter().enumerate() {
+        for (_, path) in indexed {
             let evals: SnapshotEvals = json::load(path.join("evaluations"))?;
-
-            if i == 0 {
-                interval = evals.interval;
-            }
 
             evaluations.push(EvaluationSet {
                 train: Evaluation {
@@ -301,7 +325,7 @@ mod tests {
     }
 
     fn write_n(dir: &Path, n: usize, with_validation: bool) {
-        let mut recorder = SnapshotRecorder::create(dir, 10, false).unwrap();
+        let mut recorder = SnapshotRecorder::create(dir, 10, "test_dataset", false).unwrap();
         for i in 0..n {
             recorder
                 .record(&sample_model(), &make_evaluation(i, with_validation))
@@ -347,7 +371,7 @@ mod tests {
         let model = sample_model();
         let inputs = Array2::from_shape_fn((2, 4), |(i, j)| (i + j) as f32 * 0.3);
 
-        let mut recorder = SnapshotRecorder::create(&dir, 5, false).unwrap();
+        let mut recorder = SnapshotRecorder::create(&dir, 5, "test_dataset", false).unwrap();
         recorder.record(&model, &make_evaluation(0, false)).unwrap();
 
         let history = TrainingHistory::load(&dir).unwrap();
@@ -364,7 +388,7 @@ mod tests {
     fn numeric_sort_beats_lexical() {
         let dir = temp_dir("sort");
         let model = sample_model();
-        let mut recorder = SnapshotRecorder::create(&dir, 1, false).unwrap();
+        let mut recorder = SnapshotRecorder::create(&dir, 1, "test_dataset", false).unwrap();
         for i in 0..12 {
             recorder.record(&model, &make_evaluation(i, false)).unwrap();
         }
@@ -387,7 +411,7 @@ mod tests {
         let dir = temp_dir("no_overwrite");
         write_n(&dir, 2, false);
 
-        let result = SnapshotRecorder::create(&dir, 10, false);
+        let result = SnapshotRecorder::create(&dir, 10, "test_dataset", false);
         cleanup(&dir);
         assert!(
             result.is_err(),
@@ -408,7 +432,7 @@ mod tests {
         assert_eq!(TrainingHistory::load(&dir).unwrap().len(), 3);
 
         // Second run with overwrite=true: only 2 new snapshots should survive.
-        let mut recorder = SnapshotRecorder::create(&dir, 10, true).unwrap();
+        let mut recorder = SnapshotRecorder::create(&dir, 10, "test_dataset", true).unwrap();
         for i in 0..2 {
             recorder
                 .record(&sample_model(), &make_evaluation(i, false))
@@ -478,11 +502,34 @@ mod tests {
     }
 
     #[test]
-    fn corrupted_snapshot_fails() {
-        let dir = temp_dir("corrupt");
+    fn meta_json_written_by_create() {
+        let dir = temp_dir("meta_written");
+        SnapshotRecorder::create(&dir, 10, "my_dataset", false).unwrap();
+
+        let meta = SnapshotMeta::load(&dir).unwrap();
+        cleanup(&dir);
+
+        assert_eq!(meta.dataset, "my_dataset");
+        assert_eq!(meta.interval, 10);
+    }
+
+    #[test]
+    fn load_reads_interval_from_meta() {
+        let dir = temp_dir("meta_interval");
+        write_n(&dir, 2, false); // interval = 10
+
+        let history = TrainingHistory::load(&dir).unwrap();
+        cleanup(&dir);
+
+        assert_eq!(history.interval, 10);
+    }
+
+    #[test]
+    fn corrupted_evaluations_json_fails() {
+        let dir = temp_dir("corrupt_evals");
 
         write_n(&dir, 1, false);
-        // Add a second snapshot dir with a corrupt evaluations.json.
+        // Second snapshot dir with corrupt evaluations.json.
         let bad_dir = dir.join("snapshot-000001");
         fs::create_dir_all(&bad_dir).unwrap();
         fs::write(bad_dir.join("evaluations.json"), b"not valid json").unwrap();
@@ -493,45 +540,29 @@ mod tests {
     }
 
     #[test]
-    fn missing_interval_metadata_fails() {
-        let dir = temp_dir("no_interval");
-
-        let bad_dir = dir.join("snapshot-000000");
-        fs::create_dir_all(&bad_dir).unwrap();
-        // evaluations.json without required 'interval' field.
+    fn missing_meta_json_returns_interval_zero() {
+        let dir = temp_dir("no_meta");
+        // Create a snapshot manually without writing meta.json.
+        let snap_dir = dir.join("snapshot-000000");
+        fs::create_dir_all(&snap_dir).unwrap();
         fs::write(
-            bad_dir.join("evaluations.json"),
+            snap_dir.join("evaluations.json"),
             br#"{"epoch":0,"train":{"loss":0.0,"accuracy":0.0},"test":{"loss":0.0,"accuracy":0.0}}"#,
         )
         .unwrap();
+        // model.safetensors not needed for load() — only evaluations are read.
+        // We just need the directory to exist as a valid snapshot.
 
-        let result = TrainingHistory::load(&dir);
+        // load() gracefully falls back to interval=0 when meta.json is absent.
+        let history = TrainingHistory::load(&dir).unwrap();
         cleanup(&dir);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn non_numeric_interval_fails() {
-        let dir = temp_dir("bad_interval");
-
-        let bad_dir = dir.join("snapshot-000000");
-        fs::create_dir_all(&bad_dir).unwrap();
-        // 'interval' is a string instead of a usize.
-        fs::write(
-            bad_dir.join("evaluations.json"),
-            br#"{"interval":"not_a_number","epoch":0,"train":{"loss":0.0,"accuracy":0.0},"test":{"loss":0.0,"accuracy":0.0}}"#,
-        )
-        .unwrap();
-
-        let result = TrainingHistory::load(&dir);
-        cleanup(&dir);
-        assert!(result.is_err());
+        assert_eq!(history.interval, 0);
     }
 
     #[test]
     fn record_creates_snapshot_directory() {
         let dir = temp_dir("record_dir");
-        let mut recorder = SnapshotRecorder::create(&dir, 5, false).unwrap();
+        let mut recorder = SnapshotRecorder::create(&dir, 5, "test_dataset", false).unwrap();
         recorder
             .record(&sample_model(), &make_evaluation(0, false))
             .unwrap();
@@ -551,7 +582,7 @@ mod tests {
         let dir = temp_dir("val_tensor");
         let model = sample_model();
 
-        let mut recorder = SnapshotRecorder::create(&dir, 1, false).unwrap();
+        let mut recorder = SnapshotRecorder::create(&dir, 1, "test_dataset", false).unwrap();
         recorder.record(&model, &make_evaluation(0, false)).unwrap();
         recorder.record(&model, &make_evaluation(1, true)).unwrap();
 
@@ -647,7 +678,7 @@ mod tests {
 
     #[test]
     fn create_rejects_path_traversal() {
-        let result = SnapshotRecorder::create("../../nrn_traversal_test", 1, false);
+        let result = SnapshotRecorder::create("../../nrn_traversal_test", 1, "x", false);
         assert!(
             result.is_err(),
             "path traversal should be rejected by create"
