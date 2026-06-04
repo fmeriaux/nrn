@@ -9,11 +9,11 @@ use nrn::data::scalers::{MinMaxScaler, Scaler, ScalerMethod};
 use nrn::evaluation::{Evaluation, EvaluationSet};
 use nrn::io::data::{load_inputs, save_inputs};
 use nrn::io::scalers::ScalerRecord;
-use nrn::io::training_history::SnapshotRecorder;
+use nrn::io::training_history::FileSnapshotRecorder;
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::Adam;
-use nrn::recorders::Recorder;
+use nrn::recorders::SnapshotRecorder;
 use nrn::schedulers::ConstantScheduler;
 use nrn::training::{GradientClipping, LearningRate};
 use nrn::training_history::TrainingHistory;
@@ -67,7 +67,8 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let clipping = GradientClipping::None;
 
     let history_dir = dir.join("training");
-    let mut recorder = SnapshotRecorder::create(&history_dir, 5, "test_dataset", false).unwrap();
+    let mut recorder =
+        FileSnapshotRecorder::create(&history_dir, 5, "test_dataset", false).unwrap();
     let mut last_recorded_predictions = None;
 
     for epoch in 0..10 {

@@ -6,14 +6,14 @@ use std::io::Result;
 ///
 /// The training loop calls [`record`] at each checkpoint interval without
 /// knowing whether snapshots are written to disk or discarded.
-pub trait Recorder {
+pub trait SnapshotRecorder {
     fn record(&mut self, model: &NeuralNetwork, evaluation: &EvaluationSet) -> Result<()>;
 }
 
 /// A recorder that discards all snapshots (used when checkpointing is disabled).
-pub struct NoOpRecorder;
+pub struct NoOpSnapshotRecorder;
 
-impl Recorder for NoOpRecorder {
+impl SnapshotRecorder for NoOpSnapshotRecorder {
     fn record(&mut self, _model: &NeuralNetwork, _evaluation: &EvaluationSet) -> Result<()> {
         Ok(())
     }
@@ -25,14 +25,14 @@ impl Recorder for NoOpRecorder {
 /// loop stays free of checkpoint-timing decisions. The concrete recorder
 /// (file-backed or no-op) is supplied by the caller.
 pub struct Checkpoints {
-    recorder: Box<dyn Recorder>,
+    recorder: Box<dyn SnapshotRecorder>,
     interval: usize,
     total_epochs: usize,
 }
 
 impl Checkpoints {
     /// Creates a `Checkpoints` backed by the given recorder.
-    pub fn new(recorder: Box<dyn Recorder>, interval: usize, total_epochs: usize) -> Self {
+    pub fn new(recorder: Box<dyn SnapshotRecorder>, interval: usize, total_epochs: usize) -> Self {
         Checkpoints {
             recorder,
             interval,
@@ -83,13 +83,13 @@ mod tests {
 
     #[test]
     fn noop_recorder_record_always_succeeds() {
-        let mut r = NoOpRecorder;
+        let mut r = NoOpSnapshotRecorder;
         assert!(r.record(&sample_model(), &sample_eval()).is_ok());
     }
 
     #[test]
     fn checkpoints_is_due_respects_interval() {
-        let c = Checkpoints::new(Box::new(NoOpRecorder), 5, 20);
+        let c = Checkpoints::new(Box::new(NoOpSnapshotRecorder), 5, 20);
         assert!(!c.is_due(0)); // epoch 1
         assert!(!c.is_due(3)); // epoch 4
         assert!(c.is_due(4)); // epoch 5 — boundary
@@ -100,7 +100,7 @@ mod tests {
 
     #[test]
     fn checkpoints_is_due_false_when_interval_zero() {
-        let c = Checkpoints::new(Box::new(NoOpRecorder), 0, 10);
+        let c = Checkpoints::new(Box::new(NoOpSnapshotRecorder), 0, 10);
         for epoch in 0..10 {
             assert!(!c.is_due(epoch));
         }
@@ -108,7 +108,7 @@ mod tests {
 
     #[test]
     fn checkpoints_record_delegates_to_recorder() {
-        let mut c = Checkpoints::new(Box::new(NoOpRecorder), 5, 10);
+        let mut c = Checkpoints::new(Box::new(NoOpSnapshotRecorder), 5, 10);
         assert!(c.record(&sample_model(), &sample_eval()).is_ok());
     }
 }

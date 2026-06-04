@@ -4,7 +4,7 @@ use crate::io::json;
 use crate::io::path::PathExt;
 use crate::io::tensors;
 use crate::model::NeuralNetwork;
-use crate::recorders::Recorder;
+use crate::recorders::SnapshotRecorder;
 use crate::training_history::TrainingHistory;
 use safetensors::SafeTensors;
 use serde::{Deserialize, Serialize};
@@ -15,7 +15,7 @@ use std::io::{Error, Result};
 use std::path::{Path, PathBuf};
 
 /// Top-level metadata for a training history directory.
-/// Written once by [`SnapshotRecorder::create`] into `meta.json`.
+/// Written once by [`FileSnapshotRecorder::create`] into `meta.json`.
 #[derive(Serialize, Deserialize)]
 pub struct SnapshotMeta {
     pub dataset: String,
@@ -51,13 +51,13 @@ struct MetricPair {
 /// `model.safetensors` and `evaluations.json`. A reader can observe new directories
 /// appearing while training is still running.
 #[derive(Debug)]
-pub struct SnapshotRecorder {
+pub struct FileSnapshotRecorder {
     dir: PathBuf,
     interval: usize,
     count: usize,
 }
 
-impl SnapshotRecorder {
+impl FileSnapshotRecorder {
     /// Creates a fresh recorder at `path`, starting count at 0.
     ///
     /// Returns an error if `snapshot-*` subdirectories already exist and
@@ -108,7 +108,7 @@ impl SnapshotRecorder {
             dir.join("meta"),
         )?;
 
-        Ok(SnapshotRecorder {
+        Ok(FileSnapshotRecorder {
             dir,
             interval,
             count: 0,
@@ -137,7 +137,7 @@ impl SnapshotRecorder {
             }
         }
 
-        Ok(SnapshotRecorder {
+        Ok(FileSnapshotRecorder {
             dir,
             interval,
             count: from_count + 1,
@@ -150,7 +150,7 @@ impl SnapshotRecorder {
     }
 }
 
-impl Recorder for SnapshotRecorder {
+impl SnapshotRecorder for FileSnapshotRecorder {
     fn record(&mut self, model: &NeuralNetwork, evaluation: &EvaluationSet) -> Result<()> {
         let snapshot_dir = self.dir.join(format!("snapshot-{:06}", self.count));
         fs::create_dir_all(&snapshot_dir)?;
@@ -321,7 +321,7 @@ mod tests {
     }
 
     fn write_n(dir: &Path, n: usize, with_validation: bool) {
-        let mut recorder = SnapshotRecorder::create(dir, 10, "test_dataset", false).unwrap();
+        let mut recorder = FileSnapshotRecorder::create(dir, 10, "test_dataset", false).unwrap();
         for i in 0..n {
             recorder
                 .record(&sample_model(), &make_evaluation(i, with_validation))
@@ -367,7 +367,7 @@ mod tests {
         let model = sample_model();
         let inputs = Array2::from_shape_fn((2, 4), |(i, j)| (i + j) as f32 * 0.3);
 
-        let mut recorder = SnapshotRecorder::create(&dir, 5, "test_dataset", false).unwrap();
+        let mut recorder = FileSnapshotRecorder::create(&dir, 5, "test_dataset", false).unwrap();
         recorder.record(&model, &make_evaluation(0, false)).unwrap();
 
         let history = TrainingHistory::load(&dir).unwrap();
@@ -384,7 +384,7 @@ mod tests {
     fn numeric_sort_beats_lexical() {
         let dir = temp_dir("sort");
         let model = sample_model();
-        let mut recorder = SnapshotRecorder::create(&dir, 1, "test_dataset", false).unwrap();
+        let mut recorder = FileSnapshotRecorder::create(&dir, 1, "test_dataset", false).unwrap();
         for i in 0..12 {
             recorder.record(&model, &make_evaluation(i, false)).unwrap();
         }
@@ -407,7 +407,7 @@ mod tests {
         let dir = temp_dir("no_overwrite");
         write_n(&dir, 2, false);
 
-        let result = SnapshotRecorder::create(&dir, 10, "test_dataset", false);
+        let result = FileSnapshotRecorder::create(&dir, 10, "test_dataset", false);
         cleanup(&dir);
         assert!(
             result.is_err(),
@@ -428,7 +428,7 @@ mod tests {
         assert_eq!(TrainingHistory::load(&dir).unwrap().len(), 3);
 
         // Second run with overwrite=true: only 2 new snapshots should survive.
-        let mut recorder = SnapshotRecorder::create(&dir, 10, "test_dataset", true).unwrap();
+        let mut recorder = FileSnapshotRecorder::create(&dir, 10, "test_dataset", true).unwrap();
         for i in 0..2 {
             recorder
                 .record(&sample_model(), &make_evaluation(i, false))
@@ -449,7 +449,7 @@ mod tests {
         let dir = temp_dir("resume_count");
         write_n(&dir, 3, false); // snapshots 0, 1, 2
 
-        let mut recorder = SnapshotRecorder::resume(&dir, 10, 2).unwrap();
+        let mut recorder = FileSnapshotRecorder::resume(&dir, 10, 2).unwrap();
         recorder
             .record(&sample_model(), &make_evaluation(99, false))
             .unwrap();
@@ -469,7 +469,7 @@ mod tests {
         write_n(&dir, 5, false); // snapshots 0..4
 
         // Resume from snapshot 2 — snapshots 3 and 4 must be removed.
-        SnapshotRecorder::resume(&dir, 10, 2).unwrap();
+        FileSnapshotRecorder::resume(&dir, 10, 2).unwrap();
 
         let history = TrainingHistory::load(&dir).unwrap();
         cleanup(&dir);
@@ -500,7 +500,7 @@ mod tests {
     #[test]
     fn meta_json_written_by_create() {
         let dir = temp_dir("meta_written");
-        SnapshotRecorder::create(&dir, 10, "my_dataset", false).unwrap();
+        FileSnapshotRecorder::create(&dir, 10, "my_dataset", false).unwrap();
 
         let meta = SnapshotMeta::load(&dir).unwrap();
         cleanup(&dir);
@@ -558,7 +558,7 @@ mod tests {
     #[test]
     fn record_creates_snapshot_directory() {
         let dir = temp_dir("record_dir");
-        let mut recorder = SnapshotRecorder::create(&dir, 5, "test_dataset", false).unwrap();
+        let mut recorder = FileSnapshotRecorder::create(&dir, 5, "test_dataset", false).unwrap();
         recorder
             .record(&sample_model(), &make_evaluation(0, false))
             .unwrap();
@@ -578,7 +578,7 @@ mod tests {
         let dir = temp_dir("val_tensor");
         let model = sample_model();
 
-        let mut recorder = SnapshotRecorder::create(&dir, 1, "test_dataset", false).unwrap();
+        let mut recorder = FileSnapshotRecorder::create(&dir, 1, "test_dataset", false).unwrap();
         recorder.record(&model, &make_evaluation(0, false)).unwrap();
         recorder.record(&model, &make_evaluation(1, true)).unwrap();
 
@@ -674,7 +674,7 @@ mod tests {
 
     #[test]
     fn create_rejects_path_traversal() {
-        let result = SnapshotRecorder::create("../../nrn_traversal_test", 1, "x", false);
+        let result = FileSnapshotRecorder::create("../../nrn_traversal_test", 1, "x", false);
         assert!(
             result.is_err(),
             "path traversal should be rejected by create"
@@ -683,7 +683,7 @@ mod tests {
 
     #[test]
     fn resume_rejects_path_traversal() {
-        let result = SnapshotRecorder::resume("../../nrn_traversal_test", 1, 0);
+        let result = FileSnapshotRecorder::resume("../../nrn_traversal_test", 1, 0);
         assert!(
             result.is_err(),
             "path traversal should be rejected by resume"

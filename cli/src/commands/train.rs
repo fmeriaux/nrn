@@ -6,11 +6,11 @@ use console::style;
 use nrn::accuracies::{Accuracy, accuracy_for};
 use nrn::data::ModelSplit;
 use nrn::evaluation::EvaluationSet;
-use nrn::io::training_history::{SnapshotMeta, SnapshotRecorder};
+use nrn::io::training_history::{FileSnapshotRecorder, SnapshotMeta};
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::NeuralNetwork;
 use nrn::optimizers::{Adam, Optimizer, StochasticGradientDescent};
-use nrn::recorders::{Checkpoints, NoOpRecorder, Recorder};
+use nrn::recorders::{Checkpoints, NoOpSnapshotRecorder, SnapshotRecorder};
 use nrn::schedulers;
 use nrn::schedulers::{ConstantScheduler, Scheduler, StepDecay};
 use nrn::training::{EarlyStopping, GradientClipping, LearningRate};
@@ -335,8 +335,12 @@ impl StartArgs {
                 "Recording a checkpoint every {} epochs",
                 style(interval).yellow()
             ));
-            let mut recorder =
-                SnapshotRecorder::create(&history_dir, interval, &dataset_name, self.overwrite)?;
+            let mut recorder = FileSnapshotRecorder::create(
+                &history_dir,
+                interval,
+                &dataset_name,
+                self.overwrite,
+            )?;
             let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
             let evals = EvaluationSet::using_model(
                 &model,
@@ -348,7 +352,7 @@ impl StartArgs {
             recorder.record(&model, &evals)?;
             Checkpoints::new(Box::new(recorder), interval, self.hp.epochs)
         } else {
-            Checkpoints::new(Box::new(NoOpRecorder), 0, self.hp.epochs)
+            Checkpoints::new(Box::new(NoOpSnapshotRecorder), 0, self.hp.epochs)
         };
 
         TrainingLoop {
@@ -445,7 +449,7 @@ impl ResumeArgs {
                 style(interval).yellow()
             ));
             Checkpoints::new(
-                Box::new(SnapshotRecorder::resume(
+                Box::new(FileSnapshotRecorder::resume(
                     history_dir,
                     interval,
                     snapshot_idx,
@@ -454,7 +458,7 @@ impl ResumeArgs {
                 self.hp.epochs,
             )
         } else {
-            Checkpoints::new(Box::new(NoOpRecorder), 0, self.hp.epochs)
+            Checkpoints::new(Box::new(NoOpSnapshotRecorder), 0, self.hp.epochs)
         };
 
         TrainingLoop {
