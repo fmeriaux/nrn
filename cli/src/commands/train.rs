@@ -281,7 +281,11 @@ impl TrainArgs {
         let mut early_stopping = self.early_stopping();
         // Seed the best model with the pre-training state so that divergence at epoch 1
         // (before any es.check() call) can still recover instead of erroring out.
-        if let Some(ref mut es) = early_stopping {
+        // Only seed when a validation split exists: without one es.check() is never called,
+        // so best_model would stay at the untrained initial state and silently "recover" to it.
+        if let Some(ref mut es) = early_stopping
+            && split.validation.is_some()
+        {
             es.seed_best_model(&model);
         }
         // Holds the final evaluations when early stopping fires, so the post-loop
