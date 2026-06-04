@@ -48,14 +48,14 @@ tasks:
       - cargo audit
 
   coverage:
-    desc: Measure test coverage of the core crate (requires cargo-llvm-cov)
+    desc: Measure test coverage across the workspace (requires cargo-llvm-cov)
     cmds:
-      - cargo llvm-cov -p nrn --all-features --summary-only
+      - cargo llvm-cov --workspace --all-features --summary-only
 
   coverage-html:
-    desc: Generate an HTML coverage report for core and open it
+    desc: Generate an HTML coverage report for the workspace and open it
     cmds:
-      - cargo llvm-cov -p nrn --all-features --html --open
+      - cargo llvm-cov --workspace --all-features --html --open
 
   install:
     desc: Install the nrn binary to ~/.cargo/bin (uses locked deps)

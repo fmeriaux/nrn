@@ -8,43 +8,30 @@ use std::io::{Error, Result};
 use std::path::{Path, PathBuf};
 
 impl NeuralNetwork {
-    /// Appends this network's tensors and metadata under `prefix`.
-    ///
-    /// `prefix` lets several networks share one safetensors file (e.g.
-    /// checkpoints store each snapshot under `snapshot{i}.`). A standalone
-    /// model uses an empty prefix.
+    /// Appends this network's tensors and metadata to the provided collections.
     pub(crate) fn collect_tensors(
         &self,
-        prefix: &str,
         entries: &mut Vec<(String, F32Tensor)>,
         metadata: &mut HashMap<String, String>,
     ) {
-        metadata.insert(format!("{prefix}n_layers"), self.layers.len().to_string());
+        metadata.insert("n_layers".to_string(), self.layers.len().to_string());
 
         for (i, layer) in self.layers.iter().enumerate() {
             metadata.insert(
-                format!("{prefix}layer{i}.activation"),
+                format!("layer{i}.activation"),
                 layer.activation.name().to_string(),
             );
-            entries.push((
-                format!("{prefix}layer{i}.weights"),
-                tensors::tensor(&layer.weights),
-            ));
-            entries.push((
-                format!("{prefix}layer{i}.biases"),
-                tensors::tensor(&layer.biases),
-            ));
+            entries.push((format!("layer{i}.weights"), tensors::tensor(&layer.weights)));
+            entries.push((format!("layer{i}.biases"), tensors::tensor(&layer.biases)));
         }
     }
 
-    /// Rebuilds a network stored under `prefix` from a deserialized buffer and
-    /// its metadata map.
+    /// Rebuilds a network from a deserialized safetensors buffer and its metadata map.
     pub(crate) fn from_tensors(
-        prefix: &str,
         st: &SafeTensors,
         metadata: &HashMap<String, String>,
     ) -> Result<Self> {
-        let n_layers: usize = tensors::meta(metadata, &format!("{prefix}n_layers"))?
+        let n_layers: usize = tensors::meta(metadata, "n_layers")?
             .parse()
             .map_err(|e| Error::new(InvalidData, format!("invalid layer count: {e}")))?;
 
@@ -55,10 +42,10 @@ impl NeuralNetwork {
         let mut layers = Vec::with_capacity(n_layers);
 
         for i in 0..n_layers {
-            let weights = tensors::read_array2(&format!("{prefix}layer{i}.weights"), st)?;
-            let biases = tensors::read_array1(&format!("{prefix}layer{i}.biases"), st)?;
+            let weights = tensors::read_array2(&format!("layer{i}.weights"), st)?;
+            let biases = tensors::read_array1(&format!("layer{i}.biases"), st)?;
 
-            let activation_name = tensors::meta(metadata, &format!("{prefix}layer{i}.activation"))?;
+            let activation_name = tensors::meta(metadata, &format!("layer{i}.activation"))?;
             let activation = ActivationProvider::get_by_name(activation_name).ok_or_else(|| {
                 Error::new(
                     InvalidData,
@@ -82,7 +69,7 @@ impl NeuralNetwork {
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf> {
         let mut entries = Vec::new();
         let mut metadata = HashMap::new();
-        self.collect_tensors("", &mut entries, &mut metadata);
+        self.collect_tensors(&mut entries, &mut metadata);
         tensors::save(path, entries, metadata)
     }
 
@@ -94,7 +81,7 @@ impl NeuralNetwork {
         let st =
             SafeTensors::deserialize(&bytes).map_err(|e| Error::new(InvalidData, e.to_string()))?;
         let metadata = tensors::read_metadata(&bytes)?;
-        NeuralNetwork::from_tensors("", &st, &metadata)
+        NeuralNetwork::from_tensors(&st, &metadata)
     }
 }
 

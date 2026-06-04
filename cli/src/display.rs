@@ -1,10 +1,10 @@
 use console::{Emoji, style};
-use nrn::checkpoints::Checkpoints;
 use nrn::data::scalers::{Scaler, ScalerMethod};
 use nrn::data::{Dataset, ModelSplit};
 use nrn::evaluation::{Evaluation, EvaluationSet};
 use nrn::model::NeuralNetwork;
 use nrn::training::GradientClipping;
+use nrn::training_history::TrainingHistory;
 use pathdiff::diff_paths;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -108,11 +108,11 @@ impl Summary for EvaluationSet {
     }
 }
 
-impl Summary for Checkpoints {
+impl Summary for TrainingHistory {
     fn summary(&self) -> String {
         format!(
             "{} | Evaluations: {} | {}",
-            style("CHECKPOINTS").bold().blue(),
+            style("TRAINING HISTORY").bold().blue(),
             style(self.len()).yellow(),
             style(self.final_evaluation().summary()).yellow(),
         )

@@ -1,11 +1,11 @@
 use crate::actions::*;
-use crate::display::{Summary, completed, trace, warning};
+use crate::display::{HISTORY_ICON, Summary, completed, saved_at, trace, warning};
 use crate::progression::Progression;
 use clap::*;
 use console::style;
 use nrn::accuracies::{Accuracy, accuracy_for};
-use nrn::checkpoints::Checkpoints;
 use nrn::evaluation::EvaluationSet;
+use nrn::io::training_history::TrainingHistoryWriter;
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::optimizers::{Adam, Optimizer, StochasticGradientDescent};
 use nrn::schedulers;
@@ -257,23 +257,31 @@ impl TrainArgs {
             );
         }
 
-        // 👨‍🎓 TRAINING LOOP
-        let mut checkpoints: Option<Checkpoints> =
-            Checkpoints::by_interval(self.checkpoint_interval, self.epochs);
+        // Compute names up front so the writer can be created before the loop.
+        let path = Path::new(&self.dataset);
+        let dataset_name = get_file_stem(path);
+        let model_name = format!("model-{}", dataset_name);
+        let history_dir = path.with_file_name(format!("training-{}", model_name));
 
-        if let Some(ref mut checkpoints) = checkpoints {
+        // 👨‍🎓 TRAINING LOOP
+        let mut writer: Option<TrainingHistoryWriter> = if self.checkpoint_interval > 0 {
             trace(&format!(
                 "Recording a checkpoint every {} epochs",
-                style(checkpoints.interval).yellow()
+                style(self.checkpoint_interval).yellow()
             ));
-
+            let mut w = create_history_writer(&history_dir, self.checkpoint_interval)?;
             let evaluations =
                 EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
-
-            checkpoints.record(&model, &evaluations);
+            w.record(&model, &evaluations)?;
+            Some(w)
+        } else {
+            None
         };
 
         let mut early_stopping = self.early_stopping();
+        // Holds the final evaluations when early stopping fires, so the post-loop
+        // summary can reuse them instead of running a second forward pass.
+        let mut final_evaluations: Option<EvaluationSet> = None;
 
         let progression = Progression::new(self.epochs, "Training");
         for epoch in progression.iter() {
@@ -286,9 +294,10 @@ impl TrainArgs {
                 self.batch_size,
             );
 
-            if let Some(ref mut checkpoints) = checkpoints {
+            let mut wrote_this_epoch = false;
+            if let Some(ref mut writer) = writer {
                 let epoch_number = epoch + 1;
-                if epoch_number % checkpoints.interval == 0 || epoch_number == self.epochs {
+                if epoch_number % self.checkpoint_interval == 0 || epoch_number == self.epochs {
                     let train_predictions = model.predict(split.train.inputs.view());
                     let evaluations = EvaluationSet::using_model(
                         &model,
@@ -297,7 +306,8 @@ impl TrainArgs {
                         &split,
                         Some(train_predictions.view()),
                     );
-                    checkpoints.record(&model, &evaluations);
+                    writer.record(&model, &evaluations)?;
+                    wrote_this_epoch = true;
                 }
             }
 
@@ -320,14 +330,24 @@ impl TrainArgs {
                             .clone();
                         trace("Restored the best model observed during training");
                     }
+                    // Compute once; reused for both the snapshot and the post-loop summary.
+                    let stop_evals =
+                        EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
+                    // Write to history only when the interval block didn't already
+                    // capture this epoch (avoids a duplicate snapshot).
+                    if !wrote_this_epoch && let Some(ref mut writer) = writer {
+                        writer.record(&model, &stop_evals)?;
+                    }
+                    final_evaluations = Some(stop_evals);
                     progression.done();
                     break;
                 }
             }
         }
 
-        let evaluations =
-            EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
+        let evaluations = final_evaluations.unwrap_or_else(|| {
+            EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None)
+        });
 
         completed(&format!(
             "{} | {}",
@@ -336,17 +356,11 @@ impl TrainArgs {
         ));
 
         // 🗂️ SAVE THE TRAINED NETWORK
-        let path = Path::new(&self.dataset);
-        let dataset_name = get_file_stem(path);
-        let model_name = format!("model-{}", dataset_name);
         save_model(path.with_file_name(&model_name), &model)?;
 
-        // 🗂️ SAVE THE CHECKPOINTS
-        if let Some(ref checkpoints) = checkpoints {
-            save_checkpoints(
-                path.with_file_name(format!("training-{}", model_name)),
-                checkpoints,
-            )?;
+        // 🗂️ DISPLAY TRAINING HISTORY LOCATION
+        if let Some(ref writer) = writer {
+            saved_at(HISTORY_ICON, "TRAINING HISTORY", writer.dir());
         }
 
         Ok(())
