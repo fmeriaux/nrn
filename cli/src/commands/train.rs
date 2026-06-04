@@ -294,6 +294,18 @@ impl TrainArgs {
                 self.batch_size,
             );
 
+            if !model.is_finite() {
+                if let Some(ref writer) = writer {
+                    saved_at(HISTORY_ICON, "TRAINING HISTORY", writer.dir());
+                }
+                return Err(format!(
+                    "Model diverged at epoch {} (NaN/Inf in weights). \
+                     Try a lower --lr or stronger gradient clipping.",
+                    epoch + 1
+                )
+                .into());
+            }
+
             let mut wrote_this_epoch = false;
             if let Some(ref mut writer) = writer {
                 let epoch_number = epoch + 1;
@@ -318,7 +330,9 @@ impl TrainArgs {
                 let loss = loss_function.compute(predictions.view(), validation.targets.view());
 
                 if early_stopping.check(loss, &model) {
-                    trace(&format!(
+                    // Clear the progress bar before printing so it doesn't overwrite messages.
+                    progression.done();
+                    completed(&format!(
                         "Early stopping triggered at epoch {}",
                         style(epoch + 1).yellow()
                     ));
@@ -339,7 +353,6 @@ impl TrainArgs {
                         writer.record(&model, &stop_evals)?;
                     }
                     final_evaluations = Some(stop_evals);
-                    progression.done();
                     break;
                 }
             }
