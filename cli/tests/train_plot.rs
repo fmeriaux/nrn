@@ -132,9 +132,8 @@ fn load_history_rejects_too_few_snapshots() {
     .success();
 
     let history_arg = format!("training-model-{ds_name}");
-    // The CLI swallows errors and exits 0, so verify via stderr content.
     nrn(dir, &["plot", &history_arg])
-        .success()
+        .failure()
         .stderr(contains("more than two snapshots"));
 }
 
