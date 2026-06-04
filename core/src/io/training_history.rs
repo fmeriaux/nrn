@@ -34,6 +34,7 @@ struct MetricPair {
 /// Each call to [`record`] creates a subdirectory `snapshot-{n:06}/` containing
 /// `model.safetensors` and `evaluations.json`. A reader can observe new directories
 /// appearing while training is still running.
+#[derive(Debug)]
 pub struct SnapshotRecorder {
     dir: PathBuf,
     interval: usize,
@@ -41,21 +42,39 @@ pub struct SnapshotRecorder {
 }
 
 impl SnapshotRecorder {
-    /// Creates (or resets) the snapshot directory and returns a recorder.
+    /// Creates a fresh recorder at `path`, starting count at 0.
     ///
-    /// Any existing `snapshot-*` subdirectories in `path` are removed so that
-    /// a re-run does not leave stale snapshots from a previous run.
-    pub fn create<P: AsRef<Path>>(path: P, interval: usize) -> Result<Self> {
+    /// Returns an error if `snapshot-*` subdirectories already exist and
+    /// `overwrite` is `false`. When `overwrite` is `true`, all existing
+    /// `snapshot-*` subdirectories are removed before starting.
+    pub fn create<P: AsRef<Path>>(path: P, interval: usize, overwrite: bool) -> Result<Self> {
         let dir = Path::combine_safe_with_cwd(path)?;
         fs::create_dir_all(&dir)?;
 
-        for entry in fs::read_dir(&dir)? {
-            let entry = entry?;
-            let p = entry.path();
-            if let Some(name) = p.file_name().and_then(|n| n.to_str())
-                && name.starts_with("snapshot-")
-                && p.is_dir()
-            {
+        let existing: Vec<PathBuf> = fs::read_dir(&dir)?
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.starts_with("snapshot-"))
+                    .unwrap_or(false)
+                    && p.is_dir()
+            })
+            .collect();
+
+        if !existing.is_empty() {
+            if !overwrite {
+                return Err(Error::new(
+                    InvalidData,
+                    format!(
+                        "training history already exists at {}; \
+                         use --overwrite to replace it",
+                        dir.display()
+                    ),
+                ));
+            }
+            for p in existing {
                 fs::remove_dir_all(&p)?;
             }
         }
@@ -64,6 +83,35 @@ impl SnapshotRecorder {
             dir,
             interval,
             count: 0,
+        })
+    }
+
+    /// Resumes recording into an existing snapshot directory, starting count at
+    /// `from_count + 1`. Snapshot subdirectories with index > `from_count` are
+    /// removed (they belong to a previous run past the resume point).
+    pub fn resume<P: AsRef<Path>>(path: P, interval: usize, from_count: usize) -> Result<Self> {
+        let dir = Path::combine_safe_with_cwd(path)?;
+        fs::create_dir_all(&dir)?;
+
+        for entry in fs::read_dir(&dir)? {
+            let entry = entry?;
+            let p = entry.path();
+            if let Some(idx) = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_prefix("snapshot-"))
+                .and_then(|s| s.parse::<usize>().ok())
+                && p.is_dir()
+                && idx > from_count
+            {
+                fs::remove_dir_all(&p)?;
+            }
+        }
+
+        Ok(SnapshotRecorder {
+            dir,
+            interval,
+            count: from_count + 1,
         })
     }
 
@@ -249,7 +297,7 @@ mod tests {
     }
 
     fn write_n(dir: &Path, n: usize, with_validation: bool) {
-        let mut recorder = SnapshotRecorder::create(dir, 10).unwrap();
+        let mut recorder = SnapshotRecorder::create(dir, 10, false).unwrap();
         for i in 0..n {
             recorder
                 .record(&sample_model(), &make_evaluation(i, with_validation))
@@ -295,7 +343,7 @@ mod tests {
         let model = sample_model();
         let inputs = Array2::from_shape_fn((2, 4), |(i, j)| (i + j) as f32 * 0.3);
 
-        let mut recorder = SnapshotRecorder::create(&dir, 5).unwrap();
+        let mut recorder = SnapshotRecorder::create(&dir, 5, false).unwrap();
         recorder.record(&model, &make_evaluation(0, false)).unwrap();
 
         let history = TrainingHistory::load(&dir).unwrap();
@@ -312,7 +360,7 @@ mod tests {
     fn numeric_sort_beats_lexical() {
         let dir = temp_dir("sort");
         let model = sample_model();
-        let mut recorder = SnapshotRecorder::create(&dir, 1).unwrap();
+        let mut recorder = SnapshotRecorder::create(&dir, 1, false).unwrap();
         for i in 0..12 {
             recorder.record(&model, &make_evaluation(i, false)).unwrap();
         }
@@ -331,20 +379,81 @@ mod tests {
     }
 
     #[test]
-    fn create_purges_previous_snapshots() {
-        let dir = temp_dir("purge");
+    fn create_errors_if_snapshots_exist_without_overwrite() {
+        let dir = temp_dir("no_overwrite");
+        write_n(&dir, 2, false);
+
+        let result = SnapshotRecorder::create(&dir, 10, false);
+        cleanup(&dir);
+        assert!(
+            result.is_err(),
+            "expected error when snapshots exist and overwrite=false"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("already exists"),
+            "error should mention 'already exists': {msg}"
+        );
+    }
+
+    #[test]
+    fn create_with_overwrite_purges_previous_snapshots() {
+        let dir = temp_dir("overwrite");
 
         write_n(&dir, 3, false);
         assert_eq!(TrainingHistory::load(&dir).unwrap().len(), 3);
 
-        write_n(&dir, 2, false);
+        // Second run with overwrite=true: only 2 new snapshots should survive.
+        let mut recorder = SnapshotRecorder::create(&dir, 10, true).unwrap();
+        for i in 0..2 {
+            recorder
+                .record(&sample_model(), &make_evaluation(i, false))
+                .unwrap();
+        }
         let history = TrainingHistory::load(&dir).unwrap();
         cleanup(&dir);
 
         assert_eq!(
             history.len(),
             2,
-            "stale snapshots from first run were not purged"
+            "stale snapshots were not purged on overwrite"
+        );
+    }
+
+    #[test]
+    fn resume_continues_from_correct_count() {
+        let dir = temp_dir("resume_count");
+        write_n(&dir, 3, false); // snapshots 0, 1, 2
+
+        let mut recorder = SnapshotRecorder::resume(&dir, 10, 2).unwrap();
+        recorder
+            .record(&sample_model(), &make_evaluation(99, false))
+            .unwrap();
+
+        let history = TrainingHistory::load(&dir).unwrap();
+        cleanup(&dir);
+
+        // Snapshots 0, 1, 2 from original + snapshot 3 from resume = 4 total.
+        assert_eq!(history.len(), 4);
+        // The resumed snapshot carries the sentinel loss value.
+        assert_eq!(history.evaluations[3].train.loss, 99.0);
+    }
+
+    #[test]
+    fn resume_removes_snapshots_after_resume_point() {
+        let dir = temp_dir("resume_trim");
+        write_n(&dir, 5, false); // snapshots 0..4
+
+        // Resume from snapshot 2 — snapshots 3 and 4 must be removed.
+        SnapshotRecorder::resume(&dir, 10, 2).unwrap();
+
+        let history = TrainingHistory::load(&dir).unwrap();
+        cleanup(&dir);
+
+        assert_eq!(
+            history.len(),
+            3,
+            "snapshots after resume point should be removed"
         );
     }
 
@@ -418,7 +527,7 @@ mod tests {
     #[test]
     fn record_returns_expected_path() {
         let dir = temp_dir("ret_path");
-        let mut recorder = SnapshotRecorder::create(&dir, 5).unwrap();
+        let mut recorder = SnapshotRecorder::create(&dir, 5, false).unwrap();
         let path = recorder
             .record(&sample_model(), &make_evaluation(0, false))
             .unwrap();
@@ -433,7 +542,7 @@ mod tests {
         let dir = temp_dir("val_tensor");
         let model = sample_model();
 
-        let mut recorder = SnapshotRecorder::create(&dir, 1).unwrap();
+        let mut recorder = SnapshotRecorder::create(&dir, 1, false).unwrap();
         recorder.record(&model, &make_evaluation(0, false)).unwrap();
         recorder.record(&model, &make_evaluation(1, true)).unwrap();
 
@@ -489,5 +598,86 @@ mod tests {
             msg.contains("out of range") || msg.contains("index"),
             "expected range error, got: {msg}"
         );
+    }
+
+    #[test]
+    fn model_at_missing_model_file_fails() {
+        let dir = temp_dir("model_at_missing");
+        write_n(&dir, 1, false);
+        let history = TrainingHistory::load(&dir).unwrap();
+        // Remove the model file after loading so model_at hits the IO error path.
+        fs::remove_file(dir.join("snapshot-000000").join("model.safetensors")).unwrap();
+
+        let result = history.model_at(0);
+        cleanup(&dir);
+        assert!(
+            result.is_err(),
+            "model_at should fail when model file is missing"
+        );
+    }
+
+    #[test]
+    fn model_at_corrupt_model_file_fails() {
+        let dir = temp_dir("model_at_corrupt");
+        write_n(&dir, 1, false);
+        let history = TrainingHistory::load(&dir).unwrap();
+        // Overwrite the model file with garbage after loading.
+        fs::write(
+            dir.join("snapshot-000000").join("model.safetensors"),
+            b"garbage",
+        )
+        .unwrap();
+
+        let result = history.model_at(0);
+        cleanup(&dir);
+        assert!(
+            result.is_err(),
+            "model_at should fail on corrupt model file"
+        );
+    }
+
+    #[test]
+    fn create_rejects_path_traversal() {
+        let result = SnapshotRecorder::create("../../nrn_traversal_test", 1, false);
+        assert!(
+            result.is_err(),
+            "path traversal should be rejected by create"
+        );
+    }
+
+    #[test]
+    fn resume_rejects_path_traversal() {
+        let result = SnapshotRecorder::resume("../../nrn_traversal_test", 1, 0);
+        assert!(
+            result.is_err(),
+            "path traversal should be rejected by resume"
+        );
+    }
+
+    #[test]
+    fn load_ignores_non_directory_snapshot_file() {
+        let dir = temp_dir("non_dir_snap");
+        // A regular file with snapshot-like name should be ignored.
+        fs::write(dir.join("snapshot-000000"), b"not a dir").unwrap();
+
+        let history = TrainingHistory::load(&dir).unwrap();
+        cleanup(&dir);
+
+        assert!(
+            history.is_empty(),
+            "a file named snapshot-* should not be treated as a snapshot"
+        );
+    }
+
+    #[test]
+    fn load_ignores_snapshot_dir_with_non_numeric_suffix() {
+        let dir = temp_dir("non_numeric_snap");
+        // A directory named "snapshot-abc" (non-numeric) should be silently ignored.
+        fs::create_dir_all(dir.join("snapshot-abc")).unwrap();
+
+        let history = TrainingHistory::load(&dir).unwrap();
+        cleanup(&dir);
+
+        assert!(history.is_empty(), "snapshot-abc should be filtered out");
     }
 }

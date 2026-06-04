@@ -66,7 +66,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let clipping = GradientClipping::None;
 
     let history_dir = dir.join("training");
-    let mut writer = SnapshotRecorder::create(&history_dir, 5).unwrap();
+    let mut writer = SnapshotRecorder::create(&history_dir, 5, false).unwrap();
     let mut last_recorded_predictions = None;
 
     for epoch in 0..10 {

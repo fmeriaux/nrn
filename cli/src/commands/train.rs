@@ -54,9 +54,12 @@ pub struct TrainArgs {
     /// Name of the dataset to train on
     dataset: String,
 
-    /// Provide a pre-trained model to continue training, if not provided, a new model will be initialized
+    /// Resume training from a snapshot directory (`snapshot-{n}/`).
+    /// If the path is a valid snapshot, training continues from the next snapshot index.
+    /// If the path cannot be parsed as a snapshot, falls back to loading it as a plain
+    /// model file and restarts the snapshot count from 0.
     #[arg(short, long)]
-    model: Option<String>,
+    snapshot: Option<String>,
 
     /// The number of epochs to train the model
     #[arg(short, long)]
@@ -67,12 +70,18 @@ pub struct TrainArgs {
     /// if set to 0, no checkpoints will be saved
     checkpoint_interval: usize,
 
+    /// Overwrite the existing training history directory for this dataset.
+    /// By default, training errors if a history directory already exists.
+    /// Has no effect when resuming from --snapshot (history is continued, not replaced).
+    #[arg(long, default_value_t = false)]
+    overwrite: bool,
+
     /// Specify the hidden layers of the model when a new model is initialized
-    #[arg(long, value_delimiter = ',', conflicts_with_all = &["auto_layers", "model"])]
+    #[arg(long, value_delimiter = ',', conflicts_with_all = &["auto_layers", "snapshot"])]
     layers: Option<Vec<usize>>,
 
     /// Automatically infer the hidden layers based on the dataset characteristics
-    #[arg(long, conflicts_with_all = &["layers", "model"], default_value_t = false)]
+    #[arg(long, conflicts_with_all = &["layers", "snapshot"], default_value_t = false)]
     auto_layers: bool,
 
     /// Specify the optimizer to use for training
@@ -242,15 +251,18 @@ impl TrainArgs {
         let accuracy: Arc<dyn Accuracy> = accuracy_for(dataset.n_classes());
 
         // 🧠 NEURAL NETWORK INITIALIZATION
-        let mut model = match &self.model {
-            Some(file) => load_model(file)?,
-            None => initialize_model_with(&dataset, self.layers.clone(), self.auto_layers),
+        let (mut model, snapshot_index) = match &self.snapshot {
+            Some(path) => load_snapshot_or_model(path)?,
+            None => (
+                initialize_model_with(&dataset, self.layers.clone(), self.auto_layers),
+                None,
+            ),
         };
 
         // Optimizer state is not persisted: a stateful optimizer resets its moments and
         // step counter when resuming from a saved model, so its adaptive steps warm up
         // again over the first epochs. See `make_optimizer`.
-        if self.model.is_some() && matches!(self.optimizer, OptimizerType::Adam) {
+        if self.snapshot.is_some() && matches!(self.optimizer, OptimizerType::Adam) {
             warning(
                 "Resuming with Adam: optimizer state is not restored, \
                  its moments restart from zero for the first epochs",
@@ -269,10 +281,24 @@ impl TrainArgs {
                 "Recording a checkpoint every {} epochs",
                 style(self.checkpoint_interval).yellow()
             ));
-            let mut rec = create_snapshot_recorder(&history_dir, self.checkpoint_interval)?;
-            let evaluations =
-                EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
-            rec.record(&model, &evaluations)?;
+            let rec = match snapshot_index {
+                // True resume: continue the existing history from the next index.
+                // No initial snapshot — we continue from where training left off.
+                Some(idx) => resume_snapshot_recorder(&history_dir, self.checkpoint_interval, idx)?,
+                // Fresh start: error if history exists unless --overwrite was passed.
+                // Record the initial model state before training begins.
+                None => {
+                    let mut r = create_snapshot_recorder(
+                        &history_dir,
+                        self.checkpoint_interval,
+                        self.overwrite,
+                    )?;
+                    let evaluations =
+                        EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
+                    r.record(&model, &evaluations)?;
+                    r
+                }
+            };
             Some(rec)
         } else {
             None

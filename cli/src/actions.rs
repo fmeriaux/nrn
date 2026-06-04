@@ -125,9 +125,61 @@ pub(crate) fn load_history<P: AsRef<Path>>(path: P) -> Result<TrainingHistory, B
     Ok(history)
 }
 
+/// Tries to load a model and snapshot index from a snapshot directory
+/// (`snapshot-{n}/model.safetensors` + `snapshot-{n}/evaluations.json`).
+///
+/// Falls back to loading the path as a plain model file if it is not a
+/// snapshot directory, emitting:
+/// - a `warning` when the path looks like a snapshot dir but cannot be parsed
+///   (broken metadata — something unexpected)
+/// - a `trace` otherwise (plain model file — intentional fallback)
+///
+/// Returns `(model, Some(snapshot_index))` on a successful snapshot load, or
+/// `(model, None)` on fallback.
+pub(crate) fn load_snapshot_or_model<P: AsRef<Path>>(
+    path: P,
+) -> Result<(NeuralNetwork, Option<usize>), Box<dyn Error>> {
+    let path = path.as_ref();
+
+    let snapshot_index = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_prefix("snapshot-"))
+        .and_then(|s| s.parse::<usize>().ok());
+
+    let looks_like_snapshot = snapshot_index.is_some();
+
+    if looks_like_snapshot
+        && path.join("model.safetensors").exists()
+        && path.join("evaluations.json").exists()
+    {
+        let model = load_model(path.join("model"))?;
+        return Ok((model, snapshot_index));
+    }
+
+    // Fallback: load as a plain model file.
+    if looks_like_snapshot {
+        warning("Could not read snapshot metadata; starting count from 0.");
+    } else {
+        trace("No snapshot metadata found; starting count from 0.");
+    }
+
+    let model = load_model(path)?;
+    Ok((model, None))
+}
+
 pub(crate) fn create_snapshot_recorder<P: AsRef<Path>>(
     path: P,
     interval: usize,
+    overwrite: bool,
 ) -> Result<SnapshotRecorder, Box<dyn Error>> {
-    Ok(SnapshotRecorder::create(path, interval)?)
+    Ok(SnapshotRecorder::create(path, interval, overwrite)?)
+}
+
+pub(crate) fn resume_snapshot_recorder<P: AsRef<Path>>(
+    path: P,
+    interval: usize,
+    from_count: usize,
+) -> Result<SnapshotRecorder, Box<dyn Error>> {
+    Ok(SnapshotRecorder::resume(path, interval, from_count)?)
 }
