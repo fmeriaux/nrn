@@ -51,7 +51,9 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     fn temp_path(tag: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("nrn_test_{tag}_{}", std::process::id()))
+        let dir = PathBuf::from("target/nrn_tests");
+        std::fs::create_dir_all(&dir).ok();
+        dir.join(format!("nrn_test_{tag}_{}", std::process::id()))
     }
 
     fn cleanup(path: &Path) {
