@@ -53,7 +53,9 @@ impl Adam {
 
     /// Creates an Adam optimizer with default parameters.
     pub fn with_defaults(learning_rate: LearningRate) -> Self {
-        Self::new(learning_rate, 0.9, 0.999, 1e-8)
+        // 1e-5 instead of the paper's 1e-8: f32 squared gradients near 1e-19 underflow
+        // to 0, leaving epsilon as the sole denominator and inflating the effective step.
+        Self::new(learning_rate, 0.9, 0.999, 1e-5)
     }
 
     fn init_state(&mut self, layer_index: usize, layer: &NeuronLayer) {
@@ -149,6 +151,15 @@ mod tests {
             converged_near_zero(1.5, 0.5).unwrap_err(),
             "weight should approach 0, got 1.5"
         );
+    }
+
+    #[test]
+    fn adam_default_epsilon_is_stable_for_f32() {
+        // 1e-8 (paper default, f64) is too small for f32: squared gradients near 1e-19
+        // underflow to 0, and the floor epsilon alone drives the step, causing divergence.
+        // 1e-5 keeps the denominator above the f32 subnormal range.
+        let opt = Adam::with_defaults(LearningRate::new(0.001));
+        assert_eq!(opt.epsilon, 1e-5);
     }
 
     #[test]
