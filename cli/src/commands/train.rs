@@ -5,9 +5,9 @@ use clap::*;
 use console::style;
 use nrn::accuracies::{Accuracy, accuracy_for};
 use nrn::evaluation::EvaluationSet;
-use nrn::io::training_history::SnapshotRecorder;
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::optimizers::{Adam, Optimizer, StochasticGradientDescent};
+use nrn::recorders::{NoOpRecorder, Recorder};
 use nrn::schedulers;
 use nrn::schedulers::{ConstantScheduler, Scheduler, StepDecay};
 use nrn::training::{EarlyStopping, GradientClipping, LearningRate};
@@ -55,11 +55,16 @@ pub struct TrainArgs {
     dataset: String,
 
     /// Resume training from a snapshot directory (`snapshot-{n}/`).
-    /// If the path is a valid snapshot, training continues from the next snapshot index.
-    /// If the path cannot be parsed as a snapshot, falls back to loading it as a plain
-    /// model file and restarts the snapshot count from 0.
-    #[arg(short, long)]
+    /// The path must end in `snapshot-{n}` and contain `model.safetensors` and
+    /// `evaluations.json`. Training continues from the next snapshot index.
+    /// Mutually exclusive with --model.
+    #[arg(short, long, conflicts_with = "model")]
     snapshot: Option<String>,
+
+    /// Load a pre-trained model and continue training (snapshot count resets to 0).
+    /// Mutually exclusive with --snapshot.
+    #[arg(short, long, conflicts_with = "snapshot")]
+    model: Option<String>,
 
     /// The number of epochs to train the model
     #[arg(short, long)]
@@ -77,11 +82,11 @@ pub struct TrainArgs {
     overwrite: bool,
 
     /// Specify the hidden layers of the model when a new model is initialized
-    #[arg(long, value_delimiter = ',', conflicts_with_all = &["auto_layers", "snapshot"])]
+    #[arg(long, value_delimiter = ',', conflicts_with_all = &["auto_layers", "snapshot", "model"])]
     layers: Option<Vec<usize>>,
 
     /// Automatically infer the hidden layers based on the dataset characteristics
-    #[arg(long, conflicts_with_all = &["layers", "snapshot"], default_value_t = false)]
+    #[arg(long, conflicts_with_all = &["layers", "snapshot", "model"], default_value_t = false)]
     auto_layers: bool,
 
     /// Specify the optimizer to use for training
@@ -251,9 +256,13 @@ impl TrainArgs {
         let accuracy: Arc<dyn Accuracy> = accuracy_for(dataset.n_classes());
 
         // 🧠 NEURAL NETWORK INITIALIZATION
-        let (mut model, snapshot_index) = match &self.snapshot {
-            Some(path) => load_snapshot_or_model(path)?,
-            None => (
+        let (mut model, snapshot_index) = match (&self.snapshot, &self.model) {
+            (Some(snap_path), _) => {
+                let (model, idx) = load_snapshot(snap_path)?;
+                (model, Some(idx))
+            }
+            (_, Some(model_path)) => (load_model(model_path)?, None),
+            _ => (
                 initialize_model_with(&dataset, self.layers.clone(), self.auto_layers),
                 None,
             ),
@@ -262,7 +271,9 @@ impl TrainArgs {
         // Optimizer state is not persisted: a stateful optimizer resets its moments and
         // step counter when resuming from a saved model, so its adaptive steps warm up
         // again over the first epochs. See `make_optimizer`.
-        if self.snapshot.is_some() && matches!(self.optimizer, OptimizerType::Adam) {
+        if (self.snapshot.is_some() || self.model.is_some())
+            && matches!(self.optimizer, OptimizerType::Adam)
+        {
             warning(
                 "Resuming with Adam: optimizer state is not restored, \
                  its moments restart from zero for the first epochs",
@@ -276,15 +287,19 @@ impl TrainArgs {
         let history_dir = path.with_file_name(format!("training-{}", model_name));
 
         // 👨‍🎓 TRAINING LOOP
-        let mut recorder: Option<SnapshotRecorder> = if self.checkpoint_interval > 0 {
+        let mut recorder: Box<dyn Recorder> = if self.checkpoint_interval > 0 {
             trace(&format!(
                 "Recording a checkpoint every {} epochs",
                 style(self.checkpoint_interval).yellow()
             ));
-            let rec = match snapshot_index {
+            match snapshot_index {
                 // True resume: continue the existing history from the next index.
                 // No initial snapshot — we continue from where training left off.
-                Some(idx) => resume_snapshot_recorder(&history_dir, self.checkpoint_interval, idx)?,
+                Some(idx) => Box::new(resume_snapshot_recorder(
+                    &history_dir,
+                    self.checkpoint_interval,
+                    idx,
+                )?),
                 // Fresh start: error if history exists unless --overwrite was passed.
                 // Record the initial model state before training begins.
                 None => {
@@ -296,12 +311,11 @@ impl TrainArgs {
                     let evaluations =
                         EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
                     r.record(&model, &evaluations)?;
-                    r
+                    Box::new(r)
                 }
-            };
-            Some(rec)
+            }
         } else {
-            None
+            Box::new(NoOpRecorder)
         };
 
         let mut early_stopping = self.early_stopping();
@@ -343,15 +357,13 @@ impl TrainArgs {
                         EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
                     // No checkpoint was written for this epoch yet (divergence precedes the
                     // checkpoint block), so always record the recovered model.
-                    if let Some(ref mut rec) = recorder {
-                        rec.record(&model, &evals)?;
-                    }
+                    recorder.record(&model, &evals)?;
                     final_evaluations = Some(evals);
                     break;
                 }
 
-                if let Some(ref recorder) = recorder {
-                    saved_at(HISTORY_ICON, "TRAINING HISTORY", recorder.dir());
+                if let Some(dir) = recorder.dir() {
+                    saved_at(HISTORY_ICON, "TRAINING HISTORY", dir);
                 }
                 return Err(format!(
                     "Model diverged at epoch {} (NaN/Inf in weights). \
@@ -363,7 +375,7 @@ impl TrainArgs {
             }
 
             let mut wrote_this_epoch = false;
-            if let Some(ref mut recorder) = recorder {
+            if self.checkpoint_interval > 0 {
                 let epoch_number = epoch + 1;
                 if epoch_number % self.checkpoint_interval == 0 || epoch_number == self.epochs {
                     let train_predictions = model.predict(split.train.inputs.view());
@@ -405,7 +417,7 @@ impl TrainArgs {
                         EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
                     // Write to history only when the interval block didn't already
                     // capture this epoch (avoids a duplicate snapshot).
-                    if !wrote_this_epoch && let Some(ref mut recorder) = recorder {
+                    if !wrote_this_epoch {
                         recorder.record(&model, &stop_evals)?;
                     }
                     final_evaluations = Some(stop_evals);
@@ -428,8 +440,8 @@ impl TrainArgs {
         save_model(path.with_file_name(&model_name), &model)?;
 
         // 🗂️ DISPLAY TRAINING HISTORY LOCATION
-        if let Some(ref recorder) = recorder {
-            saved_at(HISTORY_ICON, "TRAINING HISTORY", recorder.dir());
+        if let Some(dir) = recorder.dir() {
+            saved_at(HISTORY_ICON, "TRAINING HISTORY", dir);
         }
 
         Ok(())

@@ -4,6 +4,7 @@ use crate::io::json;
 use crate::io::path::PathExt;
 use crate::io::tensors;
 use crate::model::NeuralNetwork;
+use crate::recorders::Recorder;
 use crate::training_history::TrainingHistory;
 use safetensors::SafeTensors;
 use serde::{Deserialize, Serialize};
@@ -115,10 +116,14 @@ impl SnapshotRecorder {
         })
     }
 
-    /// Writes the current model and its evaluations as the next snapshot directory.
-    ///
-    /// Returns the path of the directory that was created.
-    pub fn record(&mut self, model: &NeuralNetwork, evaluation: &EvaluationSet) -> Result<PathBuf> {
+    /// Returns the directory where snapshots are being written.
+    pub fn snapshot_dir(&self) -> &Path {
+        &self.dir
+    }
+}
+
+impl Recorder for SnapshotRecorder {
+    fn record(&mut self, model: &NeuralNetwork, evaluation: &EvaluationSet) -> Result<()> {
         let snapshot_dir = self.dir.join(format!("snapshot-{:06}", self.count));
         fs::create_dir_all(&snapshot_dir)?;
 
@@ -146,12 +151,11 @@ impl SnapshotRecorder {
         json::save(&evals, snapshot_dir.join("evaluations"))?;
 
         self.count += 1;
-        Ok(snapshot_dir)
+        Ok(())
     }
 
-    /// Returns the directory where snapshots are being written.
-    pub fn dir(&self) -> &Path {
-        &self.dir
+    fn dir(&self) -> Option<&Path> {
+        Some(&self.dir)
     }
 }
 
@@ -525,16 +529,21 @@ mod tests {
     }
 
     #[test]
-    fn record_returns_expected_path() {
-        let dir = temp_dir("ret_path");
+    fn record_creates_snapshot_directory() {
+        let dir = temp_dir("record_dir");
         let mut recorder = SnapshotRecorder::create(&dir, 5, false).unwrap();
-        let path = recorder
+        recorder
             .record(&sample_model(), &make_evaluation(0, false))
             .unwrap();
+
+        let expected = dir.join("snapshot-000000");
+        let exists = expected.exists() && expected.is_dir();
         cleanup(&dir);
 
-        let name = path.file_name().unwrap().to_str().unwrap();
-        assert_eq!(name, "snapshot-000000");
+        assert!(
+            exists,
+            "snapshot-000000 directory should be created by record()"
+        );
     }
 
     #[test]

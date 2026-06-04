@@ -125,47 +125,39 @@ pub(crate) fn load_history<P: AsRef<Path>>(path: P) -> Result<TrainingHistory, B
     Ok(history)
 }
 
-/// Tries to load a model and snapshot index from a snapshot directory
-/// (`snapshot-{n}/model.safetensors` + `snapshot-{n}/evaluations.json`).
+/// Loads a model from a snapshot directory (`snapshot-{n}/model.safetensors`).
 ///
-/// Falls back to loading the path as a plain model file if it is not a
-/// snapshot directory, emitting:
-/// - a `warning` when the path looks like a snapshot dir but cannot be parsed
-///   (broken metadata — something unexpected)
-/// - a `trace` otherwise (plain model file — intentional fallback)
-///
-/// Returns `(model, Some(snapshot_index))` on a successful snapshot load, or
-/// `(model, None)` on fallback.
-pub(crate) fn load_snapshot_or_model<P: AsRef<Path>>(
+/// Errors if the path does not match the `snapshot-{n}` format, or if
+/// `model.safetensors` / `evaluations.json` are missing.
+/// Returns `(model, snapshot_index)`.
+pub(crate) fn load_snapshot<P: AsRef<Path>>(
     path: P,
-) -> Result<(NeuralNetwork, Option<usize>), Box<dyn Error>> {
+) -> Result<(NeuralNetwork, usize), Box<dyn Error>> {
     let path = path.as_ref();
 
     let snapshot_index = path
         .file_name()
         .and_then(|n| n.to_str())
         .and_then(|n| n.strip_prefix("snapshot-"))
-        .and_then(|s| s.parse::<usize>().ok());
+        .and_then(|s| s.parse::<usize>().ok())
+        .ok_or_else(|| -> Box<dyn Error> {
+            format!(
+                "'{}' is not a valid snapshot directory \
+                 (expected a path ending in snapshot-{{n}})",
+                path.display()
+            )
+            .into()
+        })?;
 
-    let looks_like_snapshot = snapshot_index.is_some();
-
-    if looks_like_snapshot
-        && path.join("model.safetensors").exists()
-        && path.join("evaluations.json").exists()
-    {
-        let model = load_model(path.join("model"))?;
-        return Ok((model, snapshot_index));
+    if !path.join("model.safetensors").exists() {
+        return Err(format!("snapshot '{}' is missing model.safetensors", path.display()).into());
+    }
+    if !path.join("evaluations.json").exists() {
+        return Err(format!("snapshot '{}' is missing evaluations.json", path.display()).into());
     }
 
-    // Fallback: load as a plain model file.
-    if looks_like_snapshot {
-        warning("Could not read snapshot metadata; starting count from 0.");
-    } else {
-        trace("No snapshot metadata found; starting count from 0.");
-    }
-
-    let model = load_model(path)?;
-    Ok((model, None))
+    let model = load_model(path.join("model"))?;
+    Ok((model, snapshot_index))
 }
 
 pub(crate) fn create_snapshot_recorder<P: AsRef<Path>>(

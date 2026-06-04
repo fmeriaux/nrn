@@ -13,6 +13,7 @@ use nrn::io::training_history::SnapshotRecorder;
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::Adam;
+use nrn::recorders::Recorder;
 use nrn::schedulers::ConstantScheduler;
 use nrn::training::{GradientClipping, LearningRate};
 use nrn::training_history::TrainingHistory;
@@ -66,7 +67,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let clipping = GradientClipping::None;
 
     let history_dir = dir.join("training");
-    let mut writer = SnapshotRecorder::create(&history_dir, 5, false).unwrap();
+    let mut recorder = SnapshotRecorder::create(&history_dir, 5, false).unwrap();
     let mut last_recorded_predictions = None;
 
     for epoch in 0..10 {
@@ -95,7 +96,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
                     accuracy: 0.5,
                 },
             };
-            writer.record(&model, &evaluation).unwrap();
+            recorder.record(&model, &evaluation).unwrap();
             last_recorded_predictions = Some(predictions);
         }
     }
