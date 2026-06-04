@@ -1,32 +1,50 @@
 use crate::evaluation::{Evaluation, EvaluationSet};
 use crate::io::bytes::secure_read;
+use crate::io::json;
 use crate::io::path::PathExt;
 use crate::io::tensors;
 use crate::model::NeuralNetwork;
 use crate::training_history::TrainingHistory;
-use ndarray::Array1;
 use safetensors::SafeTensors;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io::ErrorKind::InvalidData;
 use std::io::{Error, Result};
 use std::path::{Path, PathBuf};
 
+#[derive(Serialize, Deserialize)]
+struct SnapshotEvals {
+    interval: usize,
+    epoch: usize,
+    train: MetricPair,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    validation: Option<MetricPair>,
+    test: MetricPair,
+}
+
+#[derive(Serialize, Deserialize)]
+struct MetricPair {
+    loss: f32,
+    accuracy: f32,
+}
+
 /// Writes model snapshots to a directory incrementally during training.
 ///
-/// Each call to [`record`] writes one self-contained `snapshot-{n:06}.safetensors`
-/// file. A reader can observe new files appearing while training is still running.
-pub struct TrainingHistoryWriter {
+/// Each call to [`record`] creates a subdirectory `snapshot-{n:06}/` containing
+/// `model.safetensors` and `evaluations.json`. A reader can observe new directories
+/// appearing while training is still running.
+pub struct SnapshotRecorder {
     dir: PathBuf,
     interval: usize,
     count: usize,
 }
 
-impl TrainingHistoryWriter {
-    /// Creates (or resets) the snapshot directory and returns a writer.
+impl SnapshotRecorder {
+    /// Creates (or resets) the snapshot directory and returns a recorder.
     ///
-    /// Any existing `snapshot-*.safetensors` files in `path` are removed so
-    /// that a re-run of training does not leave stale snapshots from a previous run.
+    /// Any existing `snapshot-*` subdirectories in `path` are removed so that
+    /// a re-run does not leave stale snapshots from a previous run.
     pub fn create<P: AsRef<Path>>(path: P, interval: usize) -> Result<Self> {
         let dir = Path::combine_safe_with_cwd(path)?;
         fs::create_dir_all(&dir)?;
@@ -36,51 +54,51 @@ impl TrainingHistoryWriter {
             let p = entry.path();
             if let Some(name) = p.file_name().and_then(|n| n.to_str())
                 && name.starts_with("snapshot-")
-                && name.ends_with(".safetensors")
+                && p.is_dir()
             {
-                fs::remove_file(&p)?;
+                fs::remove_dir_all(&p)?;
             }
         }
 
-        Ok(TrainingHistoryWriter {
+        Ok(SnapshotRecorder {
             dir,
             interval,
             count: 0,
         })
     }
 
-    /// Writes the current model and its evaluations as the next snapshot file.
+    /// Writes the current model and its evaluations as the next snapshot directory.
     ///
-    /// Returns the path of the file that was written.
+    /// Returns the path of the directory that was created.
     pub fn record(&mut self, model: &NeuralNetwork, evaluation: &EvaluationSet) -> Result<PathBuf> {
+        let snapshot_dir = self.dir.join(format!("snapshot-{:06}", self.count));
+        fs::create_dir_all(&snapshot_dir)?;
+
         let mut entries = Vec::new();
         let mut metadata = HashMap::new();
-
         model.collect_tensors(&mut entries, &mut metadata);
+        tensors::save(snapshot_dir.join("model"), entries, metadata)?;
 
-        let eval_data = Array1::from_vec(vec![
-            evaluation.train.loss,
-            evaluation.train.accuracy,
-            evaluation.test.loss,
-            evaluation.test.accuracy,
-        ]);
-        entries.push(("evaluation".to_string(), tensors::tensor(&eval_data)));
+        let evals = SnapshotEvals {
+            interval: self.interval,
+            epoch: self.count * self.interval,
+            train: MetricPair {
+                loss: evaluation.train.loss,
+                accuracy: evaluation.train.accuracy,
+            },
+            validation: evaluation.validation.map(|v| MetricPair {
+                loss: v.loss,
+                accuracy: v.accuracy,
+            }),
+            test: MetricPair {
+                loss: evaluation.test.loss,
+                accuracy: evaluation.test.accuracy,
+            },
+        };
+        json::save(&evals, snapshot_dir.join("evaluations"))?;
 
-        if let Some(validation) = evaluation.validation {
-            let val_data = Array1::from_vec(vec![validation.loss, validation.accuracy]);
-            entries.push(("validation".to_string(), tensors::tensor(&val_data)));
-        }
-
-        metadata.insert("interval".to_string(), self.interval.to_string());
-        metadata.insert(
-            "epoch".to_string(),
-            (self.count * self.interval).to_string(),
-        );
-
-        let snapshot_path = self.dir.join(format!("snapshot-{:06}", self.count));
-        let written = tensors::save(snapshot_path, entries, metadata)?;
         self.count += 1;
-        Ok(written)
+        Ok(snapshot_dir)
     }
 
     /// Returns the directory where snapshots are being written.
@@ -90,10 +108,10 @@ impl TrainingHistoryWriter {
 }
 
 impl TrainingHistory {
-    /// Loads a `TrainingHistory` from a directory of snapshot files.
+    /// Loads a `TrainingHistory` from a directory of snapshot subdirectories.
     ///
     /// Only evaluations are loaded into memory. Model weights stay on disk and are
-    /// read on demand via [`model_at`]. Files must match `snapshot-{n}.safetensors`;
+    /// read on demand via [`model_at`]. Subdirectories must match `snapshot-{n}`;
     /// they are sorted by their numeric index (not lexically), so 10 or more
     /// snapshots sort correctly. An empty directory returns an empty history with
     /// `interval = 0`.
@@ -105,12 +123,8 @@ impl TrainingHistory {
             .filter_map(|entry| {
                 let p = entry.path();
                 let name = p.file_name()?.to_str()?;
-                if name.starts_with("snapshot-") && name.ends_with(".safetensors") {
-                    let idx = name
-                        .strip_prefix("snapshot-")?
-                        .strip_suffix(".safetensors")?
-                        .parse::<usize>()
-                        .ok()?;
+                if name.starts_with("snapshot-") && p.is_dir() {
+                    let idx = name.strip_prefix("snapshot-")?.parse::<usize>().ok()?;
                     Some((idx, p))
                 } else {
                     None
@@ -134,34 +148,24 @@ impl TrainingHistory {
         let mut interval = 0usize;
 
         for (i, (_, path)) in indexed.into_iter().enumerate() {
-            let bytes = secure_read(&path)?;
-            let st = SafeTensors::deserialize(&bytes)
-                .map_err(|e| Error::new(InvalidData, e.to_string()))?;
+            let evals: SnapshotEvals = json::load(path.join("evaluations"))?;
 
-            // Extract interval once from the first file (every snapshot carries it).
             if i == 0 {
-                let meta = tensors::read_metadata(&bytes)?;
-                interval = tensors::meta(&meta, "interval")?
-                    .parse()
-                    .map_err(|e| Error::new(InvalidData, format!("invalid interval: {e}")))?;
+                interval = evals.interval;
             }
 
-            let eval_1d = tensors::read_array1("evaluation", &st)?;
-            let validation = tensors::read_array1("validation", &st)
-                .ok()
-                .map(|v| Evaluation {
-                    loss: v[0],
-                    accuracy: v[1],
-                });
             evaluations.push(EvaluationSet {
                 train: Evaluation {
-                    loss: eval_1d[0],
-                    accuracy: eval_1d[1],
+                    loss: evals.train.loss,
+                    accuracy: evals.train.accuracy,
                 },
-                validation,
+                validation: evals.validation.map(|v| Evaluation {
+                    loss: v.loss,
+                    accuracy: v.accuracy,
+                }),
                 test: Evaluation {
-                    loss: eval_1d[2],
-                    accuracy: eval_1d[3],
+                    loss: evals.test.loss,
+                    accuracy: evals.test.accuracy,
                 },
             });
             snapshot_paths.push(path);
@@ -174,7 +178,7 @@ impl TrainingHistory {
         })
     }
 
-    /// Loads the model at position `index` from its snapshot file on disk.
+    /// Loads the model at position `index` from its snapshot directory on disk.
     ///
     /// Only one model is read into memory per call. Returns an error when `index`
     /// is out of range or when this history was not loaded from disk (no paths).
@@ -186,7 +190,7 @@ impl TrainingHistory {
                  use TrainingHistory::load instead of by_interval/record",
             ));
         }
-        let path = self.snapshot_paths.get(index).ok_or_else(|| {
+        let dir = self.snapshot_paths.get(index).ok_or_else(|| {
             Error::new(
                 InvalidData,
                 format!(
@@ -196,7 +200,7 @@ impl TrainingHistory {
                 ),
             )
         })?;
-        let bytes = secure_read(path)?;
+        let bytes = secure_read(dir.join("model.safetensors"))?;
         let st =
             SafeTensors::deserialize(&bytes).map_err(|e| Error::new(InvalidData, e.to_string()))?;
         let metadata = tensors::read_metadata(&bytes)?;
@@ -245,9 +249,9 @@ mod tests {
     }
 
     fn write_n(dir: &Path, n: usize, with_validation: bool) {
-        let mut writer = TrainingHistoryWriter::create(dir, 10).unwrap();
+        let mut recorder = SnapshotRecorder::create(dir, 10).unwrap();
         for i in 0..n {
-            writer
+            recorder
                 .record(&sample_model(), &make_evaluation(i, with_validation))
                 .unwrap();
         }
@@ -291,11 +295,10 @@ mod tests {
         let model = sample_model();
         let inputs = Array2::from_shape_fn((2, 4), |(i, j)| (i + j) as f32 * 0.3);
 
-        let mut writer = TrainingHistoryWriter::create(&dir, 5).unwrap();
-        writer.record(&model, &make_evaluation(0, false)).unwrap();
+        let mut recorder = SnapshotRecorder::create(&dir, 5).unwrap();
+        recorder.record(&model, &make_evaluation(0, false)).unwrap();
 
         let history = TrainingHistory::load(&dir).unwrap();
-        // Load model lazily — only one in memory at a time.
         let loaded_model = history.model_at(0).unwrap();
         cleanup(&dir);
 
@@ -307,13 +310,11 @@ mod tests {
 
     #[test]
     fn numeric_sort_beats_lexical() {
-        // 12 snapshots: lexical sort puts snapshot-10 before snapshot-2.
-        // Numeric sort must restore the correct order.
         let dir = temp_dir("sort");
         let model = sample_model();
-        let mut writer = TrainingHistoryWriter::create(&dir, 1).unwrap();
+        let mut recorder = SnapshotRecorder::create(&dir, 1).unwrap();
         for i in 0..12 {
-            writer.record(&model, &make_evaluation(i, false)).unwrap();
+            recorder.record(&model, &make_evaluation(i, false)).unwrap();
         }
 
         let history = TrainingHistory::load(&dir).unwrap();
@@ -333,11 +334,9 @@ mod tests {
     fn create_purges_previous_snapshots() {
         let dir = temp_dir("purge");
 
-        // First run: 3 snapshots.
         write_n(&dir, 3, false);
         assert_eq!(TrainingHistory::load(&dir).unwrap().len(), 3);
 
-        // Second run with a fresh writer: should see only 2 new snapshots.
         write_n(&dir, 2, false);
         let history = TrainingHistory::load(&dir).unwrap();
         cleanup(&dir);
@@ -369,9 +368,11 @@ mod tests {
     fn corrupted_snapshot_fails() {
         let dir = temp_dir("corrupt");
 
-        // Write one valid snapshot, then add a corrupt file.
         write_n(&dir, 1, false);
-        fs::write(dir.join("snapshot-000001.safetensors"), b"not safetensors").unwrap();
+        // Add a second snapshot dir with a corrupt evaluations.json.
+        let bad_dir = dir.join("snapshot-000001");
+        fs::create_dir_all(&bad_dir).unwrap();
+        fs::write(bad_dir.join("evaluations.json"), b"not valid json").unwrap();
 
         let result = TrainingHistory::load(&dir);
         cleanup(&dir);
@@ -382,14 +383,14 @@ mod tests {
     fn missing_interval_metadata_fails() {
         let dir = temp_dir("no_interval");
 
-        let model = sample_model();
-        let mut entries = Vec::new();
-        let mut metadata = HashMap::new();
-        model.collect_tensors(&mut entries, &mut metadata);
-        // omit "interval" intentionally
-        let eval_data = Array1::from_vec(vec![0.0_f32, 0.0, 0.0, 0.0]);
-        entries.push(("evaluation".to_string(), tensors::tensor(&eval_data)));
-        tensors::save(dir.join("snapshot-000000"), entries, metadata).unwrap();
+        let bad_dir = dir.join("snapshot-000000");
+        fs::create_dir_all(&bad_dir).unwrap();
+        // evaluations.json without required 'interval' field.
+        fs::write(
+            bad_dir.join("evaluations.json"),
+            br#"{"epoch":0,"train":{"loss":0.0,"accuracy":0.0},"test":{"loss":0.0,"accuracy":0.0}}"#,
+        )
+        .unwrap();
 
         let result = TrainingHistory::load(&dir);
         cleanup(&dir);
@@ -400,14 +401,14 @@ mod tests {
     fn non_numeric_interval_fails() {
         let dir = temp_dir("bad_interval");
 
-        let model = sample_model();
-        let mut entries = Vec::new();
-        let mut metadata = HashMap::new();
-        model.collect_tensors(&mut entries, &mut metadata);
-        metadata.insert("interval".to_string(), "not_a_number".to_string());
-        let eval_data = Array1::from_vec(vec![0.0_f32, 0.0, 0.0, 0.0]);
-        entries.push(("evaluation".to_string(), tensors::tensor(&eval_data)));
-        tensors::save(dir.join("snapshot-000000"), entries, metadata).unwrap();
+        let bad_dir = dir.join("snapshot-000000");
+        fs::create_dir_all(&bad_dir).unwrap();
+        // 'interval' is a string instead of a usize.
+        fs::write(
+            bad_dir.join("evaluations.json"),
+            br#"{"interval":"not_a_number","epoch":0,"train":{"loss":0.0,"accuracy":0.0},"test":{"loss":0.0,"accuracy":0.0}}"#,
+        )
+        .unwrap();
 
         let result = TrainingHistory::load(&dir);
         cleanup(&dir);
@@ -417,14 +418,14 @@ mod tests {
     #[test]
     fn record_returns_expected_path() {
         let dir = temp_dir("ret_path");
-        let mut writer = TrainingHistoryWriter::create(&dir, 5).unwrap();
-        let path = writer
+        let mut recorder = SnapshotRecorder::create(&dir, 5).unwrap();
+        let path = recorder
             .record(&sample_model(), &make_evaluation(0, false))
             .unwrap();
         cleanup(&dir);
 
         let name = path.file_name().unwrap().to_str().unwrap();
-        assert_eq!(name, "snapshot-000000.safetensors");
+        assert_eq!(name, "snapshot-000000");
     }
 
     #[test]
@@ -432,9 +433,9 @@ mod tests {
         let dir = temp_dir("val_tensor");
         let model = sample_model();
 
-        let mut writer = TrainingHistoryWriter::create(&dir, 1).unwrap();
-        writer.record(&model, &make_evaluation(0, false)).unwrap();
-        writer.record(&model, &make_evaluation(1, true)).unwrap();
+        let mut recorder = SnapshotRecorder::create(&dir, 1).unwrap();
+        recorder.record(&model, &make_evaluation(0, false)).unwrap();
+        recorder.record(&model, &make_evaluation(1, true)).unwrap();
 
         let history = TrainingHistory::load(&dir).unwrap();
         cleanup(&dir);
@@ -455,7 +456,6 @@ mod tests {
 
     #[test]
     fn model_at_in_memory_history_fails_with_clear_message() {
-        // A history built with by_interval has no snapshot_paths.
         let mut th = TrainingHistory::by_interval(1, 1).unwrap();
         th.record(&crate::evaluation::EvaluationSet {
             train: crate::evaluation::Evaluation {
@@ -470,8 +470,6 @@ mod tests {
         });
         let err = th.model_at(0).err().unwrap();
         let msg = err.to_string();
-        // Must explicitly say "disk" so callers know the issue is no disk backing,
-        // not an out-of-range index.
         assert!(
             msg.contains("disk"),
             "error message should mention 'disk', got: {msg}"

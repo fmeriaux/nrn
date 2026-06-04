@@ -5,7 +5,7 @@ use nrn::data::Dataset;
 use nrn::data::scalers::ScalerMethod;
 use nrn::io::png::save_rgb;
 use nrn::io::scalers::ScalerRecord;
-use nrn::io::training_history::TrainingHistoryWriter;
+use nrn::io::training_history::SnapshotRecorder;
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::training_history::TrainingHistory;
 use std::error::Error;
@@ -125,9 +125,9 @@ pub(crate) fn load_history<P: AsRef<Path>>(path: P) -> Result<TrainingHistory, B
     Ok(history)
 }
 
-pub(crate) fn create_history_writer<P: AsRef<Path>>(
+pub(crate) fn create_snapshot_recorder<P: AsRef<Path>>(
     path: P,
     interval: usize,
-) -> Result<TrainingHistoryWriter, Box<dyn Error>> {
-    Ok(TrainingHistoryWriter::create(path, interval)?)
+) -> Result<SnapshotRecorder, Box<dyn Error>> {
+    Ok(SnapshotRecorder::create(path, interval)?)
 }

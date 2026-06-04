@@ -5,7 +5,7 @@ use clap::*;
 use console::style;
 use nrn::accuracies::{Accuracy, accuracy_for};
 use nrn::evaluation::EvaluationSet;
-use nrn::io::training_history::TrainingHistoryWriter;
+use nrn::io::training_history::SnapshotRecorder;
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::optimizers::{Adam, Optimizer, StochasticGradientDescent};
 use nrn::schedulers;
@@ -264,12 +264,12 @@ impl TrainArgs {
         let history_dir = path.with_file_name(format!("training-{}", model_name));
 
         // 👨‍🎓 TRAINING LOOP
-        let mut writer: Option<TrainingHistoryWriter> = if self.checkpoint_interval > 0 {
+        let mut writer: Option<SnapshotRecorder> = if self.checkpoint_interval > 0 {
             trace(&format!(
                 "Recording a checkpoint every {} epochs",
                 style(self.checkpoint_interval).yellow()
             ));
-            let mut w = create_history_writer(&history_dir, self.checkpoint_interval)?;
+            let mut w = create_snapshot_recorder(&history_dir, self.checkpoint_interval)?;
             let evaluations =
                 EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
             w.record(&model, &evaluations)?;

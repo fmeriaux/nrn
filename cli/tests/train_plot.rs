@@ -8,10 +8,11 @@ fn snapshot_count(history_dir: &std::path::Path) -> usize {
         .map(|rd| {
             rd.filter_map(Result::ok)
                 .filter(|e| {
-                    e.file_name()
-                        .to_str()
-                        .map(|n| n.starts_with("snapshot-") && n.ends_with(".safetensors"))
+                    let name = e.file_name();
+                    name.to_str()
+                        .map(|n| n.starts_with("snapshot-"))
                         .unwrap_or(false)
+                        && e.path().is_dir()
                 })
                 .count()
         })
