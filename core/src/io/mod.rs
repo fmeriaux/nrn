@@ -6,6 +6,7 @@ pub mod json;
 pub mod model;
 pub mod path;
 pub mod png;
+pub mod recorder;
 pub mod scalers;
 pub mod tensors;
 pub mod training_history;

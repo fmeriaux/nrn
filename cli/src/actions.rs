@@ -4,8 +4,8 @@ use nrn::charts::RenderConfig;
 use nrn::data::Dataset;
 use nrn::data::scalers::ScalerMethod;
 use nrn::io::png::save_rgb;
+use nrn::io::recorder::FileSnapshotRecorder;
 use nrn::io::scalers::ScalerRecord;
-use nrn::io::training_history::FileSnapshotRecorder;
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::training_history::TrainingHistory;
 use std::error::Error;
@@ -176,5 +176,5 @@ pub(crate) fn resume_snapshot_recorder<P: AsRef<Path>>(
     interval: usize,
     from_count: usize,
 ) -> Result<FileSnapshotRecorder, Box<dyn Error>> {
-    Ok(FileSnapshotRecorder::resume(path, interval, from_count)?)
+    Ok(FileSnapshotRecorder::resume(path, from_count)?)
 }

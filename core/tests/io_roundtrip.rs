@@ -8,8 +8,8 @@ use nrn::data::Dataset;
 use nrn::data::scalers::{MinMaxScaler, Scaler, ScalerMethod};
 use nrn::evaluation::{Evaluation, EvaluationSet};
 use nrn::io::data::{load_inputs, save_inputs};
+use nrn::io::recorder::FileSnapshotRecorder;
 use nrn::io::scalers::ScalerRecord;
-use nrn::io::training_history::FileSnapshotRecorder;
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::Adam;
@@ -97,7 +97,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
                     accuracy: 0.5,
                 },
             };
-            recorder.record(&model, &evaluation).unwrap();
+            recorder.record(&model, &evaluation, epoch * 5).unwrap();
             last_recorded_predictions = Some(predictions);
         }
     }

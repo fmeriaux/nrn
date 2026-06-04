@@ -6,7 +6,7 @@ use console::style;
 use nrn::accuracies::{Accuracy, accuracy_for};
 use nrn::data::ModelSplit;
 use nrn::evaluation::EvaluationSet;
-use nrn::io::training_history::{FileSnapshotRecorder, SnapshotMeta};
+use nrn::io::recorder::{FileSnapshotRecorder, TrainingMeta};
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::NeuralNetwork;
 use nrn::optimizers::{Adam, Optimizer, StochasticGradientDescent};
@@ -349,7 +349,7 @@ impl StartArgs {
                 &split,
                 None,
             );
-            recorder.record(&model, &evals)?;
+            recorder.record(&model, &evals, 0)?;
             Checkpoints::new(Box::new(recorder), interval, self.hp.epochs)
         } else {
             Checkpoints::new(Box::new(NoOpSnapshotRecorder), 0, self.hp.epochs)
@@ -394,7 +394,7 @@ impl ResumeArgs {
         self.hp.validate()?;
 
         let history_dir = Path::new(&self.history_dir);
-        let meta = SnapshotMeta::load(history_dir)?;
+        let meta = TrainingMeta::load(history_dir)?;
 
         let dataset = load_dataset(&meta.dataset)?;
         dataset.validate()?;
@@ -449,11 +449,7 @@ impl ResumeArgs {
                 style(interval).yellow()
             ));
             Checkpoints::new(
-                Box::new(FileSnapshotRecorder::resume(
-                    history_dir,
-                    interval,
-                    snapshot_idx,
-                )?),
+                Box::new(FileSnapshotRecorder::resume(history_dir, snapshot_idx)?),
                 interval,
                 self.hp.epochs,
             )
@@ -544,7 +540,7 @@ impl TrainingLoop {
                         &self.split,
                         None,
                     );
-                    self.checkpoints.record(&self.model, &evals)?;
+                    self.checkpoints.record(&self.model, &evals, epoch + 1)?;
                     final_evaluations = Some(evals);
                     break;
                 }
@@ -570,7 +566,7 @@ impl TrainingLoop {
                     &self.split,
                     Some(train_preds.view()),
                 );
-                self.checkpoints.record(&self.model, &evals)?;
+                self.checkpoints.record(&self.model, &evals, epoch + 1)?;
                 true
             } else {
                 false
@@ -604,7 +600,8 @@ impl TrainingLoop {
                         None,
                     );
                     if !wrote_this_epoch {
-                        self.checkpoints.record(&self.model, &stop_evals)?;
+                        self.checkpoints
+                            .record(&self.model, &stop_evals, epoch + 1)?;
                     }
                     final_evaluations = Some(stop_evals);
                     break;
