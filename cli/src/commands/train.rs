@@ -335,7 +335,7 @@ impl StartArgs {
                 "Recording a checkpoint every {} epochs",
                 style(interval).yellow()
             ));
-            let mut r =
+            let mut recorder =
                 SnapshotRecorder::create(&history_dir, interval, &dataset_name, self.overwrite)?;
             let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
             let evals = EvaluationSet::using_model(
@@ -345,8 +345,8 @@ impl StartArgs {
                 &split,
                 None,
             );
-            r.record(&model, &evals)?;
-            Checkpoints::new(Box::new(r), interval, self.hp.epochs)
+            recorder.record(&model, &evals)?;
+            Checkpoints::new(Box::new(recorder), interval, self.hp.epochs)
         } else {
             Checkpoints::new(Box::new(NoOpRecorder), 0, self.hp.epochs)
         };
