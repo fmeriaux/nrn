@@ -4,15 +4,17 @@ use crate::progression::Progression;
 use clap::*;
 use console::style;
 use nrn::accuracies::{Accuracy, accuracy_for};
+use nrn::data::ModelSplit;
 use nrn::evaluation::EvaluationSet;
 use nrn::io::training_history::{SnapshotMeta, SnapshotRecorder};
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::NeuralNetwork;
 use nrn::optimizers::{Adam, Optimizer, StochasticGradientDescent};
-use nrn::recorders::{Checkpoints, NoOpRecorder};
+use nrn::recorders::{Checkpoints, NoOpRecorder, Recorder};
 use nrn::schedulers;
 use nrn::schedulers::{ConstantScheduler, Scheduler, StepDecay};
 use nrn::training::{EarlyStopping, GradientClipping, LearningRate};
+use nrn::training_history::TrainingHistory;
 use schedulers::CosineAnnealing;
 use std::error::Error;
 use std::fmt::Display;
@@ -327,16 +329,14 @@ impl StartArgs {
         let history_dir = dataset_path.with_file_name(format!("training-model-{dataset_name}"));
         let model_save_path = dataset_path.with_file_name(format!("model-{dataset_name}"));
 
-        let mut checkpoints = start_checkpoints(
-            &history_dir,
-            self.hp.checkpoint_interval,
-            &dataset_name,
-            self.overwrite,
-            self.hp.epochs,
-        )?;
-
-        // Record the initial model state before training begins.
-        if self.hp.checkpoint_interval > 0 {
+        let interval = self.hp.checkpoint_interval;
+        let mut checkpoints = if interval > 0 {
+            trace(&format!(
+                "Recording a checkpoint every {} epochs",
+                style(interval).yellow()
+            ));
+            let mut r =
+                SnapshotRecorder::create(&history_dir, interval, &dataset_name, self.overwrite)?;
             let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
             let evals = EvaluationSet::using_model(
                 &model,
@@ -345,13 +345,16 @@ impl StartArgs {
                 &split,
                 None,
             );
-            checkpoints.record(&model, &evals)?;
-        }
+            r.record(&model, &evals)?;
+            Checkpoints::new(Box::new(r), interval, self.hp.epochs)
+        } else {
+            Checkpoints::new(Box::new(NoOpRecorder), 0, self.hp.epochs)
+        };
 
         TrainingLoop {
             model,
             checkpoints,
-            history_dir: (self.hp.checkpoint_interval > 0).then(|| history_dir),
+            history_dir: (interval > 0).then(|| history_dir),
             split,
             accuracy: accuracy_for(dataset.n_classes()),
             optimizer: self.hp.make_optimizer(),
@@ -397,7 +400,7 @@ impl ResumeArgs {
             .split(self.hp.val_ratio, self.hp.test_ratio);
         completed(split.summary().as_str());
 
-        let history = nrn::training_history::TrainingHistory::load(history_dir)?;
+        let history = TrainingHistory::load(history_dir)?;
         if history.is_empty() {
             return Err(format!(
                 "No snapshots found in '{}'; cannot resume.",
@@ -435,13 +438,29 @@ impl ResumeArgs {
             .unwrap_or(Path::new("."))
             .join(format!("model-{}", meta.dataset));
 
-        let checkpoints =
-            resume_checkpoints(history_dir, meta.interval, snapshot_idx, self.hp.epochs)?;
+        let interval = meta.interval;
+        let checkpoints = if interval > 0 {
+            trace(&format!(
+                "Recording a checkpoint every {} epochs",
+                style(interval).yellow()
+            ));
+            Checkpoints::new(
+                Box::new(SnapshotRecorder::resume(
+                    history_dir,
+                    interval,
+                    snapshot_idx,
+                )?),
+                interval,
+                self.hp.epochs,
+            )
+        } else {
+            Checkpoints::new(Box::new(NoOpRecorder), 0, self.hp.epochs)
+        };
 
         TrainingLoop {
             model,
             checkpoints,
-            history_dir: (self.hp.checkpoint_interval > 0).then(|| history_dir.to_path_buf()),
+            history_dir: (interval > 0).then(|| history_dir.to_path_buf()),
             split,
             accuracy: accuracy_for(dataset.n_classes()),
             optimizer: self.hp.make_optimizer(),
@@ -463,7 +482,7 @@ struct TrainingLoop {
     model: NeuralNetwork,
     checkpoints: Checkpoints,
     history_dir: Option<PathBuf>,
-    split: nrn::data::ModelSplit,
+    split: ModelSplit,
     accuracy: Arc<dyn Accuracy>,
     optimizer: Box<dyn Optimizer>,
     scheduler: Box<dyn Scheduler>,
@@ -612,55 +631,5 @@ impl TrainingLoop {
         }
 
         Ok(())
-    }
-}
-
-// ─── Checkpoint factories ─────────────────────────────────────────────────────
-
-fn start_checkpoints<P: AsRef<std::path::Path>>(
-    history_dir: P,
-    interval: usize,
-    dataset: &str,
-    overwrite: bool,
-    total_epochs: usize,
-) -> Result<Checkpoints, Box<dyn Error>> {
-    if interval > 0 {
-        trace(&format!(
-            "Recording a checkpoint every {} epochs",
-            style(interval).yellow()
-        ));
-        Ok(Checkpoints::new(
-            Box::new(SnapshotRecorder::create(
-                history_dir,
-                interval,
-                dataset,
-                overwrite,
-            )?),
-            interval,
-            total_epochs,
-        ))
-    } else {
-        Ok(Checkpoints::new(Box::new(NoOpRecorder), 0, total_epochs))
-    }
-}
-
-fn resume_checkpoints<P: AsRef<std::path::Path>>(
-    history_dir: P,
-    interval: usize,
-    from_index: usize,
-    total_epochs: usize,
-) -> Result<Checkpoints, Box<dyn Error>> {
-    if interval > 0 {
-        trace(&format!(
-            "Recording a checkpoint every {} epochs",
-            style(interval).yellow()
-        ));
-        Ok(Checkpoints::new(
-            Box::new(SnapshotRecorder::resume(history_dir, interval, from_index)?),
-            interval,
-            total_epochs,
-        ))
-    } else {
-        Ok(Checkpoints::new(Box::new(NoOpRecorder), 0, total_epochs))
     }
 }
