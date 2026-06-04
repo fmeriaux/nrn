@@ -304,9 +304,7 @@ impl TrainArgs {
             );
 
             if !model.is_finite() {
-                let recovered = early_stopping
-                    .as_mut()
-                    .and_then(|es| es.best_model.take());
+                let recovered = early_stopping.as_mut().and_then(|es| es.best_model.take());
 
                 if let Some(best) = recovered {
                     progression.done();
