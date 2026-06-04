@@ -279,6 +279,11 @@ impl TrainArgs {
         };
 
         let mut early_stopping = self.early_stopping();
+        // Seed the best model with the pre-training state so that divergence at epoch 1
+        // (before any es.check() call) can still recover instead of erroring out.
+        if let Some(ref mut es) = early_stopping {
+            es.seed_best_model(&model);
+        }
         // Holds the final evaluations when early stopping fires, so the post-loop
         // summary can reuse them instead of running a second forward pass.
         let mut final_evaluations: Option<EvaluationSet> = None;
@@ -295,12 +300,35 @@ impl TrainArgs {
             );
 
             if !model.is_finite() {
+                let recovered = early_stopping
+                    .as_mut()
+                    .and_then(|es| es.best_model.take());
+
+                if let Some(best) = recovered {
+                    progression.done();
+                    warning(&format!(
+                        "Model diverged at epoch {} (NaN/Inf); recovered best model from early stopping.",
+                        epoch + 1
+                    ));
+                    model = best;
+                    let evals =
+                        EvaluationSet::using_model(&model, &loss_function, &accuracy, &split, None);
+                    // No checkpoint was written for this epoch yet (divergence precedes the
+                    // checkpoint block), so always record the recovered model.
+                    if let Some(ref mut w) = writer {
+                        w.record(&model, &evals)?;
+                    }
+                    final_evaluations = Some(evals);
+                    break;
+                }
+
                 if let Some(ref writer) = writer {
                     saved_at(HISTORY_ICON, "TRAINING HISTORY", writer.dir());
                 }
                 return Err(format!(
                     "Model diverged at epoch {} (NaN/Inf in weights). \
-                     Try: --scheduler cosine, a lower --lr, or stronger gradient clipping.",
+                     Try: --early-stopping with --restore-best-model, --scheduler cosine, \
+                     a lower --lr, or stronger gradient clipping.",
                     epoch + 1
                 )
                 .into());

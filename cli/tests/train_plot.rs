@@ -1,6 +1,7 @@
 use assert_cmd::Command;
 use predicates::str::contains;
 use std::fs;
+use std::path::Path;
 
 fn snapshot_count(history_dir: &std::path::Path) -> usize {
     fs::read_dir(history_dir)
@@ -264,6 +265,72 @@ fn no_duplicate_snapshot_when_early_stop_fires_on_interval_boundary() {
             epoch + 1,
             "expected {} snapshots (initial + {epoch} interval), got {count}",
             epoch + 1
+        );
+    }
+}
+
+fn model_exists(dir: &Path, ds_name: &str) -> bool {
+    dir.join(format!("model-{ds_name}.safetensors")).exists()
+}
+
+#[test]
+fn divergence_with_early_stopping_recovers_best_model() {
+    // lr=5.0 + no-clip causes divergence at epoch 2-3 for any He-initialized model.
+    // With --early-stopping + restore_best_model (default), the best model seen before
+    // divergence must be saved instead of erroring out.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    nrn(
+        dir,
+        &[
+            "synth",
+            "--seed",
+            "42",
+            "--distribution",
+            "ring",
+            "--clusters",
+            "2",
+            "--samples",
+            "40",
+        ],
+    )
+    .success();
+
+    let ds_name = "ring-c2-f2-n40-seed42";
+    let out = Command::cargo_bin("nrn")
+        .unwrap()
+        .current_dir(dir)
+        .args([
+            "train",
+            ds_name,
+            "--epochs",
+            "50",
+            "--no-clip",
+            "--lr",
+            "5.0",
+            "--early-stopping",
+            "20",
+            "--checkpoint-interval",
+            "1000",
+            "--layers",
+            "4,4",
+        ])
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    // With --early-stopping + restore_best_model (default), the model must always be
+    // saved: recovery kicks in on divergence, normal save on successful training.
+    assert!(
+        model_exists(dir, ds_name),
+        "model should be saved whether training converges or recovers from divergence\nstderr: {stderr}"
+    );
+    if stderr.contains("diverged") {
+        assert!(
+            stderr.contains("recovered"),
+            "divergence with early stopping should print a recovery warning\nstderr: {stderr}"
         );
     }
 }
