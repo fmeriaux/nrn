@@ -1,5 +1,6 @@
 pub mod accuracies;
 pub mod activations;
+pub mod checkpoints;
 pub mod evaluation;
 pub mod initializations;
 pub mod loss_functions;

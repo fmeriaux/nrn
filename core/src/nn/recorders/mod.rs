@@ -1,7 +1,5 @@
-mod checkpoints;
 mod noop;
 
-pub use checkpoints::Checkpoints;
 pub use noop::NoOpSnapshotRecorder;
 
 use crate::evaluation::EvaluationSet;
