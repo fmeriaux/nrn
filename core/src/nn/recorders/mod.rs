@@ -1,7 +1,6 @@
 use crate::evaluation::EvaluationSet;
 use crate::model::NeuralNetwork;
 use std::io::Result;
-use std::path::Path;
 
 /// Observes training progress by recording model snapshots at each checkpoint.
 ///
@@ -9,9 +8,6 @@ use std::path::Path;
 /// knowing whether snapshots are written to disk or discarded.
 pub trait Recorder {
     fn record(&mut self, model: &NeuralNetwork, evaluation: &EvaluationSet) -> Result<()>;
-
-    /// Returns the directory where snapshots are written, or `None` for no-op recorders.
-    fn dir(&self) -> Option<&Path>;
 }
 
 /// A recorder that discards all snapshots (used when checkpointing is disabled).
@@ -21,16 +17,12 @@ impl Recorder for NoOpRecorder {
     fn record(&mut self, _model: &NeuralNetwork, _evaluation: &EvaluationSet) -> Result<()> {
         Ok(())
     }
-
-    fn dir(&self) -> Option<&Path> {
-        None
-    }
 }
 
 /// Orchestrates when model snapshots are written during training.
 ///
 /// Wraps a [`Recorder`] and adds interval-based scheduling so the training
-/// loop stays free of checkpoint-timing decisions.  The concrete recorder
+/// loop stays free of checkpoint-timing decisions. The concrete recorder
 /// (file-backed or no-op) is supplied by the caller.
 pub struct Checkpoints {
     recorder: Box<dyn Recorder>,
@@ -60,11 +52,6 @@ impl Checkpoints {
     /// early stopping flush when the interval didn't already capture the epoch.
     pub fn record(&mut self, model: &NeuralNetwork, eval: &EvaluationSet) -> Result<()> {
         self.recorder.record(model, eval)
-    }
-
-    /// Returns the history directory, or `None` when checkpointing is disabled.
-    pub fn dir(&self) -> Option<&Path> {
-        self.recorder.dir()
     }
 }
 
@@ -101,11 +88,6 @@ mod tests {
     }
 
     #[test]
-    fn noop_recorder_dir_is_none() {
-        assert!(NoOpRecorder.dir().is_none());
-    }
-
-    #[test]
     fn checkpoints_is_due_respects_interval() {
         let c = Checkpoints::new(Box::new(NoOpRecorder), 5, 20);
         assert!(!c.is_due(0)); // epoch 1
@@ -128,11 +110,5 @@ mod tests {
     fn checkpoints_record_delegates_to_recorder() {
         let mut c = Checkpoints::new(Box::new(NoOpRecorder), 5, 10);
         assert!(c.record(&sample_model(), &sample_eval()).is_ok());
-    }
-
-    #[test]
-    fn checkpoints_dir_is_none_for_noop() {
-        let c = Checkpoints::new(Box::new(NoOpRecorder), 5, 10);
-        assert!(c.dir().is_none());
     }
 }

@@ -180,10 +180,6 @@ impl Recorder for SnapshotRecorder {
         self.count += 1;
         Ok(())
     }
-
-    fn dir(&self) -> Option<&Path> {
-        Some(&self.dir)
-    }
 }
 
 impl TrainingHistory {

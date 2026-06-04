@@ -351,6 +351,7 @@ impl StartArgs {
         TrainingLoop {
             model,
             checkpoints,
+            history_dir: (self.hp.checkpoint_interval > 0).then(|| history_dir),
             split,
             accuracy: accuracy_for(dataset.n_classes()),
             optimizer: self.hp.make_optimizer(),
@@ -440,6 +441,7 @@ impl ResumeArgs {
         TrainingLoop {
             model,
             checkpoints,
+            history_dir: (self.hp.checkpoint_interval > 0).then(|| history_dir.to_path_buf()),
             split,
             accuracy: accuracy_for(dataset.n_classes()),
             optimizer: self.hp.make_optimizer(),
@@ -460,6 +462,7 @@ impl ResumeArgs {
 struct TrainingLoop {
     model: NeuralNetwork,
     checkpoints: Checkpoints,
+    history_dir: Option<PathBuf>,
     split: nrn::data::ModelSplit,
     accuracy: Arc<dyn Accuracy>,
     optimizer: Box<dyn Optimizer>,
@@ -523,7 +526,7 @@ impl TrainingLoop {
                     break;
                 }
 
-                if let Some(dir) = self.checkpoints.dir() {
+                if let Some(ref dir) = self.history_dir {
                     saved_at(HISTORY_ICON, "TRAINING HISTORY", dir);
                 }
                 return Err(format!(
@@ -604,7 +607,7 @@ impl TrainingLoop {
 
         save_model(&self.model_save_path, &self.model)?;
 
-        if let Some(dir) = self.checkpoints.dir() {
+        if let Some(ref dir) = self.history_dir {
             saved_at(HISTORY_ICON, "TRAINING HISTORY", dir);
         }
 
