@@ -46,16 +46,19 @@ impl TrainingHistory {
                 interval,
                 evaluations: Vec::new(),
                 snapshot_paths: Vec::new(),
+                snapshot_epochs: Vec::new(),
             });
         }
 
         let n = indexed.len();
         let mut evaluations = Vec::with_capacity(n);
         let mut snapshot_paths = Vec::with_capacity(n);
+        let mut snapshot_epochs = Vec::with_capacity(n);
 
         for (_, path) in indexed {
             let evals: SnapshotEvals = json::load(path.join("evaluations"))?;
 
+            snapshot_epochs.push(evals.epoch);
             evaluations.push(EvaluationSet {
                 train: Evaluation {
                     loss: evals.train.loss,
@@ -77,6 +80,7 @@ impl TrainingHistory {
             interval,
             evaluations,
             snapshot_paths,
+            snapshot_epochs,
         })
     }
 
@@ -259,6 +263,34 @@ mod tests {
 
         assert!(history.model_at(0).is_err());
         cleanup(&dir);
+    }
+
+    #[test]
+    fn epoch_at_returns_stored_epoch_for_each_snapshot() {
+        let dir = temp_dir("epoch_at");
+        // Simulate uniform checkpoints + one force-record at a non-interval epoch.
+        let mut recorder = FileSnapshotRecorder::create(&dir, 10, "ds", false).unwrap();
+        for (epoch, loss) in [(0usize, 0.0f32), (10, 1.0), (20, 2.0), (23, 3.0)] {
+            recorder
+                .record(
+                    &sample_model(),
+                    &crate::evaluation::EvaluationSet {
+                        train: crate::evaluation::Evaluation { loss, accuracy: 0.5 },
+                        validation: None,
+                        test: crate::evaluation::Evaluation { loss, accuracy: 0.5 },
+                    },
+                    epoch,
+                )
+                .unwrap();
+        }
+        let history = TrainingHistory::load(&dir).unwrap();
+        cleanup(&dir);
+
+        assert_eq!(history.epoch_at(0), Some(0));
+        assert_eq!(history.epoch_at(1), Some(10));
+        assert_eq!(history.epoch_at(2), Some(20));
+        assert_eq!(history.epoch_at(3), Some(23)); // force-recorded, not at interval boundary
+        assert_eq!(history.epoch_at(4), None);
     }
 
     #[test]

@@ -11,7 +11,7 @@ use nrn::io::recorder::{FileSnapshotRecorder, TrainingMeta};
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::NeuralNetwork;
 use nrn::optimizers::{Adam, Optimizer, StochasticGradientDescent};
-use nrn::recorders::{NoOpSnapshotRecorder, SnapshotRecorder};
+use nrn::recorders::SnapshotRecorder;
 use nrn::schedulers;
 use nrn::schedulers::{ConstantScheduler, Scheduler, StepDecay};
 use nrn::training::{EarlyStopping, GradientClipping, LearningRate};
@@ -331,34 +331,17 @@ impl StartArgs {
         let model_save_path = dataset_path.with_file_name(format!("model-{dataset_name}"));
 
         let interval = self.hp.checkpoint_interval;
-        let mut checkpoints = if interval > 0 {
-            trace(&format!(
-                "Recording a checkpoint every {} epochs",
-                style(interval).yellow()
-            ));
-            let mut recorder = FileSnapshotRecorder::create(
-                &history_dir,
-                interval,
-                &dataset_name,
-                self.overwrite,
-            )?;
-            let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
-            let evals = EvaluationSet::using_model(
-                &model,
-                &loss_fn,
-                &accuracy_for(dataset.n_classes()),
-                &split,
-                None,
-            );
-            recorder.record(&model, &evals, 0)?;
-            Checkpoints::new(Box::new(recorder), interval, self.hp.epochs)
+        let recorder: Option<Box<dyn SnapshotRecorder>> = if interval > 0 {
+            trace(&format!("Recording a checkpoint every {} epochs", style(interval).yellow()));
+            Some(Box::new(FileSnapshotRecorder::create(&history_dir, interval, &dataset_name, self.overwrite)?))
         } else {
-            Checkpoints::new(Box::new(NoOpSnapshotRecorder), 0, self.hp.epochs)
+            None
         };
 
         TrainingLoop {
             model,
-            checkpoints,
+            recorder,
+            interval,
             history_dir: (interval > 0).then(|| history_dir),
             split,
             accuracy: accuracy_for(dataset.n_classes()),
@@ -366,6 +349,7 @@ impl StartArgs {
             scheduler: self.hp.make_scheduler(),
             clipping: self.hp.infer_clipping(),
             early_stopping: self.hp.early_stopping(),
+            epoch_start: 0,
             epochs: self.hp.epochs,
             restore_best_model: self.hp.restore_best_model,
             batch_size: self.hp.batch_size,
@@ -444,23 +428,23 @@ impl ResumeArgs {
             .join(format!("model-{}", meta.dataset));
 
         let interval = meta.interval;
-        let checkpoints = if interval > 0 {
-            trace(&format!(
-                "Recording a checkpoint every {} epochs",
-                style(interval).yellow()
-            ));
-            Checkpoints::new(
-                Box::new(FileSnapshotRecorder::resume(history_dir, snapshot_idx)?),
-                interval,
-                self.hp.epochs,
-            )
+        // Use the epoch stored in the snapshot's evaluations.json rather than
+        // recomputing snapshot_idx * interval: the formula breaks when force_record
+        // inserted out-of-schedule snapshots (early stopping, divergence recovery).
+        let epoch_start = history
+            .epoch_at(snapshot_idx)
+            .expect("snapshot_idx was just validated against history.len()");
+        let recorder: Option<Box<dyn SnapshotRecorder>> = if interval > 0 {
+            trace(&format!("Recording a checkpoint every {} epochs", style(interval).yellow()));
+            Some(Box::new(FileSnapshotRecorder::resume(history_dir, snapshot_idx)?))
         } else {
-            Checkpoints::new(Box::new(NoOpSnapshotRecorder), 0, self.hp.epochs)
+            None
         };
 
         TrainingLoop {
             model,
-            checkpoints,
+            recorder,
+            interval,
             history_dir: (interval > 0).then(|| history_dir.to_path_buf()),
             split,
             accuracy: accuracy_for(dataset.n_classes()),
@@ -468,6 +452,7 @@ impl ResumeArgs {
             scheduler: self.hp.make_scheduler(),
             clipping: self.hp.infer_clipping(),
             early_stopping: self.hp.early_stopping(),
+            epoch_start,
             epochs: self.hp.epochs,
             restore_best_model: self.hp.restore_best_model,
             batch_size: self.hp.batch_size,
@@ -481,7 +466,8 @@ impl ResumeArgs {
 
 struct TrainingLoop {
     model: NeuralNetwork,
-    checkpoints: Checkpoints,
+    recorder: Option<Box<dyn SnapshotRecorder>>,
+    interval: usize,
     history_dir: Option<PathBuf>,
     split: ModelSplit,
     accuracy: Arc<dyn Accuracy>,
@@ -489,6 +475,7 @@ struct TrainingLoop {
     scheduler: Box<dyn Scheduler>,
     clipping: GradientClipping,
     early_stopping: Option<EarlyStopping>,
+    epoch_start: usize,
     epochs: usize,
     restore_best_model: bool,
     batch_size: Option<usize>,
@@ -502,6 +489,23 @@ impl TrainingLoop {
             "Using {} loss function",
             style("Cross-Entropy").bold().blue()
         ));
+
+        let mut checkpoints = if let Some(recorder) = self.recorder.take() {
+            Checkpoints::recording(recorder, self.interval, self.epoch_start + self.epochs)
+        } else {
+            Checkpoints::disabled()
+        };
+
+        if self.epoch_start == 0 {
+            let evals = EvaluationSet::using_model(
+                &self.model,
+                &loss_function,
+                &self.accuracy,
+                &self.split,
+                None,
+            );
+            checkpoints.record(&self.model, &evals, 0)?;
+        }
 
         let mut early_stopping = self.early_stopping;
         // Seed best model before epoch 1 so divergence at the first epoch can recover.
@@ -541,7 +545,7 @@ impl TrainingLoop {
                         &self.split,
                         None,
                     );
-                    self.checkpoints.record(&self.model, &evals, epoch + 1)?;
+                    checkpoints.force_record(&self.model, &evals, self.epoch_start + epoch + 1)?;
                     final_evaluations = Some(evals);
                     break;
                 }
@@ -558,7 +562,8 @@ impl TrainingLoop {
                 .into());
             }
 
-            let wrote_this_epoch = if self.checkpoints.is_due(epoch) {
+            let abs_epoch = self.epoch_start + epoch + 1;
+            let wrote_this_epoch = if checkpoints.is_due(abs_epoch) {
                 let train_preds = self.model.predict(self.split.train.inputs.view());
                 let evals = EvaluationSet::using_model(
                     &self.model,
@@ -567,7 +572,7 @@ impl TrainingLoop {
                     &self.split,
                     Some(train_preds.view()),
                 );
-                self.checkpoints.record(&self.model, &evals, epoch + 1)?;
+                checkpoints.record(&self.model, &evals, abs_epoch)?;
                 true
             } else {
                 false
@@ -601,8 +606,8 @@ impl TrainingLoop {
                         None,
                     );
                     if !wrote_this_epoch {
-                        self.checkpoints
-                            .record(&self.model, &stop_evals, epoch + 1)?;
+                        checkpoints
+                            .force_record(&self.model, &stop_evals, self.epoch_start + epoch + 1)?;
                     }
                     final_evaluations = Some(stop_evals);
                     break;

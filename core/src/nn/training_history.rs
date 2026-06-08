@@ -11,6 +11,9 @@ pub struct TrainingHistory {
     /// Sorted snapshot file paths, set only when loaded from disk via [`TrainingHistory::load`].
     /// Empty for in-memory histories built with [`by_interval`] / [`record`].
     pub(crate) snapshot_paths: Vec<PathBuf>,
+    /// Absolute epoch number stored in each snapshot's `evaluations.json`.
+    /// Parallel to `evaluations` and `snapshot_paths`; empty for in-memory histories.
+    pub(crate) snapshot_epochs: Vec<usize>,
 }
 
 impl TrainingHistory {
@@ -28,6 +31,7 @@ impl TrainingHistory {
                 interval,
                 evaluations: Vec::with_capacity(capacity),
                 snapshot_paths: Vec::new(),
+                snapshot_epochs: Vec::new(),
             })
     }
 
@@ -44,6 +48,12 @@ impl TrainingHistory {
     /// Returns true if no snapshots have been recorded.
     pub fn is_empty(&self) -> bool {
         self.evaluations.is_empty()
+    }
+
+    /// Returns the absolute epoch number stored in the snapshot at `idx`,
+    /// or `None` if `idx` is out of range or this is an in-memory history.
+    pub fn epoch_at(&self, idx: usize) -> Option<usize> {
+        self.snapshot_epochs.get(idx).copied()
     }
 
     /// Returns the final evaluation recorded at the last snapshot, if available.
