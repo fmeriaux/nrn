@@ -1,8 +1,9 @@
 use crate::actions::{load_dataset, load_history};
 use crate::display::warning;
 use crate::display::{ANIMATION_ICON, HISTORY_ICON, saved_at};
-use crate::progression::Progression;
+use crate::progression::bar;
 use clap::Args;
+use indicatif::ProgressIterator;
 use nrn::charts::RenderConfig;
 use nrn::io::gif::save_gif_from_rgb;
 use nrn::io::png::save_rgb;
@@ -36,12 +37,13 @@ pub struct PlotArgs {
 
 impl PlotArgs {
     pub fn run(self) -> Result<(), Box<dyn Error>> {
-        let checkpoints = load_history(&self.checkpoints)?;
+        let archive = load_history(&self.checkpoints)?;
+        let history = archive.history()?;
         let render_cfg = RenderConfig::new(self.width as u32, self.height as u32);
 
         let (width, height) = (self.width as u32, self.height as u32);
 
-        let frame = checkpoints.draw(&render_cfg)?;
+        let frame = history.draw(&render_cfg)?;
 
         saved_at(
             HISTORY_ICON,
@@ -59,19 +61,19 @@ impl PlotArgs {
                 return Ok(());
             }
 
-            let n = checkpoints.len();
+            let n = archive.len();
             let interval = n / n.min(self.frames.into());
 
-            let progression = Progression::new(n, "Generating decision boundary animation");
+            let progress = bar(n, "Generating decision boundary animation");
 
             let mut decision_frames = Vec::new();
 
-            for step in progression.iter() {
+            for step in (0..n).progress_with(progress) {
                 let step_number = step + 1;
 
                 if step_number == 1 || step_number % interval == 0 || step_number == n {
                     // Load one model at a time — no full snapshot array in memory.
-                    let model = checkpoints.model_at(step)?;
+                    let model = archive.model_at(step)?;
                     let rgb_frame = model.draw_decision_boundary(&dataset, &render_cfg)?;
                     decision_frames.push(rgb_frame);
                 }

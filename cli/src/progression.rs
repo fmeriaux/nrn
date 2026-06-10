@@ -1,38 +1,64 @@
-use indicatif::{ProgressBar, ProgressBarIter, ProgressDrawTarget, ProgressStyle};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
+use nrn::callbacks::{TrainingCallback, TrainingOutcome};
+use nrn::evaluation::EvaluationSet;
+use nrn::training::TrainingConfig;
 use std::borrow::Cow;
-use std::ops::Range;
+use std::io::Result;
+
+/// Builds a hidden progress bar with the project's standard style, drawn to stdout.
+fn styled_bar() -> ProgressBar {
+    let bar = ProgressBar::hidden();
+    bar.set_style(
+        ProgressStyle::with_template(
+            "{msg} {spinner:.green} [{elapsed_precise}] {wide_bar} {pos}/{len} {percent}% ({eta})",
+        )
+        .unwrap(),
+    );
+    bar.set_draw_target(ProgressDrawTarget::stdout());
+    bar
+}
+
+/// A standalone progress bar of known length, for use with [`indicatif::ProgressIterator`].
+pub fn bar(len: usize, msg: impl Into<Cow<'static, str>>) -> ProgressBar {
+    let bar = styled_bar();
+    bar.set_length(len as u64);
+    bar.set_message(msg);
+    bar
+}
 
 pub struct Progression {
-    length: usize,
+    msg: Cow<'static, str>,
     bar: ProgressBar,
 }
 
 impl Progression {
-    pub fn new(len: usize, msg: impl Into<Cow<'static, str>>) -> Progression {
-        let bar = ProgressBar::hidden();
-        bar.set_length(len as u64);
-        bar.set_style(
-            ProgressStyle::with_template(
-                "{msg} {spinner:.green} [{elapsed_precise}] {wide_bar} {pos}/{len} {percent}% ({eta})",
-            )
-            .unwrap(),
-        );
+    pub fn new(msg: impl Into<Cow<'static, str>>) -> Progression {
+        Progression {
+            msg: msg.into(),
+            bar: styled_bar(),
+        }
+    }
+}
 
-        bar.set_message(msg);
-        bar.set_draw_target(ProgressDrawTarget::stdout());
-
-        Progression { length: len, bar }
+impl TrainingCallback for Progression {
+    fn on_train_start(&mut self, config: &TrainingConfig<'_>) -> Result<()> {
+        self.bar.set_length(config.epochs as u64);
+        self.bar.set_message(self.msg.clone());
+        Ok(())
     }
 
-    pub fn inc(&self) {
+    fn on_epoch_end(&mut self, _epoch: usize) -> Result<()> {
         self.bar.inc(1);
+        Ok(())
     }
 
-    pub fn done(&self) {
+    fn on_train_end(
+        &mut self,
+        _outcome: TrainingOutcome,
+        _eval: Option<&EvaluationSet>,
+        _epoch: usize,
+    ) -> Result<()> {
         self.bar.finish_and_clear();
-    }
-
-    pub fn iter(&self) -> ProgressBarIter<Range<usize>> {
-        self.bar.wrap_iter(0..self.length)
+        Ok(())
     }
 }

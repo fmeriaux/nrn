@@ -23,6 +23,10 @@ impl StochasticGradientDescent {
 }
 
 impl Optimizer for StochasticGradientDescent {
+    fn name(&self) -> &str {
+        "Stochastic Gradient Descent (SGD)"
+    }
+
     fn set_learning_rate(&mut self, learning_rate: LearningRate) {
         self.learning_rate = learning_rate;
     }
@@ -46,6 +50,12 @@ mod tests {
             biases,
             activation: RELU.clone(),
         }
+    }
+
+    #[test]
+    fn name_is_sgd() {
+        let opt = StochasticGradientDescent::new(LearningRate::new(0.1));
+        assert_eq!(opt.name(), "Stochastic Gradient Descent (SGD)");
     }
 
     #[test]

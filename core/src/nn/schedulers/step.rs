@@ -31,6 +31,10 @@ impl StepDecay {
 }
 
 impl Scheduler for StepDecay {
+    fn name(&self) -> &str {
+        "Step Decay"
+    }
+
     /// Returns the learning rate for the current step and advances the counter.
     ///
     /// The decay is applied in discrete plateaus: `lr = initial * decay_factor^floor(t / steps)`.
@@ -51,6 +55,12 @@ impl Scheduler for StepDecay {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn name_is_step_decay() {
+        let sched = StepDecay::new(LearningRate::new(0.1), 3, 0.5);
+        assert_eq!(sched.name(), "Step Decay");
+    }
 
     #[test]
     fn lr_stays_constant_within_each_period() {

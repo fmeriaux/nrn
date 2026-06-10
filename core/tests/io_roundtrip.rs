@@ -4,19 +4,18 @@
 
 use ndarray::array;
 use nrn::activations::RELU;
+use nrn::callbacks::TrainingCallback;
 use nrn::data::Dataset;
 use nrn::data::scalers::{MinMaxScaler, Scaler, ScalerMethod};
 use nrn::evaluation::{Evaluation, EvaluationSet};
 use nrn::io::data::{load_inputs, save_inputs};
-use nrn::io::recorder::FileSnapshotRecorder;
 use nrn::io::scalers::ScalerRecord;
+use nrn::io::snapshot::{SnapshotArchive, SnapshotRecorder};
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::Adam;
-use nrn::recorders::SnapshotRecorder;
 use nrn::schedulers::ConstantScheduler;
 use nrn::training::{GradientClipping, LearningRate};
-use nrn::training_history::TrainingHistory;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -67,8 +66,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let clipping = GradientClipping::None;
 
     let history_dir = dir.join("training");
-    let mut recorder =
-        FileSnapshotRecorder::create(&history_dir, 5, "test_dataset", false).unwrap();
+    let mut recorder = SnapshotRecorder::create(&history_dir, "test_dataset", false).unwrap();
     let mut last_recorded_predictions = None;
 
     for epoch in 0..10 {
@@ -97,7 +95,9 @@ fn full_pipeline_roundtrips_through_safetensors() {
                     accuracy: 0.5,
                 },
             };
-            recorder.record(&model, &evaluation, epoch * 5).unwrap();
+            recorder
+                .on_evaluate(&model, &evaluation, epoch * 5)
+                .unwrap();
             last_recorded_predictions = Some(predictions);
         }
     }
@@ -110,12 +110,11 @@ fn full_pipeline_roundtrips_through_safetensors() {
         reloaded_model.predict(model_dataset.inputs.view())
     );
 
-    let history = TrainingHistory::load(&history_dir).unwrap();
-    assert_eq!(history.interval, 5);
-    assert_eq!(history.len(), 2);
+    let archive = SnapshotArchive::load(&history_dir).unwrap();
+    assert_eq!(archive.len(), 2);
     // Last snapshot was written at epoch 5, not at the final epoch.
     // Load the model lazily — only one in memory at a time.
-    let last_model = history.model_at(history.len() - 1).unwrap();
+    let last_model = archive.model_at(archive.len() - 1).unwrap();
     assert_eq!(
         last_recorded_predictions.unwrap(),
         last_model.predict(model_dataset.inputs.view())

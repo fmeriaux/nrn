@@ -5,6 +5,9 @@ pub use cross_entropy_loss::CROSS_ENTROPY_LOSS;
 use ndarray::{Array2, ArrayView2};
 
 pub trait LossFunction: Send + Sync {
+    /// Returns a human-readable name for this loss function.
+    fn name(&self) -> &str;
+
     /// Computes the loss given the predicted and true values.
     ///
     /// # Arguments

@@ -33,6 +33,18 @@ impl LearningRate {
     }
 }
 
+/// Borrowed view of a training run's configuration, passed to
+/// [`crate::callbacks::TrainingCallback::on_train_start`].
+pub struct TrainingConfig<'a> {
+    pub epochs: usize,
+    pub eval_interval: usize,
+    pub batch_size: Option<usize>,
+    pub loss: &'a dyn LossFunction,
+    pub optimizer: &'a dyn Optimizer,
+    pub scheduler: &'a dyn Scheduler,
+    pub clipping: &'a GradientClipping,
+}
+
 pub enum GradientClipping {
     /// No gradient clipping is applied.
     None,
@@ -471,6 +483,28 @@ mod tests {
         let mut es = EarlyStopping::new(2, false);
 
         assert!(!es.check(1.0, &model)); // improvement, but no snapshot is taken
+        assert!(es.best_model.is_none());
+    }
+
+    #[test]
+    fn seed_best_model_seeds_when_restore_enabled() {
+        let specs = NeuronLayerSpec::network_for(vec![2], &*SIGMOID, 2);
+        let model = NeuralNetwork::initialization(2, &specs);
+        let mut es = EarlyStopping::new(2, true);
+
+        es.seed_best_model(&model);
+
+        assert!(es.best_model.is_some());
+    }
+
+    #[test]
+    fn seed_best_model_is_noop_when_restore_disabled() {
+        let specs = NeuronLayerSpec::network_for(vec![2], &*SIGMOID, 2);
+        let model = NeuralNetwork::initialization(2, &specs);
+        let mut es = EarlyStopping::new(2, false);
+
+        es.seed_best_model(&model);
+
         assert!(es.best_model.is_none());
     }
 

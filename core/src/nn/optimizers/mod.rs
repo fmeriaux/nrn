@@ -16,6 +16,9 @@ use crate::model::NeuronLayer;
 use crate::training::{Gradients, LearningRate};
 
 pub trait Optimizer {
+    /// Returns a human-readable name for this optimizer.
+    fn name(&self) -> &str;
+
     /// Sets the learning rate for the optimizer.
     /// This allows dynamic adjustment of the learning rate during training.
     fn set_learning_rate(&mut self, learning_rate: LearningRate);

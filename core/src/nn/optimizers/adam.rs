@@ -77,6 +77,10 @@ impl Adam {
 }
 
 impl Optimizer for Adam {
+    fn name(&self) -> &str {
+        "Adam"
+    }
+
     fn set_learning_rate(&mut self, learning_rate: LearningRate) {
         self.learning_rate = learning_rate;
     }
@@ -151,6 +155,12 @@ mod tests {
             converged_near_zero(1.5, 0.5).unwrap_err(),
             "weight should approach 0, got 1.5"
         );
+    }
+
+    #[test]
+    fn name_is_adam() {
+        let opt = Adam::with_defaults(LearningRate::new(0.001));
+        assert_eq!(opt.name(), "Adam");
     }
 
     #[test]

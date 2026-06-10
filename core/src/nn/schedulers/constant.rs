@@ -33,6 +33,10 @@ impl ConstantScheduler {
 }
 
 impl Scheduler for ConstantScheduler {
+    fn name(&self) -> &str {
+        "Constant"
+    }
+
     fn step(&mut self) -> LearningRate {
         self.learning_rate
     }
@@ -41,6 +45,12 @@ impl Scheduler for ConstantScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn name_is_constant() {
+        let s = ConstantScheduler::new(LearningRate::new(0.003));
+        assert_eq!(s.name(), "Constant");
+    }
 
     #[test]
     fn always_returns_the_same_rate() {

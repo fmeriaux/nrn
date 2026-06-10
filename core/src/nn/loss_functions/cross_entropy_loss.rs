@@ -23,6 +23,10 @@ impl CrossEntropyLoss {
 }
 
 impl LossFunction for CrossEntropyLoss {
+    fn name(&self) -> &str {
+        "Cross-Entropy"
+    }
+
     /// Computes the scalar loss value given predictions and true labels.
     ///
     /// # Arguments
@@ -75,3 +79,13 @@ impl LossFunction for CrossEntropyLoss {
 /// Static instance of the CrossEntropyLoss wrapped in an `Arc` for shared use.
 pub static CROSS_ENTROPY_LOSS: Lazy<Arc<CrossEntropyLoss>> =
     Lazy::new(|| Arc::new(CrossEntropyLoss));
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn name_is_cross_entropy() {
+        assert_eq!(CrossEntropyLoss.name(), "Cross-Entropy");
+    }
+}

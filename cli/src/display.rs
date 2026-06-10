@@ -2,9 +2,9 @@ use console::{Emoji, style};
 use nrn::data::scalers::{Scaler, ScalerMethod};
 use nrn::data::{Dataset, ModelSplit};
 use nrn::evaluation::{Evaluation, EvaluationSet};
+use nrn::io::snapshot::SnapshotArchive;
 use nrn::model::NeuralNetwork;
 use nrn::training::GradientClipping;
-use nrn::training_history::TrainingHistory;
 use pathdiff::diff_paths;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -108,13 +108,14 @@ impl Summary for EvaluationSet {
     }
 }
 
-impl Summary for TrainingHistory {
+impl Summary for SnapshotArchive {
     fn summary(&self) -> String {
         format!(
-            "{} | Evaluations: {} | {}",
+            "{} | Snapshots: {} | Epochs: {}..{}",
             style("TRAINING HISTORY").bold().blue(),
             style(self.len()).yellow(),
-            style(self.final_evaluation().summary()).yellow(),
+            style(self.epoch_at(0).unwrap_or(0)).yellow(),
+            style(self.epoch_at(self.len().saturating_sub(1)).unwrap_or(0)).yellow(),
         )
     }
 }

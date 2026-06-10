@@ -1,43 +1,21 @@
 use crate::evaluation::EvaluationSet;
-use std::path::PathBuf;
 
-/// In-memory training history: snapshot evaluations and optional disk paths for lazy model loading.
+/// Pure value object: the recorded evaluations of a training run, with the
+/// absolute epoch number each snapshot was taken at.
 #[derive(Clone)]
 pub struct TrainingHistory {
-    /// The interval (in epochs) at which snapshots were recorded.
-    pub interval: usize,
     /// The recorded evaluations at each checkpoint for each training split.
     pub evaluations: Vec<EvaluationSet>,
-    /// Sorted snapshot file paths, set only when loaded from disk via [`TrainingHistory::load`].
-    /// Empty for in-memory histories built with [`by_interval`] / [`record`].
-    pub(crate) snapshot_paths: Vec<PathBuf>,
-    /// Absolute epoch number stored in each snapshot's `evaluations.json`.
-    /// Parallel to `evaluations` and `snapshot_paths`; empty for in-memory histories.
-    pub(crate) snapshot_epochs: Vec<usize>,
+    /// Absolute epoch number for each snapshot, parallel to `evaluations`.
+    pub snapshot_epochs: Vec<usize>,
 }
 
 impl TrainingHistory {
-    /// Creates a new `TrainingHistory` that records evaluations at `interval` epochs.
-    /// Returns `None` when `interval` is zero.
-    pub fn by_interval(interval: usize, epochs: usize) -> Option<Self> {
-        let capacity = epochs
-            .checked_div(interval)
-            .map(|step| if step > 0 { step } else { 1 });
-
-        capacity
-            // Add one to include the initial state before training starts
-            .map(|capacity| capacity + 1)
-            .map(|capacity| TrainingHistory {
-                interval,
-                evaluations: Vec::with_capacity(capacity),
-                snapshot_paths: Vec::new(),
-                snapshot_epochs: Vec::new(),
-            })
-    }
-
-    /// Records evaluations for the current epoch.
-    pub fn record(&mut self, evaluations: &EvaluationSet) {
-        self.evaluations.push(*evaluations);
+    pub fn new(evaluations: Vec<EvaluationSet>, snapshot_epochs: Vec<usize>) -> Self {
+        TrainingHistory {
+            evaluations,
+            snapshot_epochs,
+        }
     }
 
     /// Returns the number of recorded snapshots.
@@ -51,7 +29,7 @@ impl TrainingHistory {
     }
 
     /// Returns the absolute epoch number stored in the snapshot at `idx`,
-    /// or `None` if `idx` is out of range or this is an in-memory history.
+    /// or `None` if `idx` is out of range.
     pub fn epoch_at(&self, idx: usize) -> Option<usize> {
         self.snapshot_epochs.get(idx).copied()
     }
@@ -205,40 +183,15 @@ mod tests {
     }
 
     #[test]
-    fn by_interval_zero_returns_none() {
-        assert!(TrainingHistory::by_interval(0, 100).is_none());
-    }
-
-    #[test]
-    fn by_interval_reserves_capacity_for_each_step_plus_initial() {
-        let th = TrainingHistory::by_interval(10, 100).unwrap();
-        assert_eq!(th.interval, 10);
-        assert!(th.evaluations.capacity() >= 11);
+    fn new_history_is_empty_when_no_evaluations() {
+        let th = TrainingHistory::new(Vec::new(), Vec::new());
         assert!(th.is_empty());
         assert_eq!(th.len(), 0);
     }
 
     #[test]
-    fn by_interval_larger_than_epochs_keeps_at_least_one_step() {
-        let th = TrainingHistory::by_interval(200, 100).unwrap();
-        assert!(th.evaluations.capacity() >= 2);
-    }
-
-    #[test]
-    fn record_appends_evaluation() {
-        let mut th = TrainingHistory::by_interval(1, 2).unwrap();
-
-        th.record(&eval_set((1.0, 50.0), None, (1.5, 40.0)));
-        th.record(&eval_set((0.5, 70.0), None, (0.8, 60.0)));
-
-        assert_eq!(th.len(), 2);
-        assert!(!th.is_empty());
-        assert_eq!(th.evaluations.len(), 2);
-    }
-
-    #[test]
     fn empty_history_has_no_final_metrics() {
-        let th = TrainingHistory::by_interval(1, 1).unwrap();
+        let th = TrainingHistory::new(Vec::new(), Vec::new());
         assert!(th.final_evaluation().is_none());
         assert!(th.final_train_loss().is_none());
         assert!(th.final_validation_loss().is_none());
@@ -254,9 +207,13 @@ mod tests {
 
     #[test]
     fn series_and_finals_track_recorded_values() {
-        let mut th = TrainingHistory::by_interval(1, 2).unwrap();
-        th.record(&eval_set((1.0, 50.0), Some((1.2, 45.0)), (1.5, 40.0)));
-        th.record(&eval_set((0.5, 70.0), Some((0.6, 65.0)), (0.8, 60.0)));
+        let th = TrainingHistory::new(
+            vec![
+                eval_set((1.0, 50.0), Some((1.2, 45.0)), (1.5, 40.0)),
+                eval_set((0.5, 70.0), Some((0.6, 65.0)), (0.8, 60.0)),
+            ],
+            vec![0, 1],
+        );
 
         assert_eq!(th.train_losses(), vec![1.0, 0.5]);
         assert_eq!(th.validation_losses(), vec![1.2, 0.6]);
@@ -272,12 +229,15 @@ mod tests {
         assert_eq!(th.final_validation_accuracy(), Some(65.0));
         assert_eq!(th.final_test_accuracy(), Some(60.0));
         assert!(th.final_evaluation().is_some());
+
+        assert_eq!(th.epoch_at(0), Some(0));
+        assert_eq!(th.epoch_at(1), Some(1));
+        assert_eq!(th.epoch_at(2), None);
     }
 
     #[test]
     fn validation_metrics_are_skipped_when_absent() {
-        let mut th = TrainingHistory::by_interval(1, 1).unwrap();
-        th.record(&eval_set((1.0, 50.0), None, (1.5, 40.0)));
+        let th = TrainingHistory::new(vec![eval_set((1.0, 50.0), None, (1.5, 40.0))], vec![0]);
 
         assert!(th.validation_losses().is_empty());
         assert!(th.validation_accuracies().is_empty());
@@ -287,9 +247,13 @@ mod tests {
 
     #[test]
     fn ranges_span_all_splits() {
-        let mut th = TrainingHistory::by_interval(1, 2).unwrap();
-        th.record(&eval_set((1.0, 50.0), Some((1.2, 45.0)), (1.5, 40.0)));
-        th.record(&eval_set((0.5, 70.0), Some((0.6, 65.0)), (0.8, 90.0)));
+        let th = TrainingHistory::new(
+            vec![
+                eval_set((1.0, 50.0), Some((1.2, 45.0)), (1.5, 40.0)),
+                eval_set((0.5, 70.0), Some((0.6, 65.0)), (0.8, 90.0)),
+            ],
+            vec![0, 1],
+        );
 
         assert_eq!(th.loss_range(), Some((0.5, 1.5)));
         assert_eq!(th.accuracy_range(), Some((40.0, 90.0)));

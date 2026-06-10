@@ -4,10 +4,9 @@ use nrn::charts::RenderConfig;
 use nrn::data::Dataset;
 use nrn::data::scalers::ScalerMethod;
 use nrn::io::png::save_rgb;
-use nrn::io::recorder::FileSnapshotRecorder;
 use nrn::io::scalers::ScalerRecord;
+use nrn::io::snapshot::SnapshotArchive;
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
-use nrn::training_history::TrainingHistory;
 use std::error::Error;
 use std::path::Path;
 
@@ -105,76 +104,14 @@ pub(crate) fn load_model<P: AsRef<Path>>(path: P) -> Result<NeuralNetwork, Box<d
     Ok(model)
 }
 
-pub(crate) fn save_model<P: AsRef<Path>>(
-    path: P,
-    model: &NeuralNetwork,
-) -> Result<(), Box<dyn Error>> {
-    saved_at(MODEL_ICON, "NEURAL NETWORK", model.save(&path)?);
-    Ok(())
-}
+pub(crate) fn load_history<P: AsRef<Path>>(path: P) -> Result<SnapshotArchive, Box<dyn Error>> {
+    let archive = SnapshotArchive::load(&path)?;
 
-pub(crate) fn load_history<P: AsRef<Path>>(path: P) -> Result<TrainingHistory, Box<dyn Error>> {
-    let history = TrainingHistory::load(&path)?;
-
-    if history.len() <= 2 {
+    if archive.len() <= 2 {
         return Err("Training history must contain more than two snapshots to plot.".into());
     }
 
-    loaded(&history);
+    loaded(&archive);
 
-    Ok(history)
-}
-
-/// Loads a model from a snapshot directory (`snapshot-{n}/model.safetensors`).
-///
-/// Errors if the path does not match the `snapshot-{n}` format, or if
-/// `model.safetensors` / `evaluations.json` are missing.
-/// Returns `(model, snapshot_index)`.
-pub(crate) fn load_snapshot<P: AsRef<Path>>(
-    path: P,
-) -> Result<(NeuralNetwork, usize), Box<dyn Error>> {
-    let path = path.as_ref();
-
-    let snapshot_index = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .and_then(|n| n.strip_prefix("snapshot-"))
-        .and_then(|s| s.parse::<usize>().ok())
-        .ok_or_else(|| -> Box<dyn Error> {
-            format!(
-                "'{}' is not a valid snapshot directory \
-                 (expected a path ending in snapshot-{{n}})",
-                path.display()
-            )
-            .into()
-        })?;
-
-    if !path.join("model.safetensors").exists() {
-        return Err(format!("snapshot '{}' is missing model.safetensors", path.display()).into());
-    }
-    if !path.join("evaluations.json").exists() {
-        return Err(format!("snapshot '{}' is missing evaluations.json", path.display()).into());
-    }
-
-    let model = load_model(path.join("model"))?;
-    Ok((model, snapshot_index))
-}
-
-pub(crate) fn create_snapshot_recorder<P: AsRef<Path>>(
-    path: P,
-    interval: usize,
-    dataset: &str,
-    overwrite: bool,
-) -> Result<FileSnapshotRecorder, Box<dyn Error>> {
-    Ok(FileSnapshotRecorder::create(
-        path, interval, dataset, overwrite,
-    )?)
-}
-
-pub(crate) fn resume_snapshot_recorder<P: AsRef<Path>>(
-    path: P,
-    interval: usize,
-    from_count: usize,
-) -> Result<FileSnapshotRecorder, Box<dyn Error>> {
-    Ok(FileSnapshotRecorder::resume(path, from_count)?)
+    Ok(archive)
 }

@@ -7,6 +7,7 @@ mod cli;
 mod commands;
 pub mod display;
 mod progression;
+mod reporter;
 
 fn main() {
     CliArgs::parse().command.run().unwrap_or_else(|e| {

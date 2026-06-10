@@ -78,6 +78,10 @@ impl CosineAnnealing {
 }
 
 impl Scheduler for CosineAnnealing {
+    fn name(&self) -> &str {
+        "Cosine Annealing"
+    }
+
     fn step(&mut self) -> LearningRate {
         if !self.restarts && self.current_step >= self.steps {
             return self.min;
@@ -99,6 +103,12 @@ impl Scheduler for CosineAnnealing {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn name_is_cosine_annealing() {
+        let s = CosineAnnealing::new(LearningRate::new(0.001), LearningRate::new(0.1), 10);
+        assert_eq!(s.name(), "Cosine Annealing");
+    }
 
     #[test]
     fn starts_at_max_and_ends_at_min() {
