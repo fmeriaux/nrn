@@ -318,6 +318,46 @@ mod tests {
         }
     }
 
+    /// A callback whose `on_train_start` always fails, used to verify that
+    /// `TrainingLoop::run` propagates errors raised before the training loop.
+    struct FailingOnTrainStart;
+
+    impl TrainingCallback for FailingOnTrainStart {
+        fn on_train_start(&mut self, _config: &TrainingConfig) -> IoResult<()> {
+            Err(Error::other("boom"))
+        }
+    }
+
+    /// A callback whose `on_epoch_end` always fails, used to verify that
+    /// `TrainingLoop::run` propagates errors raised inside the training loop.
+    struct FailingOnEpochEnd;
+
+    impl TrainingCallback for FailingOnEpochEnd {
+        fn on_epoch_end(&mut self, _epoch: usize) -> IoResult<()> {
+            Err(Error::other("boom"))
+        }
+    }
+
+    /// A callback whose `on_evaluate` succeeds at epoch 0 but fails afterwards,
+    /// so the failure surfaces from an in-loop checkpoint or the final fallback
+    /// evaluation rather than from the epoch-0 pre-evaluation.
+    struct FailingOnEvaluateAfterFirst;
+
+    impl TrainingCallback for FailingOnEvaluateAfterFirst {
+        fn on_evaluate(
+            &mut self,
+            _model: &NeuralNetwork,
+            _eval: &EvaluationSet,
+            epoch: usize,
+        ) -> IoResult<()> {
+            if epoch == 0 {
+                Ok(())
+            } else {
+                Err(Error::other("boom"))
+            }
+        }
+    }
+
     fn training_loop(
         config: TrainingConfig,
         with_validation: bool,
@@ -505,6 +545,89 @@ mod tests {
         assert_eq!(
             err.to_string(),
             format!("model diverged at epoch {final_epoch}: non-finite weights")
+        );
+    }
+
+    #[test]
+    fn callback_error_during_train_start_is_propagated() {
+        let config = sample_config(3, 1, 0.01);
+        let training_loop = TrainingLoop {
+            model: sample_model(),
+            callbacks: Callbacks::new(vec![Box::new(FailingOnTrainStart)]),
+            split: sample_split(false),
+            config,
+            early_stopping: None,
+            epoch_start: 0,
+        };
+
+        assert!(training_loop.run().is_err());
+    }
+
+    #[test]
+    fn callback_error_during_epoch_end_is_propagated() {
+        let config = sample_config(3, 1, 0.01);
+        let training_loop = TrainingLoop {
+            model: sample_model(),
+            callbacks: Callbacks::new(vec![Box::new(FailingOnEpochEnd)]),
+            split: sample_split(false),
+            config,
+            early_stopping: None,
+            epoch_start: 0,
+        };
+
+        assert!(training_loop.run().is_err());
+    }
+
+    #[test]
+    fn callback_error_during_in_loop_checkpoint_is_propagated() {
+        // eval_interval == 1: epoch 0 evaluates fine, the epoch-1 checkpoint fails.
+        let config = sample_config(3, 1, 0.01);
+        let training_loop = TrainingLoop {
+            model: sample_model(),
+            callbacks: Callbacks::new(vec![Box::new(FailingOnEvaluateAfterFirst)]),
+            split: sample_split(false),
+            config,
+            early_stopping: None,
+            epoch_start: 0,
+        };
+
+        assert!(training_loop.run().is_err());
+    }
+
+    #[test]
+    fn callback_error_during_final_fallback_evaluation_is_propagated() {
+        // eval_interval == 0: no epoch-0 pre-eval and no in-loop checkpoints, so the
+        // only evaluation is the final fallback — and that is where the failure surfaces.
+        let config = sample_config(3, 0, 0.01);
+        let training_loop = TrainingLoop {
+            model: sample_model(),
+            callbacks: Callbacks::new(vec![Box::new(FailingOnEvaluateAfterFirst)]),
+            split: sample_split(false),
+            config,
+            early_stopping: None,
+            epoch_start: 0,
+        };
+
+        assert!(training_loop.run().is_err());
+    }
+
+    #[test]
+    fn early_stopping_halts_without_restoring_when_restore_disabled() {
+        let counts = Rc::new(RefCell::new(Counts::default()));
+        let config = sample_config(50, 1, 5.0);
+        let early_stopping = Some(EarlyStopping::new(1, false));
+        let report = training_loop(config, true, early_stopping, counts.clone())
+            .run()
+            .unwrap();
+
+        assert_eq!(
+            report.outcome,
+            TrainingOutcome::EarlyStopped { restored: false }
+        );
+        assert!(report.final_epoch < 50);
+        assert_eq!(
+            counts.borrow().last_outcome,
+            Some(TrainingOutcome::EarlyStopped { restored: false })
         );
     }
 }
