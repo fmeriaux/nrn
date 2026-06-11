@@ -1,11 +1,11 @@
 use crate::callbacks::TrainingCallback;
+use crate::checkpoints::{Checkpoint, Checkpoints};
 use crate::evaluation::{Evaluation, EvaluationSet};
 use crate::io::bytes::secure_read;
 use crate::io::json;
 use crate::io::path::PathExt;
 use crate::io::tensors;
 use crate::model::NeuralNetwork;
-use crate::training_history::TrainingHistory;
 use safetensors::SafeTensors;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -35,30 +35,30 @@ impl TrainingMeta {
 }
 
 #[derive(Serialize, Deserialize)]
-struct SnapshotEvals {
-    train: MetricPair,
+struct SnapshotEvaluationSet {
+    train: SnapshotEvaluation,
     #[serde(skip_serializing_if = "Option::is_none")]
-    validation: Option<MetricPair>,
-    test: MetricPair,
+    validation: Option<SnapshotEvaluation>,
+    test: SnapshotEvaluation,
 }
 
 #[derive(Serialize, Deserialize)]
-struct MetricPair {
+struct SnapshotEvaluation {
     loss: f32,
     accuracy: f32,
 }
 
-impl From<Evaluation> for MetricPair {
+impl From<Evaluation> for SnapshotEvaluation {
     fn from(eval: Evaluation) -> Self {
-        MetricPair {
+        SnapshotEvaluation {
             loss: eval.loss,
             accuracy: eval.accuracy,
         }
     }
 }
 
-impl From<MetricPair> for Evaluation {
-    fn from(pair: MetricPair) -> Self {
+impl From<SnapshotEvaluation> for Evaluation {
+    fn from(pair: SnapshotEvaluation) -> Self {
         Evaluation {
             loss: pair.loss,
             accuracy: pair.accuracy,
@@ -66,9 +66,9 @@ impl From<MetricPair> for Evaluation {
     }
 }
 
-impl From<&EvaluationSet> for SnapshotEvals {
+impl From<&EvaluationSet> for SnapshotEvaluationSet {
     fn from(eval: &EvaluationSet) -> Self {
-        SnapshotEvals {
+        SnapshotEvaluationSet {
             train: eval.train.into(),
             validation: eval.validation.map(Into::into),
             test: eval.test.into(),
@@ -76,8 +76,8 @@ impl From<&EvaluationSet> for SnapshotEvals {
     }
 }
 
-impl From<SnapshotEvals> for EvaluationSet {
-    fn from(evals: SnapshotEvals) -> Self {
+impl From<SnapshotEvaluationSet> for EvaluationSet {
+    fn from(evals: SnapshotEvaluationSet) -> Self {
         EvaluationSet {
             train: evals.train.into(),
             validation: evals.validation.map(Into::into),
@@ -160,7 +160,8 @@ impl SnapshotRecorder {
 
     /// Resumes recording into an existing snapshot directory. Snapshots whose
     /// epoch is greater than `from_epoch` are removed (rewinding the trajectory).
-    pub fn resume<P: AsRef<Path>>(path: P, from_epoch: usize) -> Result<Self> {
+    /// Returns the recorder along with the number of snapshots removed.
+    pub fn resume<P: AsRef<Path>>(path: P, from_epoch: usize) -> Result<(Self, usize)> {
         let dir = Path::combine_safe_with_cwd(path)?;
         fs::create_dir_all(&dir)?;
 
@@ -169,17 +170,12 @@ impl SnapshotRecorder {
             .filter(|snapshot| snapshot.epoch > from_epoch)
             .collect();
 
-        if !to_remove.is_empty() {
-            eprintln!(
-                "Removing {} snapshot(s) after epoch {from_epoch}",
-                to_remove.len()
-            );
-            for snapshot in to_remove {
-                fs::remove_dir_all(&snapshot.dir)?;
-            }
+        let trimmed = to_remove.len();
+        for snapshot in to_remove {
+            fs::remove_dir_all(&snapshot.dir)?;
         }
 
-        Ok(SnapshotRecorder { dir })
+        Ok((SnapshotRecorder { dir }, trimmed))
     }
 
     /// Writes `snapshot-{epoch:06}/` containing the model weights and evaluations.
@@ -198,7 +194,7 @@ impl SnapshotRecorder {
         tensors::save(snapshot_dir.join("model"), entries, metadata)?;
 
         json::save(
-            &SnapshotEvals::from(evaluation),
+            &SnapshotEvaluationSet::from(evaluation),
             snapshot_dir.join("evaluations"),
         )?;
 
@@ -220,7 +216,7 @@ impl TrainingCallback for SnapshotRecorder {
 /// Lazy read access to a directory of snapshots written by [`SnapshotRecorder`].
 ///
 /// [`SnapshotArchive::load`] only scans directory names — no files are read until
-/// [`model_at`](SnapshotArchive::model_at) or [`history`](SnapshotArchive::history)
+/// [`model_at`](SnapshotArchive::model_at) or [`checkpoints`](SnapshotArchive::checkpoints)
 /// is called.
 pub struct SnapshotArchive {
     snapshots: Vec<SnapshotRef>,
@@ -270,18 +266,19 @@ impl SnapshotArchive {
         NeuralNetwork::from_tensors(&st, &metadata)
     }
 
-    /// Reads all `evaluations.json` files into a pure [`TrainingHistory`].
-    pub fn history(&self) -> Result<TrainingHistory> {
-        let mut evaluations = Vec::with_capacity(self.snapshots.len());
-        let mut snapshot_epochs = Vec::with_capacity(self.snapshots.len());
+    /// Reads all `evaluations.json` files into a pure [`Checkpoints`].
+    pub fn checkpoints(&self) -> Result<Checkpoints> {
+        let mut checkpoints = Vec::with_capacity(self.snapshots.len());
 
         for snapshot in &self.snapshots {
-            let evals: SnapshotEvals = json::load(snapshot.dir.join("evaluations"))?;
-            evaluations.push(evals.into());
-            snapshot_epochs.push(snapshot.epoch);
+            let evals: SnapshotEvaluationSet = json::load(snapshot.dir.join("evaluations"))?;
+            checkpoints.push(Checkpoint {
+                epoch: snapshot.epoch,
+                evaluation: evals.into(),
+            });
         }
 
-        Ok(TrainingHistory::new(evaluations, snapshot_epochs))
+        Ok(Checkpoints::new(checkpoints))
     }
 }
 
@@ -399,14 +396,14 @@ mod tests {
                 .unwrap();
         }
 
-        let history = SnapshotArchive::load(&dir).unwrap().history().unwrap();
+        let checkpoints = SnapshotArchive::load(&dir).unwrap().checkpoints().unwrap();
         cleanup(&dir);
 
-        assert_eq!(history.len(), 3);
-        for (i, eval) in history.evaluations.iter().enumerate() {
-            assert_eq!(eval.train.loss, i as f32);
-            assert!(eval.validation.is_some());
+        assert_eq!(checkpoints.len(), 3);
+        for (i, loss) in checkpoints.train_losses().iter().enumerate() {
+            assert_eq!(*loss, i as f32);
         }
+        assert!(!checkpoints.validation_losses().is_empty());
     }
 
     #[test]
@@ -419,13 +416,11 @@ mod tests {
                 .unwrap();
         }
 
-        let history = SnapshotArchive::load(&dir).unwrap().history().unwrap();
+        let checkpoints = SnapshotArchive::load(&dir).unwrap().checkpoints().unwrap();
         cleanup(&dir);
 
-        assert_eq!(history.len(), 3);
-        for eval in &history.evaluations {
-            assert!(eval.validation.is_none());
-        }
+        assert_eq!(checkpoints.len(), 3);
+        assert!(checkpoints.validation_losses().is_empty());
     }
 
     #[test]
@@ -474,12 +469,13 @@ mod tests {
                 .unwrap();
         }
 
-        SnapshotRecorder::resume(&dir, 20).unwrap();
+        let (_, trimmed) = SnapshotRecorder::resume(&dir, 20).unwrap();
 
         let archive = SnapshotArchive::load(&dir).unwrap();
         cleanup(&dir);
 
         assert_eq!(archive.len(), 3); // epochs 0, 10, 20 kept; 30, 40 removed
+        assert_eq!(trimmed, 2);
     }
 
     #[test]
@@ -492,12 +488,13 @@ mod tests {
                 .unwrap();
         }
 
-        SnapshotRecorder::resume(&dir, 20).unwrap();
+        let (_, trimmed) = SnapshotRecorder::resume(&dir, 20).unwrap();
 
         let archive = SnapshotArchive::load(&dir).unwrap();
         cleanup(&dir);
 
         assert_eq!(archive.len(), 3);
+        assert_eq!(trimmed, 0);
     }
 
     #[test]
@@ -510,7 +507,7 @@ mod tests {
                 .unwrap(); // 0, 10, 20
         }
 
-        let recorder = SnapshotRecorder::resume(&dir, 10).unwrap();
+        let (recorder, _) = SnapshotRecorder::resume(&dir, 10).unwrap();
         recorder
             .write(&sample_model(), &make_eval(99.0, false), 20)
             .unwrap();
@@ -603,7 +600,7 @@ mod tests {
     }
 
     #[test]
-    fn history_corrupted_evaluations_json_fails() {
+    fn checkpoints_corrupted_evaluations_json_fails() {
         let dir = temp_dir("corrupt_evals");
         let recorder = SnapshotRecorder::create(&dir, "ds", false).unwrap();
         recorder
@@ -616,7 +613,7 @@ mod tests {
         .unwrap();
 
         let archive = SnapshotArchive::load(&dir).unwrap();
-        let result = archive.history();
+        let result = archive.checkpoints();
         cleanup(&dir);
 
         assert!(result.is_err());

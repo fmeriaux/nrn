@@ -21,7 +21,7 @@ use crate::training::LearningRate;
 /// prevent overshooting, and enable fine-tuning in later epochs.
 pub trait Scheduler {
     /// Returns a human-readable name for this scheduler.
-    fn name(&self) -> &str;
+    fn name(&self) -> &'static str;
 
     /// Adjusts the learning rate based on the current training state.
     ///

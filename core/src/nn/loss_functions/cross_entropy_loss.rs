@@ -23,7 +23,7 @@ impl CrossEntropyLoss {
 }
 
 impl LossFunction for CrossEntropyLoss {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "Cross-Entropy"
     }
 

@@ -17,7 +17,7 @@ use crate::training::{Gradients, LearningRate};
 
 pub trait Optimizer {
     /// Returns a human-readable name for this optimizer.
-    fn name(&self) -> &str;
+    fn name(&self) -> &'static str;
 
     /// Sets the learning rate for the optimizer.
     /// This allows dynamic adjustment of the learning rate during training.

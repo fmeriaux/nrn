@@ -104,6 +104,14 @@ pub(crate) fn load_model<P: AsRef<Path>>(path: P) -> Result<NeuralNetwork, Box<d
     Ok(model)
 }
 
+pub(crate) fn save_model<P: AsRef<Path>>(
+    model: &NeuralNetwork,
+    path: P,
+) -> Result<(), Box<dyn Error>> {
+    saved_at(MODEL_ICON, "NEURAL NETWORK", model.save(path)?);
+    Ok(())
+}
+
 pub(crate) fn load_history<P: AsRef<Path>>(path: P) -> Result<SnapshotArchive, Box<dyn Error>> {
     let archive = SnapshotArchive::load(&path)?;
 

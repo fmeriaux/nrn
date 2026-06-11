@@ -55,14 +55,17 @@ Arrays use `(features, samples)` shape throughout — columns are samples, rows 
 ### Neural network (`core/src/nn/`)
 
 - **`model.rs`**: `NeuralNetwork` (Vec of `NeuronLayer`) and `NeuronLayerSpec`. Key methods: `forward()` returns all intermediate activations as `Vec<Array2<f32>>`; `predict()` returns only the last activation. `NeuronLayerSpec::output_for(n_classes)` auto-selects sigmoid (binary, 2 classes → 1 neuron) or softmax (multi-class).
-- **`training.rs`**: `train()` is implemented on `NeuralNetwork` — runs forward + backward + parameter update per epoch (or per mini-batch). `GradientClipping` (None / L2 Norm / Value). `EarlyStopping` with optional best-model restore.
+- **`training.rs`**: `train()` is implemented on `NeuralNetwork` — runs forward + backward + parameter update per epoch (or per mini-batch). `TrainingConfig` is an owned bundle of the loss function, optimizer, scheduler, and `GradientClipping` (None / L2 Norm / Value). `EarlyStopping` with optional best-model restore.
+- **`training_loop.rs`**: `TrainingLoop` orchestrates a full run (forward/backward loop, scheduled evaluation, early stopping, divergence handling) and returns a `TrainingReport` (final model, `TrainingOutcome`, last evaluation, last epoch). Pure — no I/O; side effects go through `callbacks`.
+- **`training_outcome.rs`**: `TrainingOutcome` enum — `Completed`, `EarlyStopped { restored }`, `Diverged { recovered }`.
+- **`callbacks.rs`**: `TrainingCallback` trait (hooks: `on_train_start`, `on_epoch_end`, `on_evaluate`, `on_train_end`) and `Callbacks`, a sequential composite that dispatches to all registered callbacks and short-circuits on the first error.
 - **`activations/`**: `Activation` trait registered via the `inventory` crate for dynamic lookup by name (`ActivationProvider::get_by_name`). Built-ins: ReLU (He init), Sigmoid (Xavier init), Softmax (Xavier init).
 - **`optimizers/`**: `Optimizer` trait with SGD and Adam implementations. Passed to `train()` as `&mut dyn Optimizer`.
 - **`schedulers/`**: `Scheduler` trait stepping once per epoch, passed as `&mut dyn Scheduler`. Implementations: `ConstantScheduler`, `StepDecay`, `CosineAnnealing` (with optional warm restarts).
 - **`loss_functions/`**: `LossFunction` trait; cross-entropy is the only implementation (used for both binary and multi-class).
 - **`accuracies/`**: `Accuracy` trait. `accuracy_for(n_classes)` picks `BINARY_ACCURACY` (2 classes) or `MULTI_CLASS_ACCURACY` (argmax match).
 - **`evaluation.rs`**: `Evaluation` (loss + accuracy for one dataset) and `EvaluationSet` (train / optional validation / test), computed from a model or from precomputed predictions.
-- **`checkpoints.rs`**: `Checkpoints` records model snapshots and `EvaluationSet`s at a fixed epoch interval; exposes per-split loss/accuracy series and their ranges for plotting.
+- **`checkpoints.rs`**: `Checkpoints(Vec<Checkpoint>)`, where `Checkpoint { epoch, evaluation: EvaluationSet }` — pure value object ordered by epoch; exposes per-split loss/accuracy series, their ranges, and the `epochs()` accessor used as the chart X-axis.
 - **`initializations/`**: weight initializers (`he`, `xavier`) selected per activation.
 
 ### Data (`core/src/data/`)
@@ -80,8 +83,11 @@ Arrays use `(features, samples)` shape throughout — columns are samples, rows 
 
 [safetensors](https://github.com/huggingface/safetensors) is the primary format for datasets, models, and training checkpoints: `f32` tensors plus a `__metadata__` string map (activation names, intervals, snapshot counts). Checkpoint evaluation series are stored as `f32` tensors too. Scalers are stored as JSON. `io/tensors.rs` holds the shared `View` adapter and (de)serialization helpers; the `io` module handles the activation name → `Arc<dyn Activation>` round-trip via `ActivationProvider::get_by_name`.
 
+- **`io/snapshot.rs`**: `SnapshotRecorder` (a `TrainingCallback`) writes one `snapshot-{epoch:06}/model.safetensors` + `evaluations.json` per checkpoint interval; `SnapshotRecorder::resume(dir, from_epoch)` reopens a directory and trims snapshots after `from_epoch`, returning the number removed. `SnapshotArchive` reads a directory back: `model_at(index)`, `epoch_at(index)`, and `checkpoints()` (returns `nn::checkpoints::Checkpoints` for charting).
+
 ### CLI (`cli/src/`)
 
 - **`cli.rs`**: Top-level `clap` command enum dispatching to subcommands.
-- **`commands/`**: One file per subcommand (`train`, `predict`, `scale`, `synth`, `encode`, `plot`). `train.rs` contains the full training loop with optimizer/scheduler/clipping wiring.
+- **`commands/`**: One file per subcommand (`train`, `predict`, `scale`, `synth`, `encode`, `plot`). `train.rs` wires up `TrainingConfig`/`TrainingLoop` (optimizer, scheduler, clipping, callbacks) from CLI args, runs it, and reports the resulting `TrainingReport`.
 - **`actions.rs`**: Shared helpers for loading/saving models, datasets, and scalers.
+- **`reporter.rs`** / **`progression.rs`**: `TrainingCallback` implementations for console narration and progress bars.

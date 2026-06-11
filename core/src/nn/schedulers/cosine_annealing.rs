@@ -78,7 +78,7 @@ impl CosineAnnealing {
 }
 
 impl Scheduler for CosineAnnealing {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "Cosine Annealing"
     }
 

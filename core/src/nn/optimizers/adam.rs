@@ -77,7 +77,7 @@ impl Adam {
 }
 
 impl Optimizer for Adam {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "Adam"
     }
 

@@ -1,24 +1,22 @@
 use crate::actions::*;
-use crate::display::{Summary, completed, loaded, warning};
+use crate::display::{HISTORY_ICON, Summary, completed, loaded, saved_at, warning};
 use crate::progression::Progression;
 use crate::reporter::ConsoleReporter;
 use clap::*;
 use nrn::accuracies::accuracy_for;
 use nrn::callbacks::{Callbacks, TrainingCallback, TrainingOutcome};
-use nrn::data::ModelSplit;
 use nrn::evaluator::Evaluator;
 use nrn::io::snapshot::{SnapshotArchive, SnapshotRecorder, TrainingMeta};
-use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
-use nrn::model::NeuralNetwork;
+use nrn::loss_functions::CROSS_ENTROPY_LOSS;
 use nrn::optimizers::{Adam, Optimizer, StochasticGradientDescent};
 use nrn::schedulers;
 use nrn::schedulers::{ConstantScheduler, Scheduler, StepDecay};
 use nrn::training::{EarlyStopping, GradientClipping, LearningRate, TrainingConfig};
+use nrn::training_loop::{TrainingLoop, TrainingReport};
 use schedulers::CosineAnnealing;
 use std::error::Error;
 use std::fmt::Display;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::Path;
 
 // ─── Value enums ─────────────────────────────────────────────────────────────
 
@@ -329,14 +327,10 @@ impl StartArgs {
         let model_save_path = dataset_path.with_file_name(format!("model-{dataset_name}"));
 
         let interval = self.hp.checkpoint_interval;
-        let history_dir_for_reporter = (interval > 0).then(|| history_dir.clone());
 
         let mut callbacks: Vec<Box<dyn TrainingCallback>> = vec![
             Box::new(Progression::new("Training")),
-            Box::new(ConsoleReporter::new(
-                history_dir_for_reporter,
-                model_save_path.clone(),
-            )),
+            Box::new(ConsoleReporter::new()),
         ];
         if interval > 0 {
             callbacks.push(Box::new(SnapshotRecorder::create(
@@ -346,7 +340,7 @@ impl StartArgs {
             )?));
         }
 
-        TrainingLoop {
+        let report = TrainingLoop {
             model,
             callbacks: Callbacks::new(callbacks),
             split,
@@ -354,19 +348,26 @@ impl StartArgs {
                 CROSS_ENTROPY_LOSS.clone(),
                 accuracy_for(dataset.n_classes()),
             ),
-            loss_function: CROSS_ENTROPY_LOSS.clone(),
-            optimizer: self.hp.make_optimizer(),
-            scheduler: self.hp.make_scheduler(),
-            clipping: self.hp.infer_clipping(),
+            config: TrainingConfig {
+                epochs: self.hp.epochs,
+                eval_interval: interval,
+                batch_size: self.hp.batch_size,
+                loss: CROSS_ENTROPY_LOSS.clone(),
+                optimizer: self.hp.make_optimizer(),
+                scheduler: self.hp.make_scheduler(),
+                clipping: self.hp.infer_clipping(),
+            },
             early_stopping: self.hp.early_stopping(),
             epoch_start: 0,
-            epochs: self.hp.epochs,
-            eval_interval: interval,
             restore_best_model: self.hp.restore_best_model,
-            batch_size: self.hp.batch_size,
-            model_save_path,
         }
-        .run()
+        .run()?;
+
+        finish(
+            report,
+            &model_save_path,
+            (interval > 0).then_some(&history_dir),
+        )
     }
 }
 
@@ -443,20 +444,22 @@ impl ResumeArgs {
             .expect("snapshot_idx was just validated against archive.len()");
 
         let interval = self.hp.checkpoint_interval;
-        let history_dir_for_reporter = (interval > 0).then(|| history_dir.to_path_buf());
 
         let mut callbacks: Vec<Box<dyn TrainingCallback>> = vec![
             Box::new(Progression::new("Training")),
-            Box::new(ConsoleReporter::new(
-                history_dir_for_reporter,
-                model_save_path.clone(),
-            )),
+            Box::new(ConsoleReporter::new()),
         ];
         if interval > 0 {
-            callbacks.push(Box::new(SnapshotRecorder::resume(history_dir, from_epoch)?));
+            let (recorder, trimmed) = SnapshotRecorder::resume(history_dir, from_epoch)?;
+            if trimmed > 0 {
+                warning(&format!(
+                    "Removed {trimmed} snapshot(s) after epoch {from_epoch}"
+                ));
+            }
+            callbacks.push(Box::new(recorder));
         }
 
-        TrainingLoop {
+        let report = TrainingLoop {
             model,
             callbacks: Callbacks::new(callbacks),
             split,
@@ -464,154 +467,53 @@ impl ResumeArgs {
                 CROSS_ENTROPY_LOSS.clone(),
                 accuracy_for(dataset.n_classes()),
             ),
-            loss_function: CROSS_ENTROPY_LOSS.clone(),
-            optimizer: self.hp.make_optimizer(),
-            scheduler: self.hp.make_scheduler(),
-            clipping: self.hp.infer_clipping(),
+            config: TrainingConfig {
+                epochs: self.hp.epochs,
+                eval_interval: interval,
+                batch_size: self.hp.batch_size,
+                loss: CROSS_ENTROPY_LOSS.clone(),
+                optimizer: self.hp.make_optimizer(),
+                scheduler: self.hp.make_scheduler(),
+                clipping: self.hp.infer_clipping(),
+            },
             early_stopping: self.hp.early_stopping(),
             epoch_start: from_epoch,
-            epochs: self.hp.epochs,
-            eval_interval: interval,
             restore_best_model: self.hp.restore_best_model,
-            batch_size: self.hp.batch_size,
-            model_save_path,
         }
-        .run()
+        .run()?;
+
+        finish(
+            report,
+            &model_save_path,
+            (interval > 0).then_some(history_dir),
+        )
     }
 }
 
-// ─── Training loop ────────────────────────────────────────────────────────────
+// ─── Report handling ──────────────────────────────────────────────────────────
 
-struct TrainingLoop {
-    model: NeuralNetwork,
-    callbacks: Callbacks,
-    split: ModelSplit,
-    evaluator: Evaluator,
-    loss_function: Arc<dyn LossFunction>,
-    optimizer: Box<dyn Optimizer>,
-    scheduler: Box<dyn Scheduler>,
-    clipping: GradientClipping,
-    early_stopping: Option<EarlyStopping>,
-    epoch_start: usize,
-    epochs: usize,
-    eval_interval: usize,
-    restore_best_model: bool,
-    batch_size: Option<usize>,
-    model_save_path: PathBuf,
-}
-
-impl TrainingLoop {
-    /// Whether `epoch` should trigger an evaluation + snapshot, given
-    /// `eval_interval == 0` means "no checkpoints at all".
-    fn is_checkpoint(eval_interval: usize, epoch: usize) -> bool {
-        eval_interval != 0 && epoch.is_multiple_of(eval_interval)
+/// Turns a [`TrainingReport`] into the action's outcome: a fatal divergence
+/// becomes a user-facing error (no save); otherwise the model is saved and
+/// the training history directory is announced if checkpoints were recorded.
+fn finish(
+    report: TrainingReport,
+    model_save_path: &Path,
+    history_dir: Option<&Path>,
+) -> Result<(), Box<dyn Error>> {
+    if let TrainingOutcome::Diverged { recovered: false } = report.outcome {
+        return Err(format!(
+            "Model diverged at epoch {} (NaN/Inf in weights). \
+             Try: --early-stopping with --restore-best-model, --scheduler cosine, \
+             a lower --lr, or stronger gradient clipping.",
+            report.final_epoch
+        )
+        .into());
     }
 
-    fn run(mut self) -> Result<(), Box<dyn Error>> {
-        let config = TrainingConfig {
-            epochs: self.epochs,
-            eval_interval: self.eval_interval,
-            batch_size: self.batch_size,
-            loss: self.loss_function.as_ref(),
-            optimizer: self.optimizer.as_ref(),
-            scheduler: self.scheduler.as_ref(),
-            clipping: &self.clipping,
-        };
-        self.callbacks.on_train_start(&config)?;
-
-        if self.epoch_start == 0 && self.eval_interval != 0 {
-            let eval = self.evaluator.eval_set(&self.model, &self.split);
-            self.callbacks.on_evaluate(&self.model, &eval, 0)?;
-        }
-
-        let mut early_stopping = self.early_stopping;
-        // Seed best model before epoch 1 so divergence at the first epoch can recover.
-        if let Some(ref mut es) = early_stopping
-            && self.split.validation.is_some()
-        {
-            es.seed_best_model(&self.model);
-        }
-
-        let mut outcome = TrainingOutcome::Completed;
-        let mut last_epoch = self.epoch_start;
-
-        for epoch in (self.epoch_start + 1)..=(self.epoch_start + self.epochs) {
-            self.model.train(
-                &self.split.train,
-                &self.loss_function,
-                self.optimizer.as_mut(),
-                self.scheduler.as_mut(),
-                &self.clipping,
-                self.batch_size,
-            );
-
-            last_epoch = epoch;
-
-            if !self.model.is_finite() {
-                let recovered = early_stopping.as_mut().and_then(|es| es.best_model.take());
-
-                if let Some(best) = recovered {
-                    self.model = best;
-                    outcome = TrainingOutcome::Diverged { recovered: true };
-                    break;
-                }
-
-                self.callbacks.on_train_end(
-                    TrainingOutcome::Diverged { recovered: false },
-                    None,
-                    epoch,
-                )?;
-                return Err(format!(
-                    "Model diverged at epoch {epoch} (NaN/Inf in weights). \
-                     Try: --early-stopping with --restore-best-model, --scheduler cosine, \
-                     a lower --lr, or stronger gradient clipping."
-                )
-                .into());
-            }
-
-            self.callbacks.on_epoch_end(epoch)?;
-
-            if Self::is_checkpoint(self.eval_interval, epoch) {
-                let eval = self.evaluator.eval_set(&self.model, &self.split);
-                self.callbacks.on_evaluate(&self.model, &eval, epoch)?;
-            }
-
-            if let Some(ref mut es) = early_stopping
-                && let Some(validation) = &self.split.validation
-            {
-                let preds = self.model.predict(validation.inputs.view());
-                let loss = self
-                    .evaluator
-                    .eval_predictions(preds.view(), validation.targets.view())
-                    .loss;
-
-                if es.check(loss, &self.model) {
-                    if self.restore_best_model {
-                        self.model = es
-                            .best_model
-                            .as_ref()
-                            .expect("Best model should be available")
-                            .clone();
-                    }
-                    outcome = TrainingOutcome::EarlyStopped {
-                        restored: self.restore_best_model,
-                    };
-                    break;
-                }
-            }
-        }
-
-        let final_eval = self.evaluator.eval_set(&self.model, &self.split);
-        if self.eval_interval != 0 && !Self::is_checkpoint(self.eval_interval, last_epoch) {
-            self.callbacks
-                .on_evaluate(&self.model, &final_eval, last_epoch)?;
-        }
-
-        self.model.save(&self.model_save_path)?;
-
-        self.callbacks
-            .on_train_end(outcome, Some(&final_eval), last_epoch)?;
-
-        Ok(())
+    save_model(&report.model, model_save_path)?;
+    if let Some(dir) = history_dir {
+        saved_at(HISTORY_ICON, "TRAINING HISTORY", dir);
     }
+
+    Ok(())
 }

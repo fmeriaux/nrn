@@ -33,7 +33,7 @@ impl ConstantScheduler {
 }
 
 impl Scheduler for ConstantScheduler {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "Constant"
     }
 

@@ -38,12 +38,12 @@ pub struct PlotArgs {
 impl PlotArgs {
     pub fn run(self) -> Result<(), Box<dyn Error>> {
         let archive = load_history(&self.checkpoints)?;
-        let history = archive.history()?;
+        let checkpoints = archive.checkpoints()?;
         let render_cfg = RenderConfig::new(self.width as u32, self.height as u32);
 
         let (width, height) = (self.width as u32, self.height as u32);
 
-        let frame = history.draw(&render_cfg)?;
+        let frame = checkpoints.draw(&render_cfg)?;
 
         saved_at(
             HISTORY_ICON,

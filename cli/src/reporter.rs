@@ -1,31 +1,23 @@
-use crate::display::{HISTORY_ICON, MODEL_ICON, Summary, completed, saved_at, trace, warning};
+use crate::display::{Summary, completed, trace, warning};
 use console::style;
 use nrn::callbacks::{TrainingCallback, TrainingOutcome};
 use nrn::evaluation::EvaluationSet;
 use nrn::training::TrainingConfig;
 use std::io::Result;
-use std::path::PathBuf;
 
-/// Narrates the training run lifecycle on the console. Holds no training
-/// state of its own — everything it prints is derived from the hook
-/// arguments (`config` at start, `outcome`/`eval`/`epoch` at end) plus the
-/// two paths it was constructed with.
-pub struct ConsoleReporter {
-    history_dir: Option<PathBuf>,
-    model_save_path: PathBuf,
-}
+/// Narrates the training run lifecycle on the console. Holds no state of its
+/// own — everything it prints is derived from the hook arguments (`config` at
+/// start, `outcome`/`eval`/`epoch` at end).
+pub struct ConsoleReporter;
 
 impl ConsoleReporter {
-    pub fn new(history_dir: Option<PathBuf>, model_save_path: PathBuf) -> Self {
-        Self {
-            history_dir,
-            model_save_path,
-        }
+    pub fn new() -> Self {
+        Self
     }
 }
 
 impl TrainingCallback for ConsoleReporter {
-    fn on_train_start(&mut self, config: &TrainingConfig<'_>) -> Result<()> {
+    fn on_train_start(&mut self, config: &TrainingConfig) -> Result<()> {
         trace(&format!(
             "Training for {} epochs",
             style(config.epochs).yellow()
@@ -88,14 +80,6 @@ impl TrainingCallback for ConsoleReporter {
                 epoch
             )),
             TrainingOutcome::Diverged { recovered: false } => {}
-        }
-
-        if let Some(ref dir) = self.history_dir {
-            saved_at(HISTORY_ICON, "TRAINING HISTORY", dir);
-        }
-
-        if eval.is_some() {
-            saved_at(MODEL_ICON, "NEURAL NETWORK", &self.model_save_path);
         }
 
         Ok(())

@@ -41,7 +41,7 @@ impl Progression {
 }
 
 impl TrainingCallback for Progression {
-    fn on_train_start(&mut self, config: &TrainingConfig<'_>) -> Result<()> {
+    fn on_train_start(&mut self, config: &TrainingConfig) -> Result<()> {
         self.bar.set_length(config.epochs as u64);
         self.bar.set_message(self.msg.clone());
         Ok(())

@@ -23,7 +23,7 @@ impl StochasticGradientDescent {
 }
 
 impl Optimizer for StochasticGradientDescent {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "Stochastic Gradient Descent (SGD)"
     }
 
