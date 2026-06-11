@@ -1,14 +1,12 @@
 pub mod accuracies;
 pub mod activations;
-pub mod callbacks;
 pub mod checkpoints;
 pub mod evaluation;
-pub mod evaluator;
+pub mod gradients;
 pub mod initializations;
+pub mod learning_rate;
 pub mod loss_functions;
 pub mod model;
 pub mod optimizers;
 pub mod schedulers;
 pub mod training;
-pub mod training_loop;
-pub mod training_outcome;

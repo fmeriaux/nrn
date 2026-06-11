@@ -12,7 +12,7 @@ pub use constant::*;
 pub use cosine_annealing::*;
 pub use step::*;
 
-use crate::training::LearningRate;
+use crate::learning_rate::LearningRate;
 
 /// Trait for learning rate scheduling strategies.
 ///

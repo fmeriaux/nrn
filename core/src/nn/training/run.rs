@@ -1,10 +1,12 @@
-use crate::callbacks::{Callbacks, TrainingCallback};
+use super::callbacks::{Callbacks, TrainingCallback};
+use super::config::TrainingConfig;
+use super::early_stopping::EarlyStopping;
+use super::evaluator::Evaluator;
+use super::outcome::TrainingOutcome;
+use crate::accuracies::accuracy_for;
 use crate::data::ModelSplit;
 use crate::evaluation::EvaluationSet;
-use crate::evaluator::Evaluator;
 use crate::model::NeuralNetwork;
-use crate::training::{EarlyStopping, TrainingConfig};
-use crate::training_outcome::TrainingOutcome;
 use std::io::Result;
 
 /// The result of a completed [`TrainingLoop::run`].
@@ -25,11 +27,9 @@ pub struct TrainingLoop {
     pub model: NeuralNetwork,
     pub callbacks: Callbacks,
     pub split: ModelSplit,
-    pub evaluator: Evaluator,
     pub config: TrainingConfig,
     pub early_stopping: Option<EarlyStopping>,
     pub epoch_start: usize,
-    pub restore_best_model: bool,
 }
 
 impl TrainingLoop {
@@ -42,11 +42,18 @@ impl TrainingLoop {
     pub fn run(mut self) -> Result<TrainingReport> {
         self.callbacks.on_train_start(&self.config)?;
 
+        // Accuracy is strictly determined by the number of classes, itself encoded
+        // in the output layer — derive it from the model rather than taking it as config.
+        let evaluator = Evaluator::new(
+            self.config.loss.clone(),
+            accuracy_for(self.model.n_classes()),
+        );
+
         let epochs = self.config.epochs;
         let eval_interval = self.config.eval_interval;
 
         if self.epoch_start == 0 && eval_interval != 0 {
-            self.evaluate(0)?;
+            self.evaluate(&evaluator, 0)?;
         }
 
         let mut early_stopping = self.early_stopping.take();
@@ -93,28 +100,22 @@ impl TrainingLoop {
                 && let Some(validation) = &self.split.validation
             {
                 let preds = self.model.predict(validation.inputs.view());
-                let loss = self
-                    .evaluator
+                let loss = evaluator
                     .eval_predictions(preds.view(), validation.targets.view())
                     .loss;
 
                 if es.check(loss, &self.model) {
-                    if self.restore_best_model {
-                        self.model = es
-                            .best_model
-                            .as_ref()
-                            .expect("Best model should be available")
-                            .clone();
+                    let restored = es.best_model.is_some();
+                    if let Some(best) = es.best_model.take() {
+                        self.model = best;
                     }
-                    outcome = TrainingOutcome::EarlyStopped {
-                        restored: self.restore_best_model,
-                    };
+                    outcome = TrainingOutcome::EarlyStopped { restored };
                     break;
                 }
             }
 
             if Self::is_checkpoint(eval_interval, epoch) {
-                final_evaluation = Some(self.evaluate(epoch)?);
+                final_evaluation = Some(self.evaluate(&evaluator, epoch)?);
             }
         }
 
@@ -123,11 +124,17 @@ impl TrainingLoop {
             // A diverged model with no recovered fallback is non-finite:
             // evaluating it would panic, so there is nothing to report.
             None if !self.model.is_finite() => None,
-            None => Some(self.evaluate(final_epoch)?),
+            None => Some(self.evaluate(&evaluator, final_epoch)?),
         };
 
-        self.callbacks
-            .on_train_end(outcome, final_evaluation.as_ref(), final_epoch)?;
+        // `None` exactly when there is nothing safe to persist (fatal divergence).
+        let final_model = self.model.is_finite().then_some(&self.model);
+        self.callbacks.on_train_end(
+            outcome,
+            final_model,
+            final_evaluation.as_ref(),
+            final_epoch,
+        )?;
 
         Ok(TrainingReport {
             outcome,
@@ -139,8 +146,8 @@ impl TrainingLoop {
 
     /// Computes an evaluation for the current model and reports it via
     /// [`Callbacks::on_evaluate`].
-    fn evaluate(&mut self, epoch: usize) -> Result<EvaluationSet> {
-        let eval = self.evaluator.eval_set(&self.model, &self.split);
+    fn evaluate(&mut self, evaluator: &Evaluator, epoch: usize) -> Result<EvaluationSet> {
+        let eval = evaluator.eval_set(&self.model, &self.split);
         self.callbacks.on_evaluate(&self.model, &eval, epoch)?;
         Ok(eval)
     }
@@ -149,7 +156,6 @@ impl TrainingLoop {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::accuracies::accuracy_for;
     use crate::activations::SIGMOID;
     use crate::data::ModelDataset;
     use crate::loss_functions::CROSS_ENTROPY_LOSS;
@@ -159,6 +165,7 @@ mod tests {
     use crate::training::{GradientClipping, LearningRate};
     use ndarray::array;
     use std::cell::RefCell;
+    use std::io::Error;
     use std::rc::Rc;
 
     fn sample_dataset() -> ModelDataset {
@@ -188,10 +195,6 @@ mod tests {
         }
     }
 
-    fn sample_evaluator() -> Evaluator {
-        Evaluator::new(CROSS_ENTROPY_LOSS.clone(), accuracy_for(2))
-    }
-
     fn sample_config(epochs: usize, eval_interval: usize, lr: f32) -> TrainingConfig {
         TrainingConfig {
             epochs,
@@ -211,6 +214,7 @@ mod tests {
         evaluated_epochs: Vec<usize>,
         train_ends: usize,
         last_outcome: Option<TrainingOutcome>,
+        last_model_was_some: Option<bool>,
     }
 
     struct CountingCallback(Rc<RefCell<Counts>>);
@@ -239,13 +243,30 @@ mod tests {
         fn on_train_end(
             &mut self,
             outcome: TrainingOutcome,
+            model: Option<&NeuralNetwork>,
             _eval: Option<&EvaluationSet>,
             _epoch: usize,
         ) -> Result<()> {
             let mut counts = self.0.borrow_mut();
             counts.train_ends += 1;
             counts.last_outcome = Some(outcome);
+            counts.last_model_was_some = Some(model.is_some());
             Ok(())
+        }
+    }
+
+    /// A callback whose `on_evaluate` always fails, used to verify that
+    /// `TrainingLoop::run` propagates errors from the orchestration loop.
+    struct FailingOnEvaluate;
+
+    impl TrainingCallback for FailingOnEvaluate {
+        fn on_evaluate(
+            &mut self,
+            _model: &NeuralNetwork,
+            _eval: &EvaluationSet,
+            _epoch: usize,
+        ) -> Result<()> {
+            Err(Error::other("boom"))
         }
     }
 
@@ -253,18 +274,15 @@ mod tests {
         config: TrainingConfig,
         with_validation: bool,
         early_stopping: Option<EarlyStopping>,
-        restore_best_model: bool,
         counts: Rc<RefCell<Counts>>,
     ) -> TrainingLoop {
         TrainingLoop {
             model: sample_model(),
             callbacks: Callbacks::new(vec![Box::new(CountingCallback(counts))]),
             split: sample_split(with_validation),
-            evaluator: sample_evaluator(),
             config,
             early_stopping,
             epoch_start: 0,
-            restore_best_model,
         }
     }
 
@@ -282,7 +300,7 @@ mod tests {
     fn evaluation_schedule_includes_epoch_zero_multiples_and_final_epoch() {
         let counts = Rc::new(RefCell::new(Counts::default()));
         let config = sample_config(7, 3, 0.01);
-        let training_loop = training_loop(config, false, None, false, counts.clone());
+        let training_loop = training_loop(config, false, None, counts.clone());
 
         let report = training_loop.run().unwrap();
 
@@ -293,13 +311,14 @@ mod tests {
         assert_eq!(counts.epoch_ends, 7);
         // epoch 0 + multiples of 3 (3, 6) + final epoch 7 (not a multiple of 3)
         assert_eq!(counts.evaluated_epochs, vec![0, 3, 6, 7]);
+        assert_eq!(counts.last_model_was_some, Some(true));
     }
 
     #[test]
     fn eval_interval_zero_only_emits_the_final_evaluation() {
         let counts = Rc::new(RefCell::new(Counts::default()));
         let config = sample_config(3, 0, 0.01);
-        let training_loop = training_loop(config, false, None, false, counts.clone());
+        let training_loop = training_loop(config, false, None, counts.clone());
 
         let report = training_loop.run().unwrap();
 
@@ -312,7 +331,7 @@ mod tests {
         let counts = Rc::new(RefCell::new(Counts::default()));
         let config = sample_config(50, 1, 5.0);
         let early_stopping = Some(EarlyStopping::new(1, true));
-        let training_loop = training_loop(config, true, early_stopping, true, counts.clone());
+        let training_loop = training_loop(config, true, early_stopping, counts.clone());
 
         let report = training_loop.run().unwrap();
 
@@ -331,7 +350,7 @@ mod tests {
     fn fatal_divergence_without_recovery_is_reported_as_data() {
         let counts = Rc::new(RefCell::new(Counts::default()));
         let config = sample_config(5, 1, 1e30);
-        let training_loop = training_loop(config, false, None, false, counts.clone());
+        let training_loop = training_loop(config, false, None, counts.clone());
 
         let report = training_loop.run().unwrap();
 
@@ -340,10 +359,12 @@ mod tests {
             TrainingOutcome::Diverged { recovered: false }
         );
         assert!(report.final_evaluation.is_none());
+        let counts = counts.borrow();
         assert_eq!(
-            counts.borrow().last_outcome,
+            counts.last_outcome,
             Some(TrainingOutcome::Diverged { recovered: false })
         );
+        assert_eq!(counts.last_model_was_some, Some(false));
     }
 
     #[test]
@@ -351,7 +372,7 @@ mod tests {
         let counts = Rc::new(RefCell::new(Counts::default()));
         let config = sample_config(5, 1, 1e30);
         let early_stopping = Some(EarlyStopping::new(10, true));
-        let training_loop = training_loop(config, true, early_stopping, true, counts.clone());
+        let training_loop = training_loop(config, true, early_stopping, counts.clone());
 
         let report = training_loop.run().unwrap();
 
@@ -361,5 +382,20 @@ mod tests {
         );
         assert!(report.model.is_finite());
         assert!(report.final_evaluation.is_some());
+    }
+
+    #[test]
+    fn callback_error_during_evaluation_is_propagated() {
+        let config = sample_config(3, 1, 0.01);
+        let training_loop = TrainingLoop {
+            model: sample_model(),
+            callbacks: Callbacks::new(vec![Box::new(FailingOnEvaluate)]),
+            split: sample_split(false),
+            config,
+            early_stopping: None,
+            epoch_start: 0,
+        };
+
+        assert!(training_loop.run().is_err());
     }
 }

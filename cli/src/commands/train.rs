@@ -1,22 +1,24 @@
 use crate::actions::*;
-use crate::display::{HISTORY_ICON, Summary, completed, loaded, saved_at, warning};
+use crate::display::{HISTORY_ICON, MODEL_ICON, Summary, completed, loaded, saved_at, warning};
 use crate::progression::Progression;
 use crate::reporter::ConsoleReporter;
 use clap::*;
-use nrn::accuracies::accuracy_for;
-use nrn::callbacks::{Callbacks, TrainingCallback, TrainingOutcome};
-use nrn::evaluator::Evaluator;
+use nrn::evaluation::EvaluationSet;
 use nrn::io::snapshot::{SnapshotArchive, SnapshotRecorder, TrainingMeta};
 use nrn::loss_functions::CROSS_ENTROPY_LOSS;
+use nrn::model::NeuralNetwork;
 use nrn::optimizers::{Adam, Optimizer, StochasticGradientDescent};
 use nrn::schedulers;
 use nrn::schedulers::{ConstantScheduler, Scheduler, StepDecay};
-use nrn::training::{EarlyStopping, GradientClipping, LearningRate, TrainingConfig};
-use nrn::training_loop::{TrainingLoop, TrainingReport};
+use nrn::training::{
+    Callbacks, EarlyStopping, GradientClipping, LearningRate, TrainingCallback, TrainingConfig,
+    TrainingLoop, TrainingOutcome, TrainingReport,
+};
 use schedulers::CosineAnnealing;
 use std::error::Error;
 use std::fmt::Display;
-use std::path::Path;
+use std::io::{Error as IoError, ErrorKind, Result as IoResult};
+use std::path::{Path, PathBuf};
 
 // ─── Value enums ─────────────────────────────────────────────────────────────
 
@@ -331,9 +333,10 @@ impl StartArgs {
         let mut callbacks: Vec<Box<dyn TrainingCallback>> = vec![
             Box::new(Progression::new("Training")),
             Box::new(ConsoleReporter::new()),
+            Box::new(ModelSaver::new(model_save_path)),
         ];
         if interval > 0 {
-            callbacks.push(Box::new(SnapshotRecorder::create(
+            callbacks.push(Box::new(create_snapshot_recorder(
                 &history_dir,
                 &dataset_name,
                 self.overwrite,
@@ -344,10 +347,6 @@ impl StartArgs {
             model,
             callbacks: Callbacks::new(callbacks),
             split,
-            evaluator: Evaluator::new(
-                CROSS_ENTROPY_LOSS.clone(),
-                accuracy_for(dataset.n_classes()),
-            ),
             config: TrainingConfig {
                 epochs: self.hp.epochs,
                 eval_interval: interval,
@@ -359,15 +358,10 @@ impl StartArgs {
             },
             early_stopping: self.hp.early_stopping(),
             epoch_start: 0,
-            restore_best_model: self.hp.restore_best_model,
         }
         .run()?;
 
-        finish(
-            report,
-            &model_save_path,
-            (interval > 0).then_some(&history_dir),
-        )
+        interpret_report(&report, (interval > 0).then_some(&history_dir))
     }
 }
 
@@ -448,6 +442,7 @@ impl ResumeArgs {
         let mut callbacks: Vec<Box<dyn TrainingCallback>> = vec![
             Box::new(Progression::new("Training")),
             Box::new(ConsoleReporter::new()),
+            Box::new(ModelSaver::new(model_save_path)),
         ];
         if interval > 0 {
             let (recorder, trimmed) = SnapshotRecorder::resume(history_dir, from_epoch)?;
@@ -463,10 +458,6 @@ impl ResumeArgs {
             model,
             callbacks: Callbacks::new(callbacks),
             split,
-            evaluator: Evaluator::new(
-                CROSS_ENTROPY_LOSS.clone(),
-                accuracy_for(dataset.n_classes()),
-            ),
             config: TrainingConfig {
                 epochs: self.hp.epochs,
                 eval_interval: interval,
@@ -478,26 +469,21 @@ impl ResumeArgs {
             },
             early_stopping: self.hp.early_stopping(),
             epoch_start: from_epoch,
-            restore_best_model: self.hp.restore_best_model,
         }
         .run()?;
 
-        finish(
-            report,
-            &model_save_path,
-            (interval > 0).then_some(history_dir),
-        )
+        interpret_report(&report, (interval > 0).then_some(history_dir))
     }
 }
 
 // ─── Report handling ──────────────────────────────────────────────────────────
 
 /// Turns a [`TrainingReport`] into the action's outcome: a fatal divergence
-/// becomes a user-facing error (no save); otherwise the model is saved and
-/// the training history directory is announced if checkpoints were recorded.
-fn finish(
-    report: TrainingReport,
-    model_save_path: &Path,
+/// becomes a user-facing error; otherwise the training history directory is
+/// announced if checkpoints were recorded (the model itself is saved by
+/// [`ModelSaver`]).
+fn interpret_report(
+    report: &TrainingReport,
     history_dir: Option<&Path>,
 ) -> Result<(), Box<dyn Error>> {
     if let TrainingOutcome::Diverged { recovered: false } = report.outcome {
@@ -510,10 +496,55 @@ fn finish(
         .into());
     }
 
-    save_model(&report.model, model_save_path)?;
     if let Some(dir) = history_dir {
         saved_at(HISTORY_ICON, "TRAINING HISTORY", dir);
     }
 
     Ok(())
+}
+
+// ─── Callbacks ─────────────────────────────────────────────────────────────────
+
+/// Saves the final model to disk once training ends, unless the run diverged
+/// without recovery (in which case `model` is `None`).
+struct ModelSaver {
+    path: PathBuf,
+}
+
+impl ModelSaver {
+    fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+}
+
+impl TrainingCallback for ModelSaver {
+    fn on_train_end(
+        &mut self,
+        _outcome: TrainingOutcome,
+        model: Option<&NeuralNetwork>,
+        _eval: Option<&EvaluationSet>,
+        _epoch: usize,
+    ) -> IoResult<()> {
+        if let Some(model) = model {
+            let path = model.save(&self.path)?;
+            saved_at(MODEL_ICON, "NEURAL NETWORK", path);
+        }
+        Ok(())
+    }
+}
+
+/// Wraps [`SnapshotRecorder::create`], adding the `--overwrite` remediation
+/// hint to an `AlreadyExists` error.
+fn create_snapshot_recorder(
+    history_dir: &Path,
+    dataset_name: &str,
+    overwrite: bool,
+) -> IoResult<SnapshotRecorder> {
+    SnapshotRecorder::create(history_dir, dataset_name, overwrite).map_err(|e| {
+        if e.kind() == ErrorKind::AlreadyExists {
+            IoError::new(e.kind(), format!("{e}; use --overwrite to replace it"))
+        } else {
+            e
+        }
+    })
 }

@@ -1,5 +1,5 @@
+use crate::learning_rate::LearningRate;
 use crate::schedulers::Scheduler;
-use crate::training::LearningRate;
 
 pub struct StepDecay {
     initial: LearningRate,

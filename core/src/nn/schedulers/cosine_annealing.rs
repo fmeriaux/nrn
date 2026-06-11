@@ -1,5 +1,5 @@
+use crate::learning_rate::LearningRate;
 use crate::schedulers::Scheduler;
-use crate::training::LearningRate;
 use core::f32::consts::PI;
 
 /// A cosine annealing learning rate scheduler.

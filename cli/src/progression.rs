@@ -1,7 +1,7 @@
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
-use nrn::callbacks::{TrainingCallback, TrainingOutcome};
 use nrn::evaluation::EvaluationSet;
-use nrn::training::TrainingConfig;
+use nrn::model::NeuralNetwork;
+use nrn::training::{TrainingCallback, TrainingConfig, TrainingOutcome};
 use std::borrow::Cow;
 use std::io::Result;
 
@@ -55,6 +55,7 @@ impl TrainingCallback for Progression {
     fn on_train_end(
         &mut self,
         _outcome: TrainingOutcome,
+        _model: Option<&NeuralNetwork>,
         _eval: Option<&EvaluationSet>,
         _epoch: usize,
     ) -> Result<()> {

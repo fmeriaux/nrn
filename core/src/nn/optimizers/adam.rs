@@ -1,6 +1,7 @@
+use crate::gradients::Gradients;
+use crate::learning_rate::LearningRate;
 use crate::model::NeuronLayer;
 use crate::optimizers::Optimizer;
-use crate::training::{Gradients, LearningRate};
 use ndarray::{Array1, Array2};
 use std::collections::HashMap;
 

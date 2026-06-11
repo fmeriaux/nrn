@@ -1,5 +1,5 @@
+use crate::learning_rate::LearningRate;
 use crate::nn::schedulers::Scheduler;
-use crate::training::LearningRate;
 
 /// A learning rate scheduler that always returns the same learning rate.
 ///

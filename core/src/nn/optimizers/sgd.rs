@@ -8,9 +8,10 @@
 //! - Does not maintain any internal state (unlike Adam, RMSProp, etc.).
 //!
 
+use crate::gradients::Gradients;
+use crate::learning_rate::LearningRate;
 use crate::model::NeuronLayer;
 use crate::optimizers::Optimizer;
-use crate::training::{Gradients, LearningRate};
 
 pub struct StochasticGradientDescent {
     pub learning_rate: LearningRate,

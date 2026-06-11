@@ -4,7 +4,6 @@
 
 use ndarray::array;
 use nrn::activations::RELU;
-use nrn::callbacks::TrainingCallback;
 use nrn::data::Dataset;
 use nrn::data::scalers::{MinMaxScaler, Scaler, ScalerMethod};
 use nrn::evaluation::{Evaluation, EvaluationSet};
@@ -15,7 +14,7 @@ use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::Adam;
 use nrn::schedulers::ConstantScheduler;
-use nrn::training::{GradientClipping, LearningRate};
+use nrn::training::{GradientClipping, LearningRate, TrainingCallback};
 use std::path::PathBuf;
 use std::sync::Arc;
 

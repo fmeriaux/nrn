@@ -1,4 +1,3 @@
-use crate::callbacks::TrainingCallback;
 use crate::checkpoints::{Checkpoint, Checkpoints};
 use crate::evaluation::{Evaluation, EvaluationSet};
 use crate::io::bytes::secure_read;
@@ -6,11 +5,12 @@ use crate::io::json;
 use crate::io::path::PathExt;
 use crate::io::tensors;
 use crate::model::NeuralNetwork;
+use crate::training::TrainingCallback;
 use safetensors::SafeTensors;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::io::ErrorKind::InvalidData;
+use std::io::ErrorKind::{AlreadyExists, InvalidData};
 use std::io::{Error, Result};
 use std::path::{Path, PathBuf};
 
@@ -137,12 +137,8 @@ impl SnapshotRecorder {
         if !existing.is_empty() {
             if !overwrite {
                 return Err(Error::new(
-                    InvalidData,
-                    format!(
-                        "training history already exists at {}; \
-                         use --overwrite to replace it",
-                        dir.display()
-                    ),
+                    AlreadyExists,
+                    format!("training history already exists at {}", dir.display()),
                 ));
             }
             for snapshot in existing {
@@ -347,8 +343,9 @@ mod tests {
         let result = SnapshotRecorder::create(&dir, "ds", false);
         cleanup(&dir);
 
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("already exists"));
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), AlreadyExists);
+        assert!(err.to_string().contains("already exists"));
     }
 
     #[test]
@@ -557,7 +554,7 @@ mod tests {
             .unwrap();
 
         let archive = SnapshotArchive::load(&dir).unwrap();
-        let msg = archive.model_at(99).err().unwrap().to_string();
+        let msg = archive.model_at(99).unwrap_err().to_string();
         cleanup(&dir);
 
         assert!(msg.contains("out of range"), "got: {msg}");

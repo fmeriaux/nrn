@@ -1,8 +1,8 @@
 use crate::display::{Summary, completed, trace, warning};
 use console::style;
-use nrn::callbacks::{TrainingCallback, TrainingOutcome};
 use nrn::evaluation::EvaluationSet;
-use nrn::training::TrainingConfig;
+use nrn::model::NeuralNetwork;
+use nrn::training::{TrainingCallback, TrainingConfig, TrainingOutcome};
 use std::io::Result;
 
 /// Narrates the training run lifecycle on the console. Holds no state of its
@@ -57,6 +57,7 @@ impl TrainingCallback for ConsoleReporter {
     fn on_train_end(
         &mut self,
         outcome: TrainingOutcome,
+        _model: Option<&NeuralNetwork>,
         eval: Option<&EvaluationSet>,
         epoch: usize,
     ) -> Result<()> {

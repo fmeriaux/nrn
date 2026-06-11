@@ -12,8 +12,9 @@ mod sgd;
 pub use adam::*;
 pub use sgd::*;
 
+use crate::gradients::Gradients;
+use crate::learning_rate::LearningRate;
 use crate::model::NeuronLayer;
-use crate::training::{Gradients, LearningRate};
 
 pub trait Optimizer {
     /// Returns a human-readable name for this optimizer.

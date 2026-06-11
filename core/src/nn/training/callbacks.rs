@@ -1,8 +1,7 @@
-pub use crate::training_outcome::TrainingOutcome;
-
+use super::config::TrainingConfig;
+use super::outcome::TrainingOutcome;
 use crate::evaluation::EvaluationSet;
 use crate::model::NeuralNetwork;
-use crate::training::TrainingConfig;
 use std::io::Result;
 
 /// Observes training lifecycle events.
@@ -33,11 +32,12 @@ pub trait TrainingCallback {
         Ok(())
     }
 
-    /// Called once when training ends. `eval` is the final evaluation, or `None`
-    /// on a fatal divergence (nothing to evaluate).
+    /// Called once when training ends. `model` and `eval` are the final model and
+    /// evaluation, or `None` on a fatal divergence (nothing safe to persist or evaluate).
     fn on_train_end(
         &mut self,
         _outcome: TrainingOutcome,
+        _model: Option<&NeuralNetwork>,
         _eval: Option<&EvaluationSet>,
         _epoch: usize,
     ) -> Result<()> {
@@ -80,12 +80,13 @@ impl TrainingCallback for Callbacks {
     fn on_train_end(
         &mut self,
         outcome: TrainingOutcome,
+        model: Option<&NeuralNetwork>,
         eval: Option<&EvaluationSet>,
         epoch: usize,
     ) -> Result<()> {
         self.0
             .iter_mut()
-            .try_for_each(|cb| cb.on_train_end(outcome, eval, epoch))
+            .try_for_each(|cb| cb.on_train_end(outcome, model, eval, epoch))
     }
 }
 
@@ -142,26 +143,33 @@ mod tests {
     fn default_callback_methods_are_noop() {
         let mut callback = DefaultCallback;
         let config = sample_config();
+        let model = sample_model();
 
         assert!(callback.on_train_start(&config).is_ok());
         assert!(callback.on_epoch_end(0).is_ok());
+        assert!(callback.on_evaluate(&model, &sample_eval(), 0).is_ok());
         assert!(
             callback
-                .on_evaluate(&sample_model(), &sample_eval(), 0)
-                .is_ok()
-        );
-        assert!(
-            callback
-                .on_train_end(TrainingOutcome::Completed, Some(&sample_eval()), 0)
+                .on_train_end(
+                    TrainingOutcome::Completed,
+                    Some(&model),
+                    Some(&sample_eval()),
+                    0
+                )
                 .is_ok()
         );
     }
 
-    struct CountingCallback(Rc<RefCell<usize>>);
+    #[derive(Default)]
+    struct Counts {
+        epoch_ends: usize,
+    }
+
+    struct CountingCallback(Rc<RefCell<Counts>>);
 
     impl TrainingCallback for CountingCallback {
         fn on_epoch_end(&mut self, _epoch: usize) -> Result<()> {
-            *self.0.borrow_mut() += 1;
+            self.0.borrow_mut().epoch_ends += 1;
             Ok(())
         }
     }
@@ -176,15 +184,31 @@ mod tests {
 
     #[test]
     fn short_circuits_on_first_error() {
-        let epoch_ends = Rc::new(RefCell::new(0));
+        let counts = Rc::new(RefCell::new(Counts::default()));
         let mut callbacks = Callbacks::new(vec![
             Box::new(FailingCallback),
-            Box::new(CountingCallback(epoch_ends.clone())),
+            Box::new(CountingCallback(counts.clone())),
         ]);
 
         let result = callbacks.on_epoch_end(1);
 
         assert!(result.is_err());
-        assert_eq!(*epoch_ends.borrow(), 0);
+        assert_eq!(counts.borrow().epoch_ends, 0);
+    }
+
+    #[test]
+    fn dispatches_each_hook_to_all_children() {
+        let first = Rc::new(RefCell::new(Counts::default()));
+        let second = Rc::new(RefCell::new(Counts::default()));
+        let mut callbacks = Callbacks::new(vec![
+            Box::new(CountingCallback(first.clone())),
+            Box::new(CountingCallback(second.clone())),
+        ]);
+
+        callbacks.on_epoch_end(1).unwrap();
+        callbacks.on_epoch_end(2).unwrap();
+
+        assert_eq!(first.borrow().epoch_ends, 2);
+        assert_eq!(second.borrow().epoch_ends, 2);
     }
 }
