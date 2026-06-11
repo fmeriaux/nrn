@@ -1,4 +1,5 @@
 use console::{Emoji, style};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use nrn::data::scalers::{Scaler, ScalerMethod};
 use nrn::data::{Dataset, ModelSplit};
 use nrn::evaluation::{Evaluation, EvaluationSet};
@@ -6,6 +7,7 @@ use nrn::io::snapshot::SnapshotArchive;
 use nrn::model::NeuralNetwork;
 use nrn::training::GradientClipping;
 use pathdiff::diff_paths;
+use std::borrow::Cow;
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -160,6 +162,37 @@ pub(crate) fn saved_at<P: AsRef<Path>>(icon: Emoji, name: &str, at: P) {
         style(name).bold().blue(),
         style(relative_path.display()).bright().magenta().italic()
     );
+}
+
+pub(crate) fn recording_at<P: AsRef<Path>>(icon: Emoji, name: &str, at: P) {
+    let relative_path = to_relative_path(&at);
+    println!(
+        "{} Recording {} at {}",
+        style(icon).bright().green(),
+        style(name).bold().blue(),
+        style(relative_path.display()).bright().magenta().italic()
+    );
+}
+
+/// Builds a hidden progress bar with the project's standard style, drawn to stdout.
+pub(crate) fn styled_bar() -> ProgressBar {
+    let bar = ProgressBar::hidden();
+    bar.set_style(
+        ProgressStyle::with_template(
+            "{msg} {spinner:.green} [{elapsed_precise}] {wide_bar} {pos}/{len} {percent}% ({eta})",
+        )
+        .unwrap(),
+    );
+    bar.set_draw_target(ProgressDrawTarget::stdout());
+    bar
+}
+
+/// A standalone progress bar of known length, for use with [`indicatif::ProgressIterator`].
+pub(crate) fn bar(len: usize, msg: impl Into<Cow<'static, str>>) -> ProgressBar {
+    let bar = styled_bar();
+    bar.set_length(len as u64);
+    bar.set_message(msg);
+    bar
 }
 
 pub(crate) fn loaded<S: Summary>(subject: &S) {

@@ -1,4 +1,4 @@
-use crate::display::*;
+use crate::console::*;
 use nrn::activations::RELU;
 use nrn::charts::RenderConfig;
 use nrn::data::Dataset;

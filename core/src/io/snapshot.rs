@@ -13,6 +13,7 @@ use std::fs;
 use std::io::ErrorKind::{AlreadyExists, InvalidData};
 use std::io::{Error, Result};
 use std::path::{Path, PathBuf};
+use std::result::Result as StdResult;
 
 /// Top-level metadata for a training history directory.
 /// Written once by [`SnapshotRecorder::create`] into `meta.json`.
@@ -96,7 +97,7 @@ struct SnapshotRef {
 /// (not lexically, so 10+ snapshots sort correctly). Reads no other files.
 fn scan_snapshots(dir: &Path) -> Result<Vec<SnapshotRef>> {
     let mut snapshots: Vec<SnapshotRef> = fs::read_dir(dir)?
-        .filter_map(std::result::Result::ok)
+        .filter_map(StdResult::ok)
         .filter_map(|entry| {
             let path = entry.path();
             let name = path.file_name()?.to_str()?;

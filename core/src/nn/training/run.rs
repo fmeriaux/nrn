@@ -7,7 +7,7 @@ use crate::accuracies::accuracy_for;
 use crate::data::ModelSplit;
 use crate::evaluation::EvaluationSet;
 use crate::model::NeuralNetwork;
-use std::io::Result;
+use std::io::Result as IoResult;
 
 /// The result of a completed [`TrainingLoop::run`].
 pub struct TrainingReport {
@@ -18,6 +18,38 @@ pub struct TrainingReport {
     /// `None` only when `outcome` is `Diverged { recovered: false }`.
     pub final_evaluation: Option<EvaluationSet>,
     pub final_epoch: usize,
+}
+
+/// A fatal divergence: the model's weights became non-finite and no
+/// recovered (early-stopping) fallback was available.
+#[derive(Debug)]
+pub struct FatalDivergence {
+    pub final_epoch: usize,
+}
+
+impl std::fmt::Display for FatalDivergence {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "model diverged at epoch {}: non-finite weights",
+            self.final_epoch
+        )
+    }
+}
+
+impl std::error::Error for FatalDivergence {}
+
+impl TrainingReport {
+    /// Turns a `Diverged { recovered: false }` outcome into an error;
+    /// every other outcome (including a recovered divergence) is a success.
+    pub fn into_result(self) -> Result<Self, FatalDivergence> {
+        match self.outcome {
+            TrainingOutcome::Diverged { recovered: false } => Err(FatalDivergence {
+                final_epoch: self.final_epoch,
+            }),
+            _ => Ok(self),
+        }
+    }
 }
 
 /// Orchestrates a training run: forward/backward passes, scheduled evaluation,
@@ -39,7 +71,7 @@ impl TrainingLoop {
         eval_interval != 0 && epoch.is_multiple_of(eval_interval)
     }
 
-    pub fn run(mut self) -> Result<TrainingReport> {
+    pub fn run(mut self) -> IoResult<TrainingReport> {
         self.callbacks.on_train_start(&self.config)?;
 
         // Accuracy is strictly determined by the number of classes, itself encoded
@@ -146,7 +178,7 @@ impl TrainingLoop {
 
     /// Computes an evaluation for the current model and reports it via
     /// [`Callbacks::on_evaluate`].
-    fn evaluate(&mut self, evaluator: &Evaluator, epoch: usize) -> Result<EvaluationSet> {
+    fn evaluate(&mut self, evaluator: &Evaluator, epoch: usize) -> IoResult<EvaluationSet> {
         let eval = evaluator.eval_set(&self.model, &self.split);
         self.callbacks.on_evaluate(&self.model, &eval, epoch)?;
         Ok(eval)
@@ -220,12 +252,12 @@ mod tests {
     struct CountingCallback(Rc<RefCell<Counts>>);
 
     impl TrainingCallback for CountingCallback {
-        fn on_train_start(&mut self, _config: &TrainingConfig) -> Result<()> {
+        fn on_train_start(&mut self, _config: &TrainingConfig) -> IoResult<()> {
             self.0.borrow_mut().train_starts += 1;
             Ok(())
         }
 
-        fn on_epoch_end(&mut self, _epoch: usize) -> Result<()> {
+        fn on_epoch_end(&mut self, _epoch: usize) -> IoResult<()> {
             self.0.borrow_mut().epoch_ends += 1;
             Ok(())
         }
@@ -235,7 +267,7 @@ mod tests {
             _model: &NeuralNetwork,
             _eval: &EvaluationSet,
             epoch: usize,
-        ) -> Result<()> {
+        ) -> IoResult<()> {
             self.0.borrow_mut().evaluated_epochs.push(epoch);
             Ok(())
         }
@@ -246,7 +278,7 @@ mod tests {
             model: Option<&NeuralNetwork>,
             _eval: Option<&EvaluationSet>,
             _epoch: usize,
-        ) -> Result<()> {
+        ) -> IoResult<()> {
             let mut counts = self.0.borrow_mut();
             counts.train_ends += 1;
             counts.last_outcome = Some(outcome);
@@ -265,7 +297,23 @@ mod tests {
             _model: &NeuralNetwork,
             _eval: &EvaluationSet,
             _epoch: usize,
-        ) -> Result<()> {
+        ) -> IoResult<()> {
+            Err(Error::other("boom"))
+        }
+    }
+
+    /// A callback whose `on_train_end` always fails, used to verify that
+    /// `TrainingLoop::run` propagates errors raised at the end of training.
+    struct FailingOnTrainEnd;
+
+    impl TrainingCallback for FailingOnTrainEnd {
+        fn on_train_end(
+            &mut self,
+            _outcome: TrainingOutcome,
+            _model: Option<&NeuralNetwork>,
+            _eval: Option<&EvaluationSet>,
+            _epoch: usize,
+        ) -> IoResult<()> {
             Err(Error::other("boom"))
         }
     }
@@ -397,5 +445,66 @@ mod tests {
         };
 
         assert!(training_loop.run().is_err());
+    }
+
+    #[test]
+    fn callback_error_during_train_end_is_propagated() {
+        let config = sample_config(3, 1, 0.01);
+        let training_loop = TrainingLoop {
+            model: sample_model(),
+            callbacks: Callbacks::new(vec![Box::new(FailingOnTrainEnd)]),
+            split: sample_split(false),
+            config,
+            early_stopping: None,
+            epoch_start: 0,
+        };
+
+        assert!(training_loop.run().is_err());
+    }
+
+    #[test]
+    fn final_evaluation_is_reused_when_last_epoch_is_a_checkpoint() {
+        let counts = Rc::new(RefCell::new(Counts::default()));
+        let config = sample_config(6, 3, 0.01);
+        let report = training_loop(config, false, None, counts.clone())
+            .run()
+            .unwrap();
+
+        assert!(report.final_evaluation.is_some());
+        // [0, 3, 6] and NOT [0, 3, 6, 6]: proves the final checkpoint
+        // evaluation is reused rather than recomputed.
+        assert_eq!(counts.borrow().evaluated_epochs, vec![0, 3, 6]);
+    }
+
+    #[test]
+    fn into_result_is_ok_for_non_fatal_outcomes() {
+        let counts = Rc::new(RefCell::new(Counts::default()));
+        let config = sample_config(7, 3, 0.01);
+        let report = training_loop(config, false, None, counts).run().unwrap();
+
+        assert_eq!(report.outcome, TrainingOutcome::Completed);
+        assert!(report.into_result().is_ok());
+    }
+
+    #[test]
+    fn into_result_is_err_for_unrecovered_divergence() {
+        let counts = Rc::new(RefCell::new(Counts::default()));
+        let config = sample_config(5, 1, 1e30);
+        let report = training_loop(config, false, None, counts).run().unwrap();
+
+        assert_eq!(
+            report.outcome,
+            TrainingOutcome::Diverged { recovered: false }
+        );
+        let final_epoch = report.final_epoch;
+        let err = report
+            .into_result()
+            .err()
+            .expect("expected a fatal divergence error");
+        assert_eq!(err.final_epoch, final_epoch);
+        assert_eq!(
+            err.to_string(),
+            format!("model diverged at epoch {final_epoch}: non-finite weights")
+        );
     }
 }

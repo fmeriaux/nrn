@@ -1,6 +1,6 @@
 use crate::actions::save_dataset;
-use crate::display::{completed, trace};
-use crate::progression::bar;
+use crate::console::bar;
+use crate::console::{completed, trace};
 use clap::{Args, Subcommand};
 use console::style;
 use ndarray_rand::rand::SeedableRng;

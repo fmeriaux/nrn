@@ -1,7 +1,7 @@
 use crate::actions::{load_dataset, load_history};
-use crate::display::warning;
-use crate::display::{ANIMATION_ICON, HISTORY_ICON, saved_at};
-use crate::progression::bar;
+use crate::console::bar;
+use crate::console::warning;
+use crate::console::{ANIMATION_ICON, HISTORY_ICON, saved_at};
 use clap::Args;
 use indicatif::ProgressIterator;
 use nrn::charts::RenderConfig;

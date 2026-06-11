@@ -1,4 +1,4 @@
-use crate::display::{Summary, completed, trace, warning};
+use crate::console::{Summary, completed, trace, warning};
 use console::style;
 use nrn::evaluation::EvaluationSet;
 use nrn::model::NeuralNetwork;

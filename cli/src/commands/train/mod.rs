@@ -1,24 +1,27 @@
+mod model_saver;
+mod progression;
+mod reporter;
+
 use crate::actions::*;
-use crate::display::{HISTORY_ICON, MODEL_ICON, Summary, completed, loaded, saved_at, warning};
-use crate::progression::Progression;
-use crate::reporter::ConsoleReporter;
+use crate::console::{HISTORY_ICON, Summary, completed, loaded, recording_at, warning};
 use clap::*;
-use nrn::evaluation::EvaluationSet;
+use model_saver::ModelSaver;
 use nrn::io::snapshot::{SnapshotArchive, SnapshotRecorder, TrainingMeta};
 use nrn::loss_functions::CROSS_ENTROPY_LOSS;
-use nrn::model::NeuralNetwork;
 use nrn::optimizers::{Adam, Optimizer, StochasticGradientDescent};
 use nrn::schedulers;
 use nrn::schedulers::{ConstantScheduler, Scheduler, StepDecay};
 use nrn::training::{
-    Callbacks, EarlyStopping, GradientClipping, LearningRate, TrainingCallback, TrainingConfig,
-    TrainingLoop, TrainingOutcome, TrainingReport,
+    Callbacks, EarlyStopping, FatalDivergence, GradientClipping, LearningRate, TrainingCallback,
+    TrainingConfig, TrainingLoop,
 };
+use progression::Progression;
+use reporter::ConsoleReporter;
 use schedulers::CosineAnnealing;
 use std::error::Error;
 use std::fmt::Display;
 use std::io::{Error as IoError, ErrorKind, Result as IoResult};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 // ─── Value enums ─────────────────────────────────────────────────────────────
 
@@ -341,9 +344,10 @@ impl StartArgs {
                 &dataset_name,
                 self.overwrite,
             )?));
+            recording_at(HISTORY_ICON, "TRAINING HISTORY", &history_dir);
         }
 
-        let report = TrainingLoop {
+        TrainingLoop {
             model,
             callbacks: Callbacks::new(callbacks),
             split,
@@ -359,9 +363,11 @@ impl StartArgs {
             early_stopping: self.hp.early_stopping(),
             epoch_start: 0,
         }
-        .run()?;
+        .run()?
+        .into_result()
+        .map_err(divergence_error)?;
 
-        interpret_report(&report, (interval > 0).then_some(&history_dir))
+        Ok(())
     }
 }
 
@@ -452,9 +458,10 @@ impl ResumeArgs {
                 ));
             }
             callbacks.push(Box::new(recorder));
+            recording_at(HISTORY_ICON, "TRAINING HISTORY", history_dir);
         }
 
-        let report = TrainingLoop {
+        TrainingLoop {
             model,
             callbacks: Callbacks::new(callbacks),
             split,
@@ -470,67 +477,25 @@ impl ResumeArgs {
             early_stopping: self.hp.early_stopping(),
             epoch_start: from_epoch,
         }
-        .run()?;
+        .run()?
+        .into_result()
+        .map_err(divergence_error)?;
 
-        interpret_report(&report, (interval > 0).then_some(history_dir))
+        Ok(())
     }
 }
 
 // ─── Report handling ──────────────────────────────────────────────────────────
 
-/// Turns a [`TrainingReport`] into the action's outcome: a fatal divergence
-/// becomes a user-facing error; otherwise the training history directory is
-/// announced if checkpoints were recorded (the model itself is saved by
-/// [`ModelSaver`]).
-fn interpret_report(
-    report: &TrainingReport,
-    history_dir: Option<&Path>,
-) -> Result<(), Box<dyn Error>> {
-    if let TrainingOutcome::Diverged { recovered: false } = report.outcome {
-        return Err(format!(
-            "Model diverged at epoch {} (NaN/Inf in weights). \
-             Try: --early-stopping with --restore-best-model, --scheduler cosine, \
-             a lower --lr, or stronger gradient clipping.",
-            report.final_epoch
-        )
-        .into());
-    }
-
-    if let Some(dir) = history_dir {
-        saved_at(HISTORY_ICON, "TRAINING HISTORY", dir);
-    }
-
-    Ok(())
-}
-
-// ─── Callbacks ─────────────────────────────────────────────────────────────────
-
-/// Saves the final model to disk once training ends, unless the run diverged
-/// without recovery (in which case `model` is `None`).
-struct ModelSaver {
-    path: PathBuf,
-}
-
-impl ModelSaver {
-    fn new(path: PathBuf) -> Self {
-        Self { path }
-    }
-}
-
-impl TrainingCallback for ModelSaver {
-    fn on_train_end(
-        &mut self,
-        _outcome: TrainingOutcome,
-        model: Option<&NeuralNetwork>,
-        _eval: Option<&EvaluationSet>,
-        _epoch: usize,
-    ) -> IoResult<()> {
-        if let Some(model) = model {
-            let path = model.save(&self.path)?;
-            saved_at(MODEL_ICON, "NEURAL NETWORK", path);
-        }
-        Ok(())
-    }
+/// Turns a [`FatalDivergence`] into a user-facing error with actionable hints.
+fn divergence_error(divergence: FatalDivergence) -> Box<dyn Error> {
+    format!(
+        "Model diverged at epoch {} (NaN/Inf in weights). \
+         Try: --early-stopping with --restore-best-model, --scheduler cosine, \
+         a lower --lr, or stronger gradient clipping.",
+        divergence.final_epoch
+    )
+    .into()
 }
 
 /// Wraps [`SnapshotRecorder::create`], adding the `--overwrite` remediation

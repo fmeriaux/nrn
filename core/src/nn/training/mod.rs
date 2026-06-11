@@ -13,4 +13,4 @@ pub use config::TrainingConfig;
 pub use early_stopping::EarlyStopping;
 pub use evaluator::Evaluator;
 pub use outcome::TrainingOutcome;
-pub use run::{TrainingLoop, TrainingReport};
+pub use run::{FatalDivergence, TrainingLoop, TrainingReport};
