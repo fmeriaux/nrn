@@ -3,10 +3,10 @@ mod progression;
 mod reporter;
 
 use crate::actions::*;
-use crate::console::{HISTORY_ICON, Summary, completed, loaded, recording_at, warning};
+use crate::console::{RUN_ICON, Summary, completed, loaded, recording_at, warning};
 use clap::*;
 use model_saver::ModelSaver;
-use nrn::io::snapshot::{SnapshotArchive, SnapshotRecorder, TrainingMeta};
+use nrn::io::checkpoint::{CheckpointArchive, CheckpointRecorder, TrainingMeta};
 use nrn::loss_functions::CROSS_ENTROPY_LOSS;
 use nrn::optimizers::{Adam, Optimizer, StochasticGradientDescent};
 use nrn::schedulers;
@@ -63,7 +63,7 @@ impl Display for SchedulerType {
 pub enum TrainCommand {
     /// Start a new training run from scratch
     Start(StartArgs),
-    /// Resume training from an existing history directory
+    /// Resume training from an existing run directory
     Resume(ResumeArgs),
 }
 
@@ -271,7 +271,7 @@ pub struct StartArgs {
     /// Dataset to train on
     dataset: String,
 
-    /// Load a pre-trained model to continue training (snapshot count resets to 0)
+    /// Load a pre-trained model to continue training (checkpoint count resets to 0)
     #[arg(short, long, conflicts_with_all = &["layers", "auto_layers"])]
     model: Option<String>,
 
@@ -283,7 +283,7 @@ pub struct StartArgs {
     #[arg(long, conflicts_with_all = &["layers", "model"], default_value_t = false)]
     auto_layers: bool,
 
-    /// Overwrite an existing training history directory
+    /// Overwrite an existing training run directory
     #[arg(long, default_value_t = false)]
     overwrite: bool,
 
@@ -328,7 +328,7 @@ impl StartArgs {
             None => initialize_model_with(&dataset, self.layers.clone(), self.auto_layers),
         };
 
-        let history_dir = dataset_path.with_file_name(format!("training-model-{dataset_name}"));
+        let run_dir = dataset_path.with_file_name(format!("training-model-{dataset_name}"));
         let model_save_path = dataset_path.with_file_name(format!("model-{dataset_name}"));
 
         let interval = self.hp.checkpoint_interval;
@@ -339,12 +339,12 @@ impl StartArgs {
             Box::new(ModelSaver::new(model_save_path)),
         ];
         if interval > 0 {
-            callbacks.push(Box::new(create_snapshot_recorder(
-                &history_dir,
+            callbacks.push(Box::new(create_checkpoint_recorder(
+                &run_dir,
                 &dataset_name,
                 self.overwrite,
             )?));
-            recording_at(HISTORY_ICON, "TRAINING HISTORY", &history_dir);
+            recording_at(RUN_ICON, "TRAINING RUN", &run_dir);
         }
 
         TrainingLoop {
@@ -375,10 +375,10 @@ impl StartArgs {
 
 #[derive(Args, Debug)]
 pub struct ResumeArgs {
-    /// Training history directory to resume from
-    history_dir: String,
+    /// Training run directory to resume from
+    run_dir: String,
 
-    /// Snapshot index to resume from (default: last snapshot)
+    /// Checkpoint index to resume from (default: last checkpoint)
     #[arg(long)]
     from: Option<usize>,
 
@@ -390,8 +390,8 @@ impl ResumeArgs {
     pub fn run(&self) -> Result<(), Box<dyn Error>> {
         self.hp.validate()?;
 
-        let history_dir = Path::new(&self.history_dir);
-        let meta = TrainingMeta::load(history_dir)?;
+        let run_dir = Path::new(&self.run_dir);
+        let meta = TrainingMeta::load(run_dir)?;
 
         let dataset = load_dataset(&meta.dataset)?;
         dataset.validate()?;
@@ -401,20 +401,20 @@ impl ResumeArgs {
             .split(self.hp.val_ratio, self.hp.test_ratio);
         completed(split.summary().as_str());
 
-        let archive = SnapshotArchive::load(history_dir)?;
+        let archive = CheckpointArchive::load(run_dir)?;
         if archive.is_empty() {
             return Err(format!(
-                "No snapshots found in '{}'; cannot resume.",
-                history_dir.display()
+                "No checkpoints found in '{}'; cannot resume.",
+                run_dir.display()
             )
             .into());
         }
 
-        let snapshot_idx = match self.from {
+        let checkpoint_idx = match self.from {
             Some(idx) => {
                 if idx >= archive.len() {
                     return Err(format!(
-                        "Snapshot index {idx} out of range (history has {} snapshots).",
+                        "Checkpoint index {idx} out of range (run has {} checkpoints).",
                         archive.len()
                     )
                     .into());
@@ -424,7 +424,7 @@ impl ResumeArgs {
             None => archive.len() - 1,
         };
 
-        let model = archive.model_at(snapshot_idx)?;
+        let model = archive.model_at(checkpoint_idx)?;
         loaded(&model);
 
         if matches!(self.hp.optimizer, OptimizerType::Adam) {
@@ -434,14 +434,14 @@ impl ResumeArgs {
             );
         }
 
-        let model_save_path = history_dir
+        let model_save_path = run_dir
             .parent()
             .unwrap_or(Path::new("."))
             .join(format!("model-{}", meta.dataset));
 
         let from_epoch = archive
-            .epoch_at(snapshot_idx)
-            .expect("snapshot_idx was just validated against archive.len()");
+            .epoch_at(checkpoint_idx)
+            .expect("checkpoint_idx was just validated against archive.len()");
 
         let interval = self.hp.checkpoint_interval;
 
@@ -451,14 +451,14 @@ impl ResumeArgs {
             Box::new(ModelSaver::new(model_save_path)),
         ];
         if interval > 0 {
-            let (recorder, trimmed) = SnapshotRecorder::resume(history_dir, from_epoch)?;
+            let (recorder, trimmed) = CheckpointRecorder::resume(run_dir, from_epoch)?;
             if trimmed > 0 {
                 warning(&format!(
-                    "Removed {trimmed} snapshot(s) after epoch {from_epoch}"
+                    "Removed {trimmed} checkpoint(s) after epoch {from_epoch}"
                 ));
             }
             callbacks.push(Box::new(recorder));
-            recording_at(HISTORY_ICON, "TRAINING HISTORY", history_dir);
+            recording_at(RUN_ICON, "TRAINING RUN", run_dir);
         }
 
         TrainingLoop {
@@ -498,14 +498,14 @@ fn divergence_error(divergence: FatalDivergence) -> Box<dyn Error> {
     .into()
 }
 
-/// Wraps [`SnapshotRecorder::create`], adding the `--overwrite` remediation
+/// Wraps [`CheckpointRecorder::create`], adding the `--overwrite` remediation
 /// hint to an `AlreadyExists` error.
-fn create_snapshot_recorder(
-    history_dir: &Path,
+fn create_checkpoint_recorder(
+    run_dir: &Path,
     dataset_name: &str,
     overwrite: bool,
-) -> IoResult<SnapshotRecorder> {
-    SnapshotRecorder::create(history_dir, dataset_name, overwrite).map_err(|e| {
+) -> IoResult<CheckpointRecorder> {
+    CheckpointRecorder::create(run_dir, dataset_name, overwrite).map_err(|e| {
         if e.kind() == ErrorKind::AlreadyExists {
             IoError::new(e.kind(), format!("{e}; use --overwrite to replace it"))
         } else {

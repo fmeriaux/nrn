@@ -3,7 +3,7 @@ use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use nrn::data::scalers::{Scaler, ScalerMethod};
 use nrn::data::{Dataset, ModelSplit};
 use nrn::evaluation::{Evaluation, EvaluationSet};
-use nrn::io::snapshot::SnapshotArchive;
+use nrn::io::checkpoint::CheckpointArchive;
 use nrn::model::NeuralNetwork;
 use nrn::training::GradientClipping;
 use pathdiff::diff_paths;
@@ -18,7 +18,7 @@ pub(crate) const MODEL_ICON: Emoji = Emoji("🧠", "[M]");
 pub(crate) const SCALER_ICON: Emoji = Emoji("📏", "[S]");
 pub(crate) const DATASET_ICON: Emoji = Emoji("📁", "[D]");
 pub(crate) const PLOT_ICON: Emoji = Emoji("🧊", "[P]");
-pub(crate) const HISTORY_ICON: Emoji = Emoji("📈", "[T]");
+pub(crate) const RUN_ICON: Emoji = Emoji("📈", "[T]");
 pub(crate) const ANIMATION_ICON: Emoji = Emoji("🎬", "[A]");
 pub(crate) const WARN_ICON: Emoji = Emoji("⚠️", "[!]");
 pub(crate) const ERROR_ICON: Emoji = Emoji("❌", "[X]");
@@ -110,11 +110,11 @@ impl Summary for EvaluationSet {
     }
 }
 
-impl Summary for SnapshotArchive {
+impl Summary for CheckpointArchive {
     fn summary(&self) -> String {
         format!(
-            "{} | Snapshots: {} | Epochs: {}..{}",
-            style("TRAINING HISTORY").bold().blue(),
+            "{} | Checkpoints: {} | Epochs: {}..{}",
+            style("TRAINING RUN").bold().blue(),
             style(self.len()).yellow(),
             style(self.epoch_at(0).unwrap_or(0)).yellow(),
             style(self.epoch_at(self.len().saturating_sub(1)).unwrap_or(0)).yellow(),

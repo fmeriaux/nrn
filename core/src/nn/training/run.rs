@@ -65,7 +65,7 @@ pub struct TrainingLoop {
 }
 
 impl TrainingLoop {
-    /// Whether `epoch` should trigger an evaluation + snapshot, given
+    /// Whether `epoch` should trigger an evaluation + checkpoint, given
     /// `eval_interval == 0` means "no checkpoints at all".
     pub fn is_checkpoint(eval_interval: usize, epoch: usize) -> bool {
         eval_interval != 0 && epoch.is_multiple_of(eval_interval)

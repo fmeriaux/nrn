@@ -1,5 +1,5 @@
 //! End-to-end IO round-trip over the full safetensors pipeline:
-//! dataset → scaler → model → training history → inputs, all saved and reloaded.
+//! dataset → scaler → model → training run → inputs, all saved and reloaded.
 #![cfg(feature = "io")]
 
 use ndarray::array;
@@ -7,9 +7,9 @@ use nrn::activations::RELU;
 use nrn::data::Dataset;
 use nrn::data::scalers::{MinMaxScaler, Scaler, ScalerMethod};
 use nrn::evaluation::{Evaluation, EvaluationSet};
+use nrn::io::checkpoint::{CheckpointArchive, CheckpointRecorder};
 use nrn::io::data::{load_inputs, save_inputs};
 use nrn::io::scalers::ScalerRecord;
-use nrn::io::snapshot::{SnapshotArchive, SnapshotRecorder};
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::Adam;
@@ -54,7 +54,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
     reloaded_scaler.apply_inplace(actual.view_mut());
     assert_eq!(expected, actual);
 
-    // --- Model + training history (incremental writer → directory load) --
+    // --- Model + training run (incremental writer → directory load) --
     let model_dataset = dataset.to_model_dataset();
     let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 2);
     let mut model = NeuralNetwork::initialization(2, &specs);
@@ -64,8 +64,8 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let mut scheduler = ConstantScheduler::new(LearningRate::new(0.05));
     let clipping = GradientClipping::None;
 
-    let history_dir = dir.join("training");
-    let mut recorder = SnapshotRecorder::create(&history_dir, "test_dataset", false).unwrap();
+    let run_dir = dir.join("training");
+    let mut recorder = CheckpointRecorder::create(&run_dir, "test_dataset", false).unwrap();
     let mut last_recorded_predictions = None;
 
     for epoch in 0..10 {
@@ -109,9 +109,9 @@ fn full_pipeline_roundtrips_through_safetensors() {
         reloaded_model.predict(model_dataset.inputs.view())
     );
 
-    let archive = SnapshotArchive::load(&history_dir).unwrap();
+    let archive = CheckpointArchive::load(&run_dir).unwrap();
     assert_eq!(archive.len(), 2);
-    // Last snapshot was written at epoch 5, not at the final epoch.
+    // Last checkpoint was written at epoch 5, not at the final epoch.
     // Load the model lazily — only one in memory at a time.
     let last_model = archive.model_at(archive.len() - 1).unwrap();
     assert_eq!(

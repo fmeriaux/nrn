@@ -1,4 +1,5 @@
 pub mod bytes;
+pub mod checkpoint;
 pub mod classes;
 pub mod data;
 pub mod gif;
@@ -7,5 +8,4 @@ pub mod model;
 pub mod path;
 pub mod png;
 pub mod scalers;
-pub mod snapshot;
 pub mod tensors;

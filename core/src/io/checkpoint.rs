@@ -1,5 +1,5 @@
-use crate::checkpoints::{Checkpoint, Checkpoints};
 use crate::evaluation::{Evaluation, EvaluationSet};
+use crate::evaluation_history::{EpochEvaluation, EvaluationHistory};
 use crate::io::bytes::secure_read;
 use crate::io::json;
 use crate::io::path::PathExt;
@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::result::Result as StdResult;
 
 /// Top-level metadata for a training history directory.
-/// Written once by [`SnapshotRecorder::create`] into `meta.json`.
+/// Written once by [`CheckpointRecorder::create`] into `meta.json`.
 #[derive(Serialize, Deserialize)]
 pub struct TrainingMeta {
     pub dataset: String,
@@ -36,30 +36,30 @@ impl TrainingMeta {
 }
 
 #[derive(Serialize, Deserialize)]
-struct SnapshotEvaluationSet {
-    train: SnapshotEvaluation,
+struct CheckpointEvaluationSet {
+    train: CheckpointEvaluation,
     #[serde(skip_serializing_if = "Option::is_none")]
-    validation: Option<SnapshotEvaluation>,
-    test: SnapshotEvaluation,
+    validation: Option<CheckpointEvaluation>,
+    test: CheckpointEvaluation,
 }
 
 #[derive(Serialize, Deserialize)]
-struct SnapshotEvaluation {
+struct CheckpointEvaluation {
     loss: f32,
     accuracy: f32,
 }
 
-impl From<Evaluation> for SnapshotEvaluation {
+impl From<Evaluation> for CheckpointEvaluation {
     fn from(eval: Evaluation) -> Self {
-        SnapshotEvaluation {
+        CheckpointEvaluation {
             loss: eval.loss,
             accuracy: eval.accuracy,
         }
     }
 }
 
-impl From<SnapshotEvaluation> for Evaluation {
-    fn from(pair: SnapshotEvaluation) -> Self {
+impl From<CheckpointEvaluation> for Evaluation {
+    fn from(pair: CheckpointEvaluation) -> Self {
         Evaluation {
             loss: pair.loss,
             accuracy: pair.accuracy,
@@ -67,9 +67,9 @@ impl From<SnapshotEvaluation> for Evaluation {
     }
 }
 
-impl From<&EvaluationSet> for SnapshotEvaluationSet {
+impl From<&EvaluationSet> for CheckpointEvaluationSet {
     fn from(eval: &EvaluationSet) -> Self {
-        SnapshotEvaluationSet {
+        CheckpointEvaluationSet {
             train: eval.train.into(),
             validation: eval.validation.map(Into::into),
             test: eval.test.into(),
@@ -77,8 +77,8 @@ impl From<&EvaluationSet> for SnapshotEvaluationSet {
     }
 }
 
-impl From<SnapshotEvaluationSet> for EvaluationSet {
-    fn from(evals: SnapshotEvaluationSet) -> Self {
+impl From<CheckpointEvaluationSet> for EvaluationSet {
+    fn from(evals: CheckpointEvaluationSet) -> Self {
         EvaluationSet {
             train: evals.train.into(),
             validation: evals.validation.map(Into::into),
@@ -87,54 +87,54 @@ impl From<SnapshotEvaluationSet> for EvaluationSet {
     }
 }
 
-/// A reference to a snapshot subdirectory, named `snapshot-{epoch:06}`.
-struct SnapshotRef {
+/// A reference to a checkpoint subdirectory, named `checkpoint-{epoch:06}`.
+struct CheckpointRef {
     epoch: usize,
     dir: PathBuf,
 }
 
-/// Scans `dir` for `snapshot-*` subdirectories, sorted by their numeric epoch
-/// (not lexically, so 10+ snapshots sort correctly). Reads no other files.
-fn scan_snapshots(dir: &Path) -> Result<Vec<SnapshotRef>> {
-    let mut snapshots: Vec<SnapshotRef> = fs::read_dir(dir)?
+/// Scans `dir` for `checkpoint-*` subdirectories, sorted by their numeric epoch
+/// (not lexically, so 10+ checkpoints sort correctly). Reads no other files.
+fn scan_checkpoints(dir: &Path) -> Result<Vec<CheckpointRef>> {
+    let mut checkpoints: Vec<CheckpointRef> = fs::read_dir(dir)?
         .filter_map(StdResult::ok)
         .filter_map(|entry| {
             let path = entry.path();
             let name = path.file_name()?.to_str()?;
             if path.is_dir() {
-                let epoch = name.strip_prefix("snapshot-")?.parse::<usize>().ok()?;
-                Some(SnapshotRef { epoch, dir: path })
+                let epoch = name.strip_prefix("checkpoint-")?.parse::<usize>().ok()?;
+                Some(CheckpointRef { epoch, dir: path })
             } else {
                 None
             }
         })
         .collect();
 
-    snapshots.sort_by_key(|s| s.epoch);
-    Ok(snapshots)
+    checkpoints.sort_by_key(|s| s.epoch);
+    Ok(checkpoints)
 }
 
-/// Writes model snapshots to a directory.
+/// Writes model checkpoints to a directory.
 ///
-/// Each call to [`write`](SnapshotRecorder::write) creates a subdirectory
-/// `snapshot-{epoch:06}/` containing `model.safetensors` and `evaluations.json`.
+/// Each call to [`write`](CheckpointRecorder::write) creates a subdirectory
+/// `checkpoint-{epoch:06}/` containing `model.safetensors` and `evaluations.json`.
 /// Implements [`TrainingCallback`]: [`on_evaluate`](TrainingCallback::on_evaluate)
-/// writes a snapshot.
+/// writes a checkpoint.
 #[derive(Debug)]
-pub struct SnapshotRecorder {
+pub struct CheckpointRecorder {
     dir: PathBuf,
 }
 
-impl SnapshotRecorder {
+impl CheckpointRecorder {
     /// Creates a fresh recorder at `path`, writing `meta.json` with the dataset name.
     ///
-    /// Returns an error if `snapshot-*` subdirectories already exist and
+    /// Returns an error if `checkpoint-*` subdirectories already exist and
     /// `overwrite` is `false`; otherwise they are removed.
     pub fn create<P: AsRef<Path>>(path: P, dataset: &str, overwrite: bool) -> Result<Self> {
         let dir = Path::combine_safe_with_cwd(path)?;
         fs::create_dir_all(&dir)?;
 
-        let existing = scan_snapshots(&dir)?;
+        let existing = scan_checkpoints(&dir)?;
         if !existing.is_empty() {
             if !overwrite {
                 return Err(Error::new(
@@ -142,8 +142,8 @@ impl SnapshotRecorder {
                     format!("training history already exists at {}", dir.display()),
                 ));
             }
-            for snapshot in existing {
-                fs::remove_dir_all(&snapshot.dir)?;
+            for checkpoint in existing {
+                fs::remove_dir_all(&checkpoint.dir)?;
             }
         }
 
@@ -152,54 +152,54 @@ impl SnapshotRecorder {
         }
         .save(&dir)?;
 
-        Ok(SnapshotRecorder { dir })
+        Ok(CheckpointRecorder { dir })
     }
 
-    /// Resumes recording into an existing snapshot directory. Snapshots whose
+    /// Resumes recording into an existing checkpoint directory. Checkpoints whose
     /// epoch is greater than `from_epoch` are removed (rewinding the trajectory).
-    /// Returns the recorder along with the number of snapshots removed.
+    /// Returns the recorder along with the number of checkpoints removed.
     pub fn resume<P: AsRef<Path>>(path: P, from_epoch: usize) -> Result<(Self, usize)> {
         let dir = Path::combine_safe_with_cwd(path)?;
         fs::create_dir_all(&dir)?;
 
-        let to_remove: Vec<SnapshotRef> = scan_snapshots(&dir)?
+        let to_remove: Vec<CheckpointRef> = scan_checkpoints(&dir)?
             .into_iter()
-            .filter(|snapshot| snapshot.epoch > from_epoch)
+            .filter(|checkpoint| checkpoint.epoch > from_epoch)
             .collect();
 
         let trimmed = to_remove.len();
-        for snapshot in to_remove {
-            fs::remove_dir_all(&snapshot.dir)?;
+        for checkpoint in to_remove {
+            fs::remove_dir_all(&checkpoint.dir)?;
         }
 
-        Ok((SnapshotRecorder { dir }, trimmed))
+        Ok((CheckpointRecorder { dir }, trimmed))
     }
 
-    /// Writes `snapshot-{epoch:06}/` containing the model weights and evaluations.
+    /// Writes `checkpoint-{epoch:06}/` containing the model weights and evaluations.
     pub fn write(
         &self,
         model: &NeuralNetwork,
         evaluation: &EvaluationSet,
         epoch: usize,
     ) -> Result<()> {
-        let snapshot_dir = self.dir.join(format!("snapshot-{epoch:06}"));
-        fs::create_dir_all(&snapshot_dir)?;
+        let checkpoint_dir = self.dir.join(format!("checkpoint-{epoch:06}"));
+        fs::create_dir_all(&checkpoint_dir)?;
 
         let mut entries = Vec::new();
         let mut metadata = HashMap::new();
         model.collect_tensors(&mut entries, &mut metadata);
-        tensors::save(snapshot_dir.join("model"), entries, metadata)?;
+        tensors::save(checkpoint_dir.join("model"), entries, metadata)?;
 
         json::save(
-            &SnapshotEvaluationSet::from(evaluation),
-            snapshot_dir.join("evaluations"),
+            &CheckpointEvaluationSet::from(evaluation),
+            checkpoint_dir.join("evaluations"),
         )?;
 
         Ok(())
     }
 }
 
-impl TrainingCallback for SnapshotRecorder {
+impl TrainingCallback for CheckpointRecorder {
     fn on_evaluate(
         &mut self,
         model: &NeuralNetwork,
@@ -210,72 +210,72 @@ impl TrainingCallback for SnapshotRecorder {
     }
 }
 
-/// Lazy read access to a directory of snapshots written by [`SnapshotRecorder`].
+/// Lazy read access to a directory of checkpoints written by [`CheckpointRecorder`].
 ///
-/// [`SnapshotArchive::load`] only scans directory names — no files are read until
-/// [`model_at`](SnapshotArchive::model_at) or [`checkpoints`](SnapshotArchive::checkpoints)
-/// is called.
-pub struct SnapshotArchive {
-    snapshots: Vec<SnapshotRef>,
+/// [`CheckpointArchive::load`] only scans directory names — no files are read until
+/// [`model_at`](CheckpointArchive::model_at) or
+/// [`evaluation_history`](CheckpointArchive::evaluation_history) is called.
+pub struct CheckpointArchive {
+    entries: Vec<CheckpointRef>,
 }
 
-impl SnapshotArchive {
-    /// Scans `dir` for `snapshot-*` subdirectories, sorted by epoch.
+impl CheckpointArchive {
+    /// Scans `dir` for `checkpoint-*` subdirectories, sorted by epoch.
     pub fn load<P: AsRef<Path>>(dir: P) -> Result<Self> {
         let dir = Path::combine_safe_with_cwd(dir)?;
-        Ok(SnapshotArchive {
-            snapshots: scan_snapshots(&dir)?,
+        Ok(CheckpointArchive {
+            entries: scan_checkpoints(&dir)?,
         })
     }
 
-    /// Returns the number of snapshots found.
+    /// Returns the number of checkpoints found.
     pub fn len(&self) -> usize {
-        self.snapshots.len()
+        self.entries.len()
     }
 
-    /// Returns true if no snapshots were found.
+    /// Returns true if no checkpoints were found.
     pub fn is_empty(&self) -> bool {
-        self.snapshots.is_empty()
+        self.entries.is_empty()
     }
 
-    /// Returns the absolute epoch number of the snapshot at `index`, from the
+    /// Returns the absolute epoch number of the checkpoint at `index`, from the
     /// scanned directory name (zero I/O).
     pub fn epoch_at(&self, index: usize) -> Option<usize> {
-        self.snapshots.get(index).map(|s| s.epoch)
+        self.entries.get(index).map(|s| s.epoch)
     }
 
-    /// Loads the model at position `index` from its snapshot directory.
+    /// Loads the model at position `index` from its checkpoint directory.
     pub fn model_at(&self, index: usize) -> Result<NeuralNetwork> {
-        let snapshot = self.snapshots.get(index).ok_or_else(|| {
+        let entry = self.entries.get(index).ok_or_else(|| {
             Error::new(
                 InvalidData,
                 format!(
-                    "snapshot index {index} out of range (archive has {} snapshots)",
-                    self.snapshots.len()
+                    "checkpoint index {index} out of range (archive has {} checkpoints)",
+                    self.entries.len()
                 ),
             )
         })?;
 
-        let bytes = secure_read(snapshot.dir.join("model.safetensors"))?;
+        let bytes = secure_read(entry.dir.join("model.safetensors"))?;
         let st =
             SafeTensors::deserialize(&bytes).map_err(|e| Error::new(InvalidData, e.to_string()))?;
         let metadata = tensors::read_metadata(&bytes)?;
         NeuralNetwork::from_tensors(&st, &metadata)
     }
 
-    /// Reads all `evaluations.json` files into a pure [`Checkpoints`].
-    pub fn checkpoints(&self) -> Result<Checkpoints> {
-        let mut checkpoints = Vec::with_capacity(self.snapshots.len());
+    /// Reads all `evaluations.json` files into a pure [`EvaluationHistory`].
+    pub fn evaluation_history(&self) -> Result<EvaluationHistory> {
+        let mut history = Vec::with_capacity(self.entries.len());
 
-        for snapshot in &self.snapshots {
-            let evals: SnapshotEvaluationSet = json::load(snapshot.dir.join("evaluations"))?;
-            checkpoints.push(Checkpoint {
-                epoch: snapshot.epoch,
+        for entry in &self.entries {
+            let evals: CheckpointEvaluationSet = json::load(entry.dir.join("evaluations"))?;
+            history.push(EpochEvaluation {
+                epoch: entry.epoch,
                 evaluation: evals.into(),
             });
         }
 
-        Ok(Checkpoints::new(checkpoints))
+        Ok(EvaluationHistory::new(history))
     }
 }
 
@@ -288,7 +288,7 @@ mod tests {
 
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = PathBuf::from(format!(
-            "target/nrn_snapshot_{}_{}",
+            "target/nrn_checkpoint_{}_{}",
             tag,
             std::process::id()
         ));
@@ -325,7 +325,7 @@ mod tests {
     #[test]
     fn meta_json_written_by_create() {
         let dir = temp_dir("meta");
-        SnapshotRecorder::create(&dir, "my_dataset", false).unwrap();
+        CheckpointRecorder::create(&dir, "my_dataset", false).unwrap();
 
         let meta = TrainingMeta::load(&dir).unwrap();
         cleanup(&dir);
@@ -334,14 +334,14 @@ mod tests {
     }
 
     #[test]
-    fn create_errors_if_snapshots_exist_without_overwrite() {
+    fn create_errors_if_checkpoints_exist_without_overwrite() {
         let dir = temp_dir("no_overwrite");
-        let recorder = SnapshotRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
         recorder
             .write(&sample_model(), &make_eval(0.0, false), 0)
             .unwrap();
 
-        let result = SnapshotRecorder::create(&dir, "ds", false);
+        let result = CheckpointRecorder::create(&dir, "ds", false);
         cleanup(&dir);
 
         let err = result.unwrap_err();
@@ -350,35 +350,35 @@ mod tests {
     }
 
     #[test]
-    fn create_with_overwrite_purges_previous_snapshots() {
+    fn create_with_overwrite_purges_previous_checkpoints() {
         let dir = temp_dir("overwrite");
-        let recorder = SnapshotRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
         for i in 0..3 {
             recorder
                 .write(&sample_model(), &make_eval(i as f32, false), i * 10)
                 .unwrap();
         }
 
-        let recorder = SnapshotRecorder::create(&dir, "ds", true).unwrap();
+        let recorder = CheckpointRecorder::create(&dir, "ds", true).unwrap();
         recorder
             .write(&sample_model(), &make_eval(0.0, false), 0)
             .unwrap();
 
-        let archive = SnapshotArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir).unwrap();
         cleanup(&dir);
 
-        assert_eq!(archive.len(), 1, "stale snapshots were not purged");
+        assert_eq!(archive.len(), 1, "stale checkpoints were not purged");
     }
 
     #[test]
-    fn write_names_snapshot_dir_by_epoch() {
+    fn write_names_checkpoint_dir_by_epoch() {
         let dir = temp_dir("write_epoch");
-        let recorder = SnapshotRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
         recorder
             .write(&sample_model(), &make_eval(0.0, false), 37)
             .unwrap();
 
-        let exists = dir.join("snapshot-000037").is_dir();
+        let exists = dir.join("checkpoint-000037").is_dir();
         cleanup(&dir);
 
         assert!(exists);
@@ -387,38 +387,44 @@ mod tests {
     #[test]
     fn roundtrip_with_validation() {
         let dir = temp_dir("roundtrip_val");
-        let recorder = SnapshotRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
         for i in 0..3 {
             recorder
                 .write(&sample_model(), &make_eval(i as f32, true), i * 10)
                 .unwrap();
         }
 
-        let checkpoints = SnapshotArchive::load(&dir).unwrap().checkpoints().unwrap();
+        let history = CheckpointArchive::load(&dir)
+            .unwrap()
+            .evaluation_history()
+            .unwrap();
         cleanup(&dir);
 
-        assert_eq!(checkpoints.len(), 3);
-        for (i, loss) in checkpoints.train_losses().iter().enumerate() {
+        assert_eq!(history.len(), 3);
+        for (i, loss) in history.train_losses().iter().enumerate() {
             assert_eq!(*loss, i as f32);
         }
-        assert!(!checkpoints.validation_losses().is_empty());
+        assert!(!history.validation_losses().is_empty());
     }
 
     #[test]
     fn roundtrip_without_validation() {
         let dir = temp_dir("roundtrip_noval");
-        let recorder = SnapshotRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
         for i in 0..3 {
             recorder
                 .write(&sample_model(), &make_eval(i as f32, false), i * 10)
                 .unwrap();
         }
 
-        let checkpoints = SnapshotArchive::load(&dir).unwrap().checkpoints().unwrap();
+        let history = CheckpointArchive::load(&dir)
+            .unwrap()
+            .evaluation_history()
+            .unwrap();
         cleanup(&dir);
 
-        assert_eq!(checkpoints.len(), 3);
-        assert!(checkpoints.validation_losses().is_empty());
+        assert_eq!(history.len(), 3);
+        assert!(history.validation_losses().is_empty());
     }
 
     #[test]
@@ -427,10 +433,10 @@ mod tests {
         let model = sample_model();
         let inputs = Array2::from_shape_fn((2, 4), |(i, j)| (i + j) as f32 * 0.3);
 
-        let recorder = SnapshotRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
         recorder.write(&model, &make_eval(0.0, false), 0).unwrap();
 
-        let archive = SnapshotArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir).unwrap();
         let loaded = archive.model_at(0).unwrap();
         cleanup(&dir);
 
@@ -441,14 +447,14 @@ mod tests {
     fn numeric_sort_beats_lexical() {
         let dir = temp_dir("sort");
         let model = sample_model();
-        let recorder = SnapshotRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
         for i in 0..12 {
             recorder
                 .write(&model, &make_eval(i as f32, false), i)
                 .unwrap();
         }
 
-        let archive = SnapshotArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir).unwrap();
         cleanup(&dir);
 
         assert_eq!(archive.len(), 12);
@@ -458,18 +464,18 @@ mod tests {
     }
 
     #[test]
-    fn resume_trims_snapshots_after_from_epoch() {
+    fn resume_trims_checkpoints_after_from_epoch() {
         let dir = temp_dir("resume_trim");
-        let recorder = SnapshotRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
         for i in 0..5 {
             recorder
                 .write(&sample_model(), &make_eval(i as f32, false), i * 10)
                 .unwrap();
         }
 
-        let (_, trimmed) = SnapshotRecorder::resume(&dir, 20).unwrap();
+        let (_, trimmed) = CheckpointRecorder::resume(&dir, 20).unwrap();
 
-        let archive = SnapshotArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir).unwrap();
         cleanup(&dir);
 
         assert_eq!(archive.len(), 3); // epochs 0, 10, 20 kept; 30, 40 removed
@@ -479,16 +485,16 @@ mod tests {
     #[test]
     fn resume_keeps_all_when_from_epoch_is_last() {
         let dir = temp_dir("resume_keep_all");
-        let recorder = SnapshotRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
         for i in 0..3 {
             recorder
                 .write(&sample_model(), &make_eval(i as f32, false), i * 10)
                 .unwrap();
         }
 
-        let (_, trimmed) = SnapshotRecorder::resume(&dir, 20).unwrap();
+        let (_, trimmed) = CheckpointRecorder::resume(&dir, 20).unwrap();
 
-        let archive = SnapshotArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir).unwrap();
         cleanup(&dir);
 
         assert_eq!(archive.len(), 3);
@@ -498,19 +504,19 @@ mod tests {
     #[test]
     fn resume_continues_writing_after_resume_point() {
         let dir = temp_dir("resume_write");
-        let recorder = SnapshotRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
         for i in 0..3 {
             recorder
                 .write(&sample_model(), &make_eval(i as f32, false), i * 10)
                 .unwrap(); // 0, 10, 20
         }
 
-        let (recorder, _) = SnapshotRecorder::resume(&dir, 10).unwrap();
+        let (recorder, _) = CheckpointRecorder::resume(&dir, 10).unwrap();
         recorder
             .write(&sample_model(), &make_eval(99.0, false), 20)
             .unwrap();
 
-        let archive = SnapshotArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir).unwrap();
         cleanup(&dir);
 
         assert_eq!(archive.len(), 3); // 0, 10, 20 (rewritten)
@@ -519,7 +525,7 @@ mod tests {
     #[test]
     fn empty_dir_archive_is_empty() {
         let dir = temp_dir("empty");
-        let archive = SnapshotArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir).unwrap();
         cleanup(&dir);
 
         assert!(archive.is_empty());
@@ -527,20 +533,20 @@ mod tests {
     }
 
     #[test]
-    fn load_ignores_non_directory_snapshot_file() {
+    fn load_ignores_non_directory_checkpoint_file() {
         let dir = temp_dir("non_dir_snap");
-        fs::write(dir.join("snapshot-000000"), b"not a dir").unwrap();
-        let archive = SnapshotArchive::load(&dir).unwrap();
+        fs::write(dir.join("checkpoint-000000"), b"not a dir").unwrap();
+        let archive = CheckpointArchive::load(&dir).unwrap();
         cleanup(&dir);
 
         assert!(archive.is_empty());
     }
 
     #[test]
-    fn load_ignores_snapshot_dir_with_non_numeric_suffix() {
+    fn load_ignores_checkpoint_dir_with_non_numeric_suffix() {
         let dir = temp_dir("non_numeric_snap");
-        fs::create_dir_all(dir.join("snapshot-abc")).unwrap();
-        let archive = SnapshotArchive::load(&dir).unwrap();
+        fs::create_dir_all(dir.join("checkpoint-abc")).unwrap();
+        let archive = CheckpointArchive::load(&dir).unwrap();
         cleanup(&dir);
 
         assert!(archive.is_empty());
@@ -549,12 +555,12 @@ mod tests {
     #[test]
     fn model_at_out_of_range_gives_range_error() {
         let dir = temp_dir("model_at_oob");
-        let recorder = SnapshotRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
         recorder
             .write(&sample_model(), &make_eval(0.0, false), 0)
             .unwrap();
 
-        let archive = SnapshotArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir).unwrap();
         let msg = archive.model_at(99).unwrap_err().to_string();
         cleanup(&dir);
 
@@ -564,13 +570,13 @@ mod tests {
     #[test]
     fn model_at_missing_model_file_fails() {
         let dir = temp_dir("model_at_missing");
-        let recorder = SnapshotRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
         recorder
             .write(&sample_model(), &make_eval(0.0, false), 0)
             .unwrap();
-        fs::remove_file(dir.join("snapshot-000000").join("model.safetensors")).unwrap();
+        fs::remove_file(dir.join("checkpoint-000000").join("model.safetensors")).unwrap();
 
-        let archive = SnapshotArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir).unwrap();
         let result = archive.model_at(0);
         cleanup(&dir);
 
@@ -580,17 +586,17 @@ mod tests {
     #[test]
     fn model_at_corrupt_model_file_fails() {
         let dir = temp_dir("model_at_corrupt");
-        let recorder = SnapshotRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
         recorder
             .write(&sample_model(), &make_eval(0.0, false), 0)
             .unwrap();
         fs::write(
-            dir.join("snapshot-000000").join("model.safetensors"),
+            dir.join("checkpoint-000000").join("model.safetensors"),
             b"garbage",
         )
         .unwrap();
 
-        let archive = SnapshotArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir).unwrap();
         let result = archive.model_at(0);
         cleanup(&dir);
 
@@ -598,35 +604,35 @@ mod tests {
     }
 
     #[test]
-    fn checkpoints_corrupted_evaluations_json_fails() {
+    fn evaluation_history_corrupted_evaluations_json_fails() {
         let dir = temp_dir("corrupt_evals");
-        let recorder = SnapshotRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
         recorder
             .write(&sample_model(), &make_eval(0.0, false), 0)
             .unwrap();
         fs::write(
-            dir.join("snapshot-000000").join("evaluations.json"),
+            dir.join("checkpoint-000000").join("evaluations.json"),
             b"not valid json",
         )
         .unwrap();
 
-        let archive = SnapshotArchive::load(&dir).unwrap();
-        let result = archive.checkpoints();
+        let archive = CheckpointArchive::load(&dir).unwrap();
+        let result = archive.evaluation_history();
         cleanup(&dir);
 
         assert!(result.is_err());
     }
 
     #[test]
-    fn on_evaluate_writes_a_snapshot() {
+    fn on_evaluate_writes_a_checkpoint() {
         let dir = temp_dir("on_evaluate");
-        let mut recorder = SnapshotRecorder::create(&dir, "ds", false).unwrap();
+        let mut recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
 
         recorder
             .on_evaluate(&sample_model(), &make_eval(0.0, false), 5)
             .unwrap();
 
-        let archive = SnapshotArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir).unwrap();
         cleanup(&dir);
 
         assert_eq!(archive.len(), 1);
@@ -636,10 +642,10 @@ mod tests {
     #[test]
     fn write_fails_when_evaluations_path_is_a_directory() {
         let dir = temp_dir("write_evals_dir_conflict");
-        let recorder = SnapshotRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
 
         // Pre-create "evaluations.json" as a directory so json::save's fs::write fails.
-        fs::create_dir_all(dir.join("snapshot-000000").join("evaluations.json")).unwrap();
+        fs::create_dir_all(dir.join("checkpoint-000000").join("evaluations.json")).unwrap();
 
         let result = recorder.write(&sample_model(), &make_eval(0.0, false), 0);
         cleanup(&dir);
@@ -649,19 +655,19 @@ mod tests {
 
     #[test]
     fn create_rejects_path_traversal() {
-        let result = SnapshotRecorder::create("../../nrn_traversal_test", "x", false);
+        let result = CheckpointRecorder::create("../../nrn_traversal_test", "x", false);
         assert!(result.is_err());
     }
 
     #[test]
     fn resume_rejects_path_traversal() {
-        let result = SnapshotRecorder::resume("../../nrn_traversal_test", 0);
+        let result = CheckpointRecorder::resume("../../nrn_traversal_test", 0);
         assert!(result.is_err());
     }
 
     #[test]
     fn load_rejects_path_traversal() {
-        let result = SnapshotArchive::load("../../nrn_traversal_test");
+        let result = CheckpointArchive::load("../../nrn_traversal_test");
         assert!(result.is_err());
     }
 }

@@ -3,9 +3,9 @@ use nrn::activations::RELU;
 use nrn::charts::RenderConfig;
 use nrn::data::Dataset;
 use nrn::data::scalers::ScalerMethod;
+use nrn::io::checkpoint::CheckpointArchive;
 use nrn::io::png::save_rgb;
 use nrn::io::scalers::ScalerRecord;
-use nrn::io::snapshot::SnapshotArchive;
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use std::error::Error;
 use std::path::Path;
@@ -104,11 +104,11 @@ pub(crate) fn load_model<P: AsRef<Path>>(path: P) -> Result<NeuralNetwork, Box<d
     Ok(model)
 }
 
-pub(crate) fn load_history<P: AsRef<Path>>(path: P) -> Result<SnapshotArchive, Box<dyn Error>> {
-    let archive = SnapshotArchive::load(&path)?;
+pub(crate) fn load_history<P: AsRef<Path>>(path: P) -> Result<CheckpointArchive, Box<dyn Error>> {
+    let archive = CheckpointArchive::load(&path)?;
 
     if archive.len() <= 2 {
-        return Err("Training history must contain more than two snapshots to plot.".into());
+        return Err("Training run must contain more than two checkpoints to plot.".into());
     }
 
     loaded(&archive);

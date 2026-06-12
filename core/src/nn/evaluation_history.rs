@@ -3,18 +3,18 @@ use crate::evaluation::EvaluationSet;
 /// A single recorded point of a training run: the absolute epoch number and
 /// the evaluation computed at that epoch.
 #[derive(Clone, Copy)]
-pub struct Checkpoint {
+pub struct EpochEvaluation {
     pub epoch: usize,
     pub evaluation: EvaluationSet,
 }
 
 /// Pure value object: the recorded checkpoints of a training run, ordered by epoch.
 #[derive(Clone)]
-pub struct Checkpoints(Vec<Checkpoint>);
+pub struct EvaluationHistory(Vec<EpochEvaluation>);
 
-impl Checkpoints {
-    pub fn new(checkpoints: Vec<Checkpoint>) -> Self {
-        Checkpoints(checkpoints)
+impl EvaluationHistory {
+    pub fn new(checkpoints: Vec<EpochEvaluation>) -> Self {
+        EvaluationHistory(checkpoints)
     }
 
     /// Returns the number of recorded checkpoints.
@@ -158,8 +158,8 @@ mod tests {
         train: (f32, f32),
         validation: Option<(f32, f32)>,
         test: (f32, f32),
-    ) -> Checkpoint {
-        Checkpoint {
+    ) -> EpochEvaluation {
+        EpochEvaluation {
             epoch,
             evaluation: EvaluationSet {
                 train: Evaluation {
@@ -177,14 +177,14 @@ mod tests {
 
     #[test]
     fn new_checkpoints_is_empty_when_no_checkpoints() {
-        let checkpoints = Checkpoints::new(Vec::new());
+        let checkpoints = EvaluationHistory::new(Vec::new());
         assert!(checkpoints.is_empty());
         assert_eq!(checkpoints.len(), 0);
     }
 
     #[test]
     fn empty_checkpoints_has_no_final_metrics() {
-        let checkpoints = Checkpoints::new(Vec::new());
+        let checkpoints = EvaluationHistory::new(Vec::new());
         assert!(checkpoints.final_evaluation().is_none());
         assert!(checkpoints.final_train_loss().is_none());
         assert!(checkpoints.final_validation_loss().is_none());
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn series_and_finals_track_recorded_values() {
-        let checkpoints = Checkpoints::new(vec![
+        let checkpoints = EvaluationHistory::new(vec![
             checkpoint(0, (1.0, 50.0), Some((1.2, 45.0)), (1.5, 40.0)),
             checkpoint(1, (0.5, 70.0), Some((0.6, 65.0)), (0.8, 60.0)),
         ]);
@@ -226,7 +226,8 @@ mod tests {
 
     #[test]
     fn validation_metrics_are_skipped_when_absent() {
-        let checkpoints = Checkpoints::new(vec![checkpoint(0, (1.0, 50.0), None, (1.5, 40.0))]);
+        let checkpoints =
+            EvaluationHistory::new(vec![checkpoint(0, (1.0, 50.0), None, (1.5, 40.0))]);
 
         assert!(checkpoints.validation_losses().is_empty());
         assert!(checkpoints.validation_accuracies().is_empty());
@@ -236,7 +237,7 @@ mod tests {
 
     #[test]
     fn ranges_span_all_splits() {
-        let checkpoints = Checkpoints::new(vec![
+        let checkpoints = EvaluationHistory::new(vec![
             checkpoint(0, (1.0, 50.0), Some((1.2, 45.0)), (1.5, 40.0)),
             checkpoint(1, (0.5, 70.0), Some((0.6, 65.0)), (0.8, 90.0)),
         ]);

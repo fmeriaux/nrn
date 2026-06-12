@@ -41,7 +41,7 @@ Two crates:
   - `io`: safetensors/JSON/image I/O (`safetensors`, `serde`, `serde_json`, `image`, `png`, `gif`)
   - `charts`: plotting (`plotters`)
   The `nn` module is re-exported flat at the crate root (`pub use nn::*`), so library types live at
-  e.g. `nrn::model`, `nrn::training`, `nrn::checkpoints` — not under `nrn::nn::`.
+  e.g. `nrn::model`, `nrn::training`, `nrn::evaluation_history` — not under `nrn::nn::`.
 - **`cli/`** (crate `nrn-cli`) — `nrn` binary over `core` with `features = ["io", "charts"]`, `clap` for args.
 
 ## Core architecture
@@ -79,8 +79,9 @@ of the scikit-learn convention). `Dataset` (row-major, `(samples, features)`) co
 - **`accuracies/`** — `Accuracy` trait; `accuracy_for(n_classes)` picks binary vs argmax-match.
 - **`evaluation.rs`** — `Evaluation` (loss + accuracy for one split) and `EvaluationSet`
   (train / optional validation / test).
-- **`checkpoints.rs`** — `Checkpoints(Vec<Checkpoint { epoch, evaluation }>)`: pure value object,
-  ordered by epoch; exposes per-split loss/accuracy series, ranges, and `epochs()` (chart X-axis).
+- **`evaluation_history.rs`** — `EvaluationHistory(Vec<EpochEvaluation { epoch, evaluation }>)`: pure
+  value object, ordered by epoch; exposes per-split loss/accuracy series, ranges, and `epochs()`
+  (chart X-axis).
 - **`initializations/`** — `he` / `xavier` weight initializers, selected per activation.
 
 ### Data (`core/src/data/`)
@@ -100,7 +101,7 @@ of the scikit-learn convention). `Dataset` (row-major, `(samples, features)`) co
 ### Charts (`core/src/charts/`, behind `charts` feature)
 
 `plotters`-based rendering to in-memory RGB buffers. `RenderConfig` holds dimensions/fonts/padding;
-`checkpoints.rs` draws training curves, `dataset.rs` draws scatter + decision boundary. Pure rendering —
+`evaluation_history.rs` draws training curves, `dataset.rs` draws scatter + decision boundary. Pure rendering —
 the caller persists the bytes.
 
 ### I/O (`core/src/io/`, behind `io` feature)
@@ -111,10 +112,10 @@ checkpoint evaluation series are tensors too. Scalers are JSON. `io/tensors.rs` 
 adapter and (de)serialization helpers; the `io` module does the activation-name → `Arc<dyn Activation>`
 round-trip via `ActivationProvider::get_by_name`.
 
-- **`io/snapshot.rs`** — `SnapshotRecorder` (a `TrainingCallback`) writes one
-  `snapshot-{epoch:06}/model.safetensors` + `evaluations.json` per checkpoint interval, with run-level
-  `TrainingMeta`. `SnapshotRecorder::resume(dir, from_epoch)` reopens a directory and trims snapshots
-  after `from_epoch`. `SnapshotArchive` reads back: `model_at(i)`, `epoch_at(i)`, `checkpoints()`.
+- **`io/checkpoint.rs`** — `CheckpointRecorder` (a `TrainingCallback`) writes one
+  `checkpoint-{epoch:06}/model.safetensors` + `evaluations.json` per checkpoint interval, with run-level
+  `TrainingMeta`. `CheckpointRecorder::resume(dir, from_epoch)` reopens a directory and trims checkpoints
+  after `from_epoch`. `CheckpointArchive` reads back: `model_at(i)`, `epoch_at(i)`, `evaluation_history()`.
 
 ### CLI (`cli/src/`)
 
