@@ -17,7 +17,7 @@ use std::result::Result as StdResult;
 
 /// Top-level metadata for a training run directory.
 /// Written once by [`TrainingRun::create`] into `meta.json`.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct TrainingMeta {
     pub dataset: String,
 }
@@ -114,21 +114,20 @@ fn scan_checkpoints(dir: &Path) -> Result<Vec<CheckpointRef>> {
     Ok(checkpoints)
 }
 
-/// Orchestrates the directory backing a training run: creating or resuming it,
-/// purging/trimming stale checkpoints, and writing run-level metadata.
-/// Produces a [`CheckpointRecorder`], the pure runtime callback.
-pub struct TrainingRun;
+/// A handle to a training run directory: its location and run-level metadata.
+/// Produces [`CheckpointRecorder`]s (the pure runtime callback) and
+/// [`CheckpointArchive`]s (read-only access to recorded checkpoints).
+pub struct TrainingRun {
+    dir: PathBuf,
+    meta: TrainingMeta,
+}
 
 impl TrainingRun {
     /// Creates a fresh run directory at `path`, writing `meta.json`.
     ///
     /// Returns an error if `checkpoint-*` subdirectories already exist and
     /// `overwrite` is `false`; otherwise they are removed.
-    pub fn create<P: AsRef<Path>>(
-        path: P,
-        meta: &TrainingMeta,
-        overwrite: bool,
-    ) -> Result<CheckpointRecorder> {
+    pub fn create<P: AsRef<Path>>(path: P, meta: &TrainingMeta, overwrite: bool) -> Result<Self> {
         let dir = Path::combine_safe_with_cwd(path)?;
         fs::create_dir_all(&dir)?;
 
@@ -147,20 +146,37 @@ impl TrainingRun {
 
         meta.save(&dir)?;
 
-        Ok(CheckpointRecorder { dir })
+        Ok(TrainingRun {
+            dir,
+            meta: meta.clone(),
+        })
     }
 
-    /// Resumes an existing run directory. Checkpoints whose epoch is greater
-    /// than `from_epoch` are removed (rewinding the trajectory). Returns the
-    /// recorder along with the number of checkpoints removed.
-    pub fn resume<P: AsRef<Path>>(
-        path: P,
-        from_epoch: usize,
-    ) -> Result<(CheckpointRecorder, usize)> {
+    /// Opens an existing run directory, loading `meta.json`.
+    ///
+    /// Returns a `NotFound` error if the directory or its `meta.json` doesn't exist.
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let dir = Path::combine_safe_with_cwd(path)?;
-        fs::create_dir_all(&dir)?;
+        let meta = TrainingMeta::load(&dir)?;
+        Ok(TrainingRun { dir, meta })
+    }
 
-        let to_remove: Vec<CheckpointRef> = scan_checkpoints(&dir)?
+    /// Returns this run's metadata.
+    pub fn meta(&self) -> &TrainingMeta {
+        &self.meta
+    }
+
+    /// Returns a recorder for writing checkpoints into this run.
+    pub fn recorder(&self) -> CheckpointRecorder {
+        CheckpointRecorder {
+            dir: self.dir.clone(),
+        }
+    }
+
+    /// Removes checkpoints whose epoch is greater than `from_epoch`, rewinding
+    /// the trajectory. Returns the number of checkpoints removed.
+    pub fn trim_after(&self, from_epoch: usize) -> Result<usize> {
+        let to_remove: Vec<CheckpointRef> = scan_checkpoints(&self.dir)?
             .into_iter()
             .filter(|checkpoint| checkpoint.epoch > from_epoch)
             .collect();
@@ -170,7 +186,12 @@ impl TrainingRun {
             fs::remove_dir_all(&checkpoint.dir)?;
         }
 
-        Ok((CheckpointRecorder { dir }, trimmed))
+        Ok(trimmed)
+    }
+
+    /// Returns a read-only archive over this run's checkpoints.
+    pub fn archive(&self) -> Result<CheckpointArchive> {
+        CheckpointArchive::load(&self.dir)
     }
 }
 
@@ -179,7 +200,7 @@ impl TrainingRun {
 /// Each call to [`write`](CheckpointRecorder::write) creates a subdirectory
 /// `checkpoint-{epoch:06}/` containing `model.safetensors` and `evaluations.json`.
 /// Implements [`TrainingCallback`]: [`on_evaluate`](TrainingCallback::on_evaluate)
-/// writes a checkpoint. Constructed only by [`TrainingRun`].
+/// writes a checkpoint. Obtained via [`TrainingRun::recorder`].
 #[derive(Debug)]
 pub struct CheckpointRecorder {
     dir: PathBuf,
@@ -316,13 +337,14 @@ mod tests {
         dataset: &str,
         overwrite: bool,
     ) -> Result<CheckpointRecorder> {
-        TrainingRun::create(
+        Ok(TrainingRun::create(
             path,
             &TrainingMeta {
                 dataset: dataset.to_string(),
             },
             overwrite,
-        )
+        )?
+        .recorder())
     }
 
     fn sample_model() -> NeuralNetwork {
@@ -498,7 +520,7 @@ mod tests {
                 .unwrap();
         }
 
-        let (_, trimmed) = TrainingRun::resume(&dir, 20).unwrap();
+        let trimmed = TrainingRun::open(&dir).unwrap().trim_after(20).unwrap();
 
         let archive = CheckpointArchive::load(&dir).unwrap();
         cleanup(&dir);
@@ -517,7 +539,7 @@ mod tests {
                 .unwrap();
         }
 
-        let (_, trimmed) = TrainingRun::resume(&dir, 20).unwrap();
+        let trimmed = TrainingRun::open(&dir).unwrap().trim_after(20).unwrap();
 
         let archive = CheckpointArchive::load(&dir).unwrap();
         cleanup(&dir);
@@ -536,8 +558,9 @@ mod tests {
                 .unwrap(); // 0, 10, 20
         }
 
-        let (recorder, _) = TrainingRun::resume(&dir, 10).unwrap();
-        recorder
+        let run = TrainingRun::open(&dir).unwrap();
+        run.trim_after(10).unwrap();
+        run.recorder()
             .write(&sample_model(), &make_eval(99.0, false), 20)
             .unwrap();
 
@@ -685,8 +708,17 @@ mod tests {
     }
 
     #[test]
-    fn resume_rejects_path_traversal() {
-        let result = TrainingRun::resume("../../nrn_traversal_test", 0);
+    fn open_rejects_path_traversal() {
+        let result = TrainingRun::open("../../nrn_traversal_test");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn open_errors_when_meta_missing() {
+        let dir = temp_dir("open_missing");
+        let result = TrainingRun::open(&dir);
+        cleanup(&dir);
+
         assert!(result.is_err());
     }
 

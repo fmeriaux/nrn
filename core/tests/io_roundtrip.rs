@@ -65,7 +65,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let clipping = GradientClipping::None;
 
     let run_dir = dir.join("training");
-    let mut recorder = TrainingRun::create(
+    let run = TrainingRun::create(
         &run_dir,
         &TrainingMeta {
             dataset: "test_dataset".to_string(),
@@ -73,6 +73,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
         false,
     )
     .unwrap();
+    let mut recorder = run.recorder();
     let mut last_recorded_predictions = None;
 
     for epoch in 0..10 {

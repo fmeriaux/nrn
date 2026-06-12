@@ -7,7 +7,7 @@ use clap::*;
 use model_saver::ModelSaver;
 use monitor::ConsoleMonitor;
 use nrn::data::ModelSplit;
-use nrn::io::checkpoint::{CheckpointArchive, CheckpointRecorder, TrainingMeta, TrainingRun};
+use nrn::io::checkpoint::{CheckpointRecorder, TrainingMeta, TrainingRun};
 use nrn::loss_functions::CROSS_ENTROPY_LOSS;
 use nrn::model::NeuralNetwork;
 use nrn::optimizers::{Adam, Optimizer, StochasticGradientDescent};
@@ -375,7 +375,8 @@ impl ResumeArgs {
         self.hp.validate()?;
 
         let run_dir = Path::new(&self.run_dir);
-        let meta = TrainingMeta::load(run_dir)?;
+        let run = TrainingRun::open(run_dir)?;
+        let meta = run.meta();
 
         let dataset = load_dataset(&meta.dataset)?;
         dataset.validate()?;
@@ -385,7 +386,7 @@ impl ResumeArgs {
             .split(self.hp.val_ratio, self.hp.test_ratio);
         completed(split.summary().as_str());
 
-        let archive = CheckpointArchive::load(run_dir)?;
+        let archive = run.archive()?;
         if archive.is_empty() {
             return Err(format!(
                 "No checkpoints found in '{}'; cannot resume.",
@@ -428,14 +429,14 @@ impl ResumeArgs {
             .expect("checkpoint_idx was just validated against archive.len()");
 
         let recorder = if self.hp.checkpoint_interval > 0 {
-            let (recorder, trimmed) = TrainingRun::resume(run_dir, from_epoch)?;
+            let trimmed = run.trim_after(from_epoch)?;
             if trimmed > 0 {
                 warning(&format!(
                     "Removed {trimmed} checkpoint(s) after epoch {from_epoch}"
                 ));
             }
             recording_at(RUN_ICON, "TRAINING RUN", run_dir);
-            Some(recorder)
+            Some(run.recorder())
         } else {
             None
         };
@@ -506,11 +507,13 @@ fn create_checkpoint_recorder(
     let meta = TrainingMeta {
         dataset: dataset_name.to_string(),
     };
-    TrainingRun::create(run_dir, &meta, overwrite).map_err(|e| {
-        if e.kind() == ErrorKind::AlreadyExists {
-            IoError::new(e.kind(), format!("{e}; use --overwrite to replace it"))
-        } else {
-            e
-        }
-    })
+    TrainingRun::create(run_dir, &meta, overwrite)
+        .map(|run| run.recorder())
+        .map_err(|e| {
+            if e.kind() == ErrorKind::AlreadyExists {
+                IoError::new(e.kind(), format!("{e}; use --overwrite to replace it"))
+            } else {
+                e
+            }
+        })
 }
