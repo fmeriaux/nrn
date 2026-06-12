@@ -1,6 +1,6 @@
 use crate::actions::save_dataset;
-use crate::display::{completed, trace};
-use crate::progression::Progression;
+use crate::console::bar;
+use crate::console::{completed, trace};
 use clap::{Args, Subcommand};
 use console::style;
 use ndarray_rand::rand::SeedableRng;
@@ -89,7 +89,7 @@ impl ImgDirArgs {
                 .filter_map(Result::ok)
                 .count();
 
-            let progression = Progression::new(
+            let progression = bar(
                 total_img,
                 format!(
                     "Encoding category [{}/{}]: {}",
@@ -105,7 +105,7 @@ impl ImgDirArgs {
             };
 
             for entry in read_dir(root.join(category))?.filter_map(Result::ok) {
-                progression.inc();
+                progression.inc(1);
 
                 let img = secure_read(entry.path())?;
 
@@ -115,7 +115,7 @@ impl ImgDirArgs {
                 }
             }
 
-            progression.done();
+            progression.finish_and_clear();
         }
 
         if data.is_empty() {

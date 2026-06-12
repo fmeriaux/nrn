@@ -1,5 +1,5 @@
 mod dataset;
-mod training_history;
+mod evaluation_history;
 
 use plotters::backend::BitMapBackend;
 use plotters::chart::{ChartBuilder, ChartContext};

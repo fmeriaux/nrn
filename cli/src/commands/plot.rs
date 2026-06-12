@@ -1,8 +1,9 @@
 use crate::actions::{load_dataset, load_history};
-use crate::display::warning;
-use crate::display::{ANIMATION_ICON, HISTORY_ICON, saved_at};
-use crate::progression::Progression;
+use crate::console::bar;
+use crate::console::warning;
+use crate::console::{ANIMATION_ICON, RUN_ICON, saved_at};
 use clap::Args;
+use indicatif::ProgressIterator;
 use nrn::charts::RenderConfig;
 use nrn::io::gif::save_gif_from_rgb;
 use nrn::io::png::save_rgb;
@@ -10,8 +11,8 @@ use std::error::Error;
 
 #[derive(Args, Debug)]
 pub struct PlotArgs {
-    /// Path to the training history directory
-    checkpoints: String,
+    /// Path to the training run directory
+    run_dir: String,
 
     /// Name of the dataset used for training for decision boundary visualization (only for 2D datasets)
     #[arg(short, long)]
@@ -36,17 +37,18 @@ pub struct PlotArgs {
 
 impl PlotArgs {
     pub fn run(self) -> Result<(), Box<dyn Error>> {
-        let checkpoints = load_history(&self.checkpoints)?;
+        let archive = load_history(&self.run_dir)?;
+        let history = archive.evaluation_history()?;
         let render_cfg = RenderConfig::new(self.width as u32, self.height as u32);
 
         let (width, height) = (self.width as u32, self.height as u32);
 
-        let frame = checkpoints.draw(&render_cfg)?;
+        let frame = history.draw(&render_cfg)?;
 
         saved_at(
-            HISTORY_ICON,
+            RUN_ICON,
             "TRAINING CURVES",
-            save_rgb(frame, &self.checkpoints, width, height)?,
+            save_rgb(frame, &self.run_dir, width, height)?,
         );
 
         if let Some(dataset) = self.dataset {
@@ -59,19 +61,19 @@ impl PlotArgs {
                 return Ok(());
             }
 
-            let n = checkpoints.len();
+            let n = archive.len();
             let interval = n / n.min(self.frames.into());
 
-            let progression = Progression::new(n, "Generating decision boundary animation");
+            let progress = bar(n, "Generating decision boundary animation");
 
             let mut decision_frames = Vec::new();
 
-            for step in progression.iter() {
+            for step in (0..n).progress_with(progress) {
                 let step_number = step + 1;
 
                 if step_number == 1 || step_number % interval == 0 || step_number == n {
-                    // Load one model at a time — no full snapshot array in memory.
-                    let model = checkpoints.model_at(step)?;
+                    // Load one model at a time — no full checkpoint array in memory.
+                    let model = archive.model_at(step)?;
                     let rgb_frame = model.draw_decision_boundary(&dataset, &render_cfg)?;
                     decision_frames.push(rgb_frame);
                 }
@@ -85,7 +87,7 @@ impl PlotArgs {
                     self.width,
                     self.height,
                     self.delay,
-                    &self.checkpoints,
+                    &self.run_dir,
                 )?,
             );
         }

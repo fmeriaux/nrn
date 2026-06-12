@@ -8,9 +8,10 @@
 //! - Does not maintain any internal state (unlike Adam, RMSProp, etc.).
 //!
 
+use crate::gradients::Gradients;
+use crate::learning_rate::LearningRate;
 use crate::model::NeuronLayer;
 use crate::optimizers::Optimizer;
-use crate::training::{Gradients, LearningRate};
 
 pub struct StochasticGradientDescent {
     pub learning_rate: LearningRate,
@@ -23,6 +24,10 @@ impl StochasticGradientDescent {
 }
 
 impl Optimizer for StochasticGradientDescent {
+    fn name(&self) -> &'static str {
+        "Stochastic Gradient Descent (SGD)"
+    }
+
     fn set_learning_rate(&mut self, learning_rate: LearningRate) {
         self.learning_rate = learning_rate;
     }
@@ -46,6 +51,12 @@ mod tests {
             biases,
             activation: RELU.clone(),
         }
+    }
+
+    #[test]
+    fn name_is_sgd() {
+        let opt = StochasticGradientDescent::new(LearningRate::new(0.1));
+        assert_eq!(opt.name(), "Stochastic Gradient Descent (SGD)");
     }
 
     #[test]

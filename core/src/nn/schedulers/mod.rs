@@ -12,7 +12,7 @@ pub use constant::*;
 pub use cosine_annealing::*;
 pub use step::*;
 
-use crate::training::LearningRate;
+use crate::learning_rate::LearningRate;
 
 /// Trait for learning rate scheduling strategies.
 ///
@@ -20,6 +20,9 @@ use crate::training::LearningRate;
 /// By adjusting the learning rate over time, schedulers can help improve convergence,
 /// prevent overshooting, and enable fine-tuning in later epochs.
 pub trait Scheduler {
+    /// Returns a human-readable name for this scheduler.
+    fn name(&self) -> &'static str;
+
     /// Adjusts the learning rate based on the current training state.
     ///
     /// This method is typically called at the end of each epoch or training iteration.

@@ -10,6 +10,7 @@ use ndarray::{Array2, ArrayView2};
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 
+#[derive(Debug)]
 pub struct Sigmoid;
 
 impl Activation for Sigmoid {

@@ -12,6 +12,7 @@ use ndarray::{Array2, ArrayView2, Axis};
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 
+#[derive(Debug)]
 pub struct Softmax;
 
 impl Activation for Softmax {

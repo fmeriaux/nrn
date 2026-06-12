@@ -18,8 +18,9 @@ use std::sync::Arc;
 
 use crate::initializations::Initialization;
 use ndarray::{Array2, ArrayView2};
+use std::fmt::Debug;
 
-pub trait Activation: Send + Sync {
+pub trait Activation: Send + Sync + Debug {
     /// Returns the canonical name of the activation function.
     fn name(&self) -> &'static str;
 

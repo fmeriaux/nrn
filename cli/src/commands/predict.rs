@@ -1,5 +1,5 @@
 use crate::actions::{load_model, load_scaler};
-use crate::display;
+use crate::console::error;
 use clap::Args;
 use console::style;
 use ndarray::Array1;
@@ -55,7 +55,7 @@ impl PredictArgs {
                 match raw.trim().parse::<f32>() {
                     Ok(val) => inputs.push(val),
                     Err(err) => {
-                        display::error(err.to_string().as_str());
+                        error(err.to_string().as_str());
                     }
                 }
 

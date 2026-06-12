@@ -1,13 +1,12 @@
-use crate::display::*;
+use crate::console::*;
 use nrn::activations::RELU;
 use nrn::charts::RenderConfig;
 use nrn::data::Dataset;
 use nrn::data::scalers::ScalerMethod;
+use nrn::io::checkpoint::CheckpointArchive;
 use nrn::io::png::save_rgb;
 use nrn::io::scalers::ScalerRecord;
-use nrn::io::training_history::TrainingHistoryWriter;
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
-use nrn::training_history::TrainingHistory;
 use std::error::Error;
 use std::path::Path;
 
@@ -105,29 +104,14 @@ pub(crate) fn load_model<P: AsRef<Path>>(path: P) -> Result<NeuralNetwork, Box<d
     Ok(model)
 }
 
-pub(crate) fn save_model<P: AsRef<Path>>(
-    path: P,
-    model: &NeuralNetwork,
-) -> Result<(), Box<dyn Error>> {
-    saved_at(MODEL_ICON, "NEURAL NETWORK", model.save(&path)?);
-    Ok(())
-}
+pub(crate) fn load_history<P: AsRef<Path>>(path: P) -> Result<CheckpointArchive, Box<dyn Error>> {
+    let archive = CheckpointArchive::load(&path)?;
 
-pub(crate) fn load_history<P: AsRef<Path>>(path: P) -> Result<TrainingHistory, Box<dyn Error>> {
-    let history = TrainingHistory::load(&path)?;
-
-    if history.len() <= 2 {
-        return Err("Training history must contain more than two snapshots to plot.".into());
+    if archive.len() <= 2 {
+        return Err("Training run must contain more than two checkpoints to plot.".into());
     }
 
-    loaded(&history);
+    loaded(&archive);
 
-    Ok(history)
-}
-
-pub(crate) fn create_history_writer<P: AsRef<Path>>(
-    path: P,
-    interval: usize,
-) -> Result<TrainingHistoryWriter, Box<dyn Error>> {
-    Ok(TrainingHistoryWriter::create(path, interval)?)
+    Ok(archive)
 }

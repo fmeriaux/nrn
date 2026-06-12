@@ -1,11 +1,13 @@
 use console::{Emoji, style};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use nrn::data::scalers::{Scaler, ScalerMethod};
 use nrn::data::{Dataset, ModelSplit};
 use nrn::evaluation::{Evaluation, EvaluationSet};
+use nrn::io::checkpoint::CheckpointArchive;
 use nrn::model::NeuralNetwork;
 use nrn::training::GradientClipping;
-use nrn::training_history::TrainingHistory;
 use pathdiff::diff_paths;
+use std::borrow::Cow;
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -16,7 +18,7 @@ pub(crate) const MODEL_ICON: Emoji = Emoji("🧠", "[M]");
 pub(crate) const SCALER_ICON: Emoji = Emoji("📏", "[S]");
 pub(crate) const DATASET_ICON: Emoji = Emoji("📁", "[D]");
 pub(crate) const PLOT_ICON: Emoji = Emoji("🧊", "[P]");
-pub(crate) const HISTORY_ICON: Emoji = Emoji("📈", "[T]");
+pub(crate) const RUN_ICON: Emoji = Emoji("📈", "[T]");
 pub(crate) const ANIMATION_ICON: Emoji = Emoji("🎬", "[A]");
 pub(crate) const WARN_ICON: Emoji = Emoji("⚠️", "[!]");
 pub(crate) const ERROR_ICON: Emoji = Emoji("❌", "[X]");
@@ -108,13 +110,14 @@ impl Summary for EvaluationSet {
     }
 }
 
-impl Summary for TrainingHistory {
+impl Summary for CheckpointArchive {
     fn summary(&self) -> String {
         format!(
-            "{} | Evaluations: {} | {}",
-            style("TRAINING HISTORY").bold().blue(),
+            "{} | Checkpoints: {} | Epochs: {}..{}",
+            style("TRAINING RUN").bold().blue(),
             style(self.len()).yellow(),
-            style(self.final_evaluation().summary()).yellow(),
+            style(self.epoch_at(0).unwrap_or(0)).yellow(),
+            style(self.epoch_at(self.len().saturating_sub(1)).unwrap_or(0)).yellow(),
         )
     }
 }
@@ -159,6 +162,37 @@ pub(crate) fn saved_at<P: AsRef<Path>>(icon: Emoji, name: &str, at: P) {
         style(name).bold().blue(),
         style(relative_path.display()).bright().magenta().italic()
     );
+}
+
+pub(crate) fn recording_at<P: AsRef<Path>>(icon: Emoji, name: &str, at: P) {
+    let relative_path = to_relative_path(&at);
+    println!(
+        "{} Recording {} at {}",
+        style(icon).bright().green(),
+        style(name).bold().blue(),
+        style(relative_path.display()).bright().magenta().italic()
+    );
+}
+
+/// Builds a hidden progress bar with the project's standard style, drawn to stdout.
+pub(crate) fn styled_bar() -> ProgressBar {
+    let bar = ProgressBar::hidden();
+    bar.set_style(
+        ProgressStyle::with_template(
+            "{msg} {spinner:.green} [{elapsed_precise}] {wide_bar} {pos}/{len} {percent}% ({eta})",
+        )
+        .unwrap(),
+    );
+    bar.set_draw_target(ProgressDrawTarget::stdout());
+    bar
+}
+
+/// A standalone progress bar of known length, for use with [`indicatif::ProgressIterator`].
+pub(crate) fn bar(len: usize, msg: impl Into<Cow<'static, str>>) -> ProgressBar {
+    let bar = styled_bar();
+    bar.set_length(len as u64);
+    bar.set_message(msg);
+    bar
 }
 
 pub(crate) fn loaded<S: Summary>(subject: &S) {

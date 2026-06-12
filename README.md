@@ -40,9 +40,11 @@ The CLI automatically selects the activation function for each layer based on th
 
 ### Gradient Clipping
 
-To prevent the problem of exploding gradients during training, this project implements gradient clipping using the L2 norm. During each training step, before updating the weights and biases, the gradients for each layer are clipped if their combined L2 norm exceeds a specified maximum value (`max_norm`). This ensures that the updates remain stable and helps the network converge more reliably.
+To prevent the problem of exploding gradients during training, this project implements gradient clipping. During each training step, before updating the weights and biases, the gradients are clipped to keep updates stable. Three modes are available:
 
-The `max_norm` value can be set as a parameter during training. Gradient clipping is automatically applied to all layers at each update step.
+- **L2 norm clipping** (`--clip-norm`, default): scales the gradient vector down if its L2 norm exceeds `max_norm`. Preserves the direction of the update.
+- **Value clipping** (`--clip-value`): clamps each gradient component individually to the symmetric range `[-value, value]`. Simpler but changes the direction.
+- **No clipping** (`--no-clip`): disables clipping entirely. Useful for stable problems or when debugging.
 
 ### Data Scaling and Normalization
 
@@ -182,11 +184,11 @@ nrn scale uniform-c2-f2-n500-seed1024 z-score --plot
 #### 3. Train a Single-Layer Perceptron (SLP)
 
 ```sh
-nrn train scaled-uniform-c2-f2-n500-seed1024 --epochs 1000
+nrn train start scaled-uniform-c2-f2-n500-seed1024 --epochs 1000
 ```
 **Output files:**
-- `model-scaled-uniform-c2-f2-n200-seed1024.safetensors`: trained model (architecture and weights; required for prediction).
-- `training-model-scaled-uniform-c2-f2-n200-seed1024.safetensors`: training history (loss, accuracy; for analysis and visualization).
+- `model-scaled-uniform-c2-f2-n500-seed1024.safetensors`: trained model (architecture and weights; required for prediction).
+- `training-model-scaled-uniform-c2-f2-n500-seed1024/`: training history directory — one `snapshot-{n}/` subdirectory per checkpoint, each containing `model.safetensors` and `evaluations.json`.
 
 > [!NOTE]
 > The network architecture is generated automatically based on the dataset and parameters (here, `[2] -> 1-sigmoid` means two input features, no hidden layers, and one output neuron with a sigmoid activation). The model and history filenames are prefixed with the dataset name to ensure traceability and avoid confusion when working with multiple datasets or experiments.
@@ -199,8 +201,8 @@ The CLI also reports the final loss, training accuracy, and test accuracy.
 nrn plot training-model-scaled-uniform-c2-f2-n500-seed1024 --dataset scaled-uniform-c2-f2-n500-seed1024
 ```
 **Output files:**
-- `training-model-scaled-uniform-c2-f2-n200-seed1024.gif`: decision boundary animation (only for 2D datasets).
-- `training-model-scaled-uniform-c2-f2-n200-seed1024.png`: loss and accuracy curves.
+- `training-model-scaled-uniform-c2-f2-n500-seed1024.gif`: decision boundary animation (only for 2D datasets).
+- `training-model-scaled-uniform-c2-f2-n500-seed1024.png`: loss and accuracy curves.
 
 *The loss curve shows how the model's error decreases during training, indicating learning progress and convergence.*
 *The accuracy curve shows the proportion of correct predictions during training (train accuracy) and on the validation/test set (test accuracy). Comparing both helps to assess model performance and detect overfitting (train accuracy much higher than test accuracy) or underfitting (both low).* 
@@ -282,11 +284,11 @@ nrn scale ring-c2-f2-n500-seed1024 z-score --plot
 #### 3. Train a Multi-Layer Perceptron (MLP)
 
 ```sh
-nrn train scaled-ring-c2-f2-n500-seed1024 --layers 16,8 --epochs 30000
+nrn train start scaled-ring-c2-f2-n500-seed1024 --layers 16,8 --epochs 30000
 ```
 **Output files:**
 - `model-scaled-ring-c2-f2-n500-seed1024.safetensors`: trained MLP model (required for prediction).
-- `training-model-scaled-ring-c2-f2-n500-seed1024.safetensors`: training history (for analysis and visualization).
+- `training-model-scaled-ring-c2-f2-n500-seed1024/`: training history directory — one `snapshot-{n}/` subdirectory per checkpoint, each containing `model.safetensors` and `evaluations.json`.
 
 Trains an MLP with two hidden layers, 16 and 8 neurons (you can adjust the number and size of hidden layers as needed).
 The CLI automatically detects the architecture: `[2] -> 16-relu -> 8-relu -> 1-sigmoid`. 
@@ -348,11 +350,11 @@ nrn scale ring-c3-f2-n600-seed1024 z-score --plot
 #### 3. Train a Multi-Layer Perceptron (MLP)
 
 ```sh
-nrn train scaled-ring-c3-f2-n600-seed1024 --layers 16,8 --epochs 70000
+nrn train start scaled-ring-c3-f2-n600-seed1024 --layers 16,8 --epochs 70000
 ```
 **Output files:**
 - `model-scaled-ring-c3-f2-n600-seed1024.safetensors`: trained MLP model (required for prediction).
-- `training-model-scaled-ring-c3-f2-n600-seed1024.safetensors`: training history (for analysis and visualization).
+- `training-model-scaled-ring-c3-f2-n600-seed1024/`: training history directory — one `snapshot-{n}/` subdirectory per checkpoint, each containing `model.safetensors` and `evaluations.json`.
 
 > [!NOTE]
 > The number of epochs is set to 70,000 to ensure proper convergence on this more complex multi-class problem. You may adjust this value depending on your hardware and the desired training duration.
@@ -461,18 +463,24 @@ For MNIST, a typical architecture is:
 Train the model with:
 
 ```sh
-nrn train scaled-digits --layers 128,128 --epochs 1000
+nrn train start scaled-digits --layers 128,128 --epochs 1000
 ```
 - Training on the full MNIST dataset requires significant RAM and CPU/GPU resources.
 - For quick tests, use a subset of the data.
 
-You can re-train a previous model by providing the model file, in this case skip the `--layers` option:
+To resume from a training checkpoint (continues history, restores the exact epoch count):
 
 ```sh
-nrn train scaled-digits --model model-scaled-digits --epochs 1000
+nrn train resume training-model-scaled-digits --epochs 1000
+# Resume from a specific snapshot instead of the last one:
+nrn train resume training-model-scaled-digits --from 50 --epochs 1000
 ```
 
-The model file will be updated with the new weights after training.
+To load an external model file and start fresh (snapshot count resets to 0):
+
+```sh
+nrn train start scaled-digits --model model-scaled-digits --epochs 1000
+```
 
 ### Visualizing Training
 After training, visualize the training history:

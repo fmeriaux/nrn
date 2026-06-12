@@ -20,7 +20,8 @@ pub enum Command {
     /// Scale the dataset features
     Scale(ScaleArgs),
     /// Train a model on the dataset
-    Train(TrainArgs),
+    #[command(subcommand)]
+    Train(TrainCommand),
     /// Predict using a trained model
     Predict(PredictArgs),
     /// Plot training curves and decision boundaries

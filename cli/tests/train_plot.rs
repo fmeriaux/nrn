@@ -3,15 +3,16 @@ use predicates::str::contains;
 use std::fs;
 use std::path::Path;
 
-fn snapshot_count(history_dir: &std::path::Path) -> usize {
-    fs::read_dir(history_dir)
+fn checkpoint_count(run_dir: &std::path::Path) -> usize {
+    fs::read_dir(run_dir)
         .map(|rd| {
             rd.filter_map(Result::ok)
                 .filter(|e| {
-                    e.file_name()
-                        .to_str()
-                        .map(|n| n.starts_with("snapshot-") && n.ends_with(".safetensors"))
+                    let name = e.file_name();
+                    name.to_str()
+                        .map(|n| n.starts_with("checkpoint-"))
                         .unwrap_or(false)
+                        && e.path().is_dir()
                 })
                 .count()
         })
@@ -28,7 +29,7 @@ fn nrn(dir: &std::path::Path, args: &[&str]) -> assert_cmd::assert::Assert {
 }
 
 #[test]
-fn train_creates_history_dir_and_plot_generates_png_and_gif() {
+fn train_creates_run_dir_and_plot_generates_png_and_gif() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
@@ -52,11 +53,12 @@ fn train_creates_history_dir_and_plot_generates_png_and_gif() {
     // Dataset filename produced by synth: ring-c2-f2-n20-seed42
     let ds_name = "ring-c2-f2-n20-seed42";
 
-    // Train with checkpoints every 5 epochs (20 epochs total → ≥ 5 snapshots).
+    // Train with checkpoints every 5 epochs (20 epochs total → ≥ 5 checkpoints).
     nrn(
         dir,
         &[
             "train",
+            "start",
             ds_name,
             "--epochs",
             "20",
@@ -67,38 +69,35 @@ fn train_creates_history_dir_and_plot_generates_png_and_gif() {
     )
     .success();
 
-    // Training history directory must exist.
-    let history_dir = dir.join(format!("training-model-{ds_name}"));
-    assert!(
-        history_dir.is_dir(),
-        "expected training history dir at {history_dir:?}"
-    );
+    // Training run directory must exist.
+    let run_dir = dir.join(format!("training-model-{ds_name}"));
+    assert!(run_dir.is_dir(), "expected training run dir at {run_dir:?}");
 
-    // Must have more than 2 snapshot files (guard from load_history).
-    let count = snapshot_count(&history_dir);
-    assert!(count > 2, "expected >2 snapshots, got {count}");
+    // Must have more than 2 checkpoints (guard from load_history).
+    let count = checkpoint_count(&run_dir);
+    assert!(count > 2, "expected >2 checkpoints, got {count}");
 
-    let history_arg = format!("training-model-{ds_name}");
+    let run_arg = format!("training-model-{ds_name}");
 
     // Plot training curves → PNG.
-    nrn(dir, &["plot", &history_arg]).success();
+    nrn(dir, &["plot", &run_arg]).success();
 
     let png = dir.join(format!("training-model-{ds_name}.png"));
     assert!(png.exists(), "expected PNG at {png:?}");
 
     // Plot with decision boundary → GIF.
-    nrn(dir, &["plot", &history_arg, "--dataset", ds_name]).success();
+    nrn(dir, &["plot", &run_arg, "--dataset", ds_name]).success();
 
     let gif = dir.join(format!("training-model-{ds_name}.gif"));
     assert!(gif.exists(), "expected GIF at {gif:?}");
 }
 
 #[test]
-fn load_history_rejects_too_few_snapshots() {
+fn load_history_rejects_too_few_checkpoints() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    // interval=100 with epochs=2 → only the initial snapshot is written.
+    // interval=100 with epochs=2 → only the initial checkpoint is written.
     nrn(
         dir,
         &[
@@ -121,24 +120,24 @@ fn load_history_rejects_too_few_snapshots() {
         dir,
         &[
             "train",
+            "start",
             ds_name,
             "--epochs",
             "2",
             "--checkpoint-interval",
             "100",
-            "--no-clip",
         ],
     )
     .success();
 
-    let history_arg = format!("training-model-{ds_name}");
-    nrn(dir, &["plot", &history_arg])
+    let run_arg = format!("training-model-{ds_name}");
+    nrn(dir, &["plot", &run_arg])
         .failure()
-        .stderr(contains("more than two snapshots"));
+        .stderr(contains("more than two checkpoints"));
 }
 
 #[test]
-fn early_stopping_writes_final_snapshot() {
+fn early_stopping_writes_final_checkpoint() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
@@ -161,14 +160,15 @@ fn early_stopping_writes_final_snapshot() {
 
     let ds_name = "ring-c2-f2-n40-seed99";
 
-    // interval=1000 >> epochs=30: only initial + final-epoch snapshot would be
+    // interval=1000 >> epochs=30: only initial + final-epoch checkpoint would be
     // written without early stopping. With patience=1 this fires quickly and
-    // the fix must write a snapshot at the stopped epoch.
+    // the fix must write a checkpoint at the stopped epoch.
     let out = Command::cargo_bin("nrn")
         .unwrap()
         .current_dir(dir)
         .args([
             "train",
+            "start",
             ds_name,
             "--epochs",
             "30",
@@ -183,23 +183,23 @@ fn early_stopping_writes_final_snapshot() {
     assert!(out.status.success());
 
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let history_dir = dir.join(format!("training-model-{ds_name}"));
-    let count = snapshot_count(&history_dir);
+    let run_dir = dir.join(format!("training-model-{ds_name}"));
+    let count = checkpoint_count(&run_dir);
 
     if stdout.contains("Early stopping triggered") {
         assert!(
             count >= 2,
-            "early stopping fired but no final snapshot was written (got {count} snapshots)"
+            "early stopping fired but no final checkpoint was written (got {count} checkpoints)"
         );
     } else {
-        assert!(count >= 1, "expected at least 1 snapshot, got {count}");
+        assert!(count >= 1, "expected at least 1 checkpoint, got {count}");
     }
 }
 
 #[test]
-fn no_duplicate_snapshot_when_early_stop_fires_on_interval_boundary() {
+fn no_duplicate_checkpoint_when_early_stop_fires_on_interval_boundary() {
     // When interval=1, every epoch is an interval boundary.
-    // The bug writes one snapshot via the interval block AND a second via the
+    // The bug writes one checkpoint via the interval block AND a second via the
     // early-stopping flush in the same iteration → duplicate entry.
     //
     // SGD + lr=0.5 + patience=1 reliably triggers early stopping at epoch 3
@@ -230,6 +230,7 @@ fn no_duplicate_snapshot_when_early_stop_fires_on_interval_boundary() {
         .current_dir(dir)
         .args([
             "train",
+            "start",
             ds_name,
             "--epochs",
             "20",
@@ -255,14 +256,14 @@ fn no_duplicate_snapshot_when_early_stop_fires_on_interval_boundary() {
     });
 
     if let Some(epoch) = stop_epoch {
-        let history_dir = dir.join(format!("training-model-{ds_name}"));
-        let count = snapshot_count(&history_dir);
+        let run_dir = dir.join(format!("training-model-{ds_name}"));
+        let count = checkpoint_count(&run_dir);
         // Correct: initial (1) + one per completed epoch = epoch + 1.
         // Bug:     initial + epoch + duplicate from early-stop flush = epoch + 2.
         assert_eq!(
             count,
             epoch + 1,
-            "expected {} snapshots (initial + {epoch} interval), got {count}",
+            "expected {} checkpoints (initial + {epoch} interval), got {count}",
             epoch + 1
         );
     }
@@ -302,6 +303,7 @@ fn divergence_with_early_stopping_recovers_best_model() {
         .current_dir(dir)
         .args([
             "train",
+            "start",
             ds_name,
             "--epochs",
             "50",

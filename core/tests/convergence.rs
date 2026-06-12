@@ -1,43 +1,46 @@
 use ndarray::array;
 use nrn::activations::SIGMOID;
-use nrn::data::ModelDataset;
-use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
+use nrn::data::{ModelDataset, ModelSplit};
+use nrn::loss_functions::CROSS_ENTROPY_LOSS;
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::Adam;
 use nrn::schedulers::ConstantScheduler;
-use nrn::training::{GradientClipping, LearningRate};
-use std::sync::Arc;
+use nrn::training::{Callbacks, GradientClipping, LearningRate, TrainingConfig, TrainingLoop};
 
 #[test]
 fn xor_converges_to_low_loss() {
     // XOR: non-linearly separable, requires at least one hidden layer
-    let dataset = ModelDataset {
+    let xor_dataset = || ModelDataset {
         inputs: array![[0.0, 0.0, 1.0, 1.0], [0.0, 1.0, 0.0, 1.0]], // (2 features, 4 samples)
         targets: array![[0.0, 1.0, 1.0, 0.0]],                      // (1 output, 4 samples)
     };
 
     let specs = NeuronLayerSpec::network_for(vec![8], &*SIGMOID, 2);
-    let mut model = NeuralNetwork::initialization(2, &specs);
 
-    let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
-    let mut optimizer = Adam::with_defaults(LearningRate::new(0.1));
-    let mut scheduler = ConstantScheduler::new(LearningRate::new(0.1));
-    let clipping = GradientClipping::None;
-
-    for _ in 0..10_000 {
-        model.train(
-            &dataset,
-            &loss_fn,
-            &mut optimizer,
-            &mut scheduler,
-            &clipping,
-            None,
-        );
+    let report = TrainingLoop {
+        model: NeuralNetwork::initialization(2, &specs),
+        callbacks: Callbacks::new(vec![]),
+        split: ModelSplit {
+            train: xor_dataset(),
+            validation: None,
+            test: xor_dataset(),
+        },
+        config: TrainingConfig {
+            epochs: 10_000,
+            eval_interval: 0,
+            batch_size: None,
+            loss: CROSS_ENTROPY_LOSS.clone(),
+            optimizer: Box::new(Adam::with_defaults(LearningRate::new(0.1))),
+            scheduler: Box::new(ConstantScheduler::new(LearningRate::new(0.1))),
+            clipping: GradientClipping::None,
+        },
+        early_stopping: None,
+        epoch_start: 0,
     }
+    .run()
+    .unwrap();
 
-    let predictions = model.predict(dataset.inputs.view());
-    let loss = loss_fn.compute(predictions.view(), dataset.targets.view());
-
+    let loss = report.final_evaluation.unwrap().train.loss;
     assert!(loss < 0.05, "XOR did not converge: final loss = {loss:.4}");
 }
 
@@ -46,33 +49,37 @@ fn xor_converges_with_mini_batch() {
     // Mini-batch of 2 on a 4-sample XOR dataset (2 batches per epoch, shuffled).
     // Adam's v → 0 after convergence can cause NaN if training continues too long without
     // lr decay, so we stop at 8 000 epochs where loss is reliably < 0.01.
-    let dataset = ModelDataset {
+    let xor_dataset = || ModelDataset {
         inputs: array![[0.0, 0.0, 1.0, 1.0], [0.0, 1.0, 0.0, 1.0]],
         targets: array![[0.0, 1.0, 1.0, 0.0]],
     };
 
     let specs = NeuronLayerSpec::network_for(vec![8], &*SIGMOID, 2);
-    let mut model = NeuralNetwork::initialization(2, &specs);
 
-    let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
-    let mut optimizer = Adam::with_defaults(LearningRate::new(0.01));
-    let mut scheduler = ConstantScheduler::new(LearningRate::new(0.01));
-    let clipping = GradientClipping::None;
-
-    for _ in 0..8_000 {
-        model.train(
-            &dataset,
-            &loss_fn,
-            &mut optimizer,
-            &mut scheduler,
-            &clipping,
-            Some(2),
-        );
+    let report = TrainingLoop {
+        model: NeuralNetwork::initialization(2, &specs),
+        callbacks: Callbacks::new(vec![]),
+        split: ModelSplit {
+            train: xor_dataset(),
+            validation: None,
+            test: xor_dataset(),
+        },
+        config: TrainingConfig {
+            epochs: 8_000,
+            eval_interval: 0,
+            batch_size: Some(2),
+            loss: CROSS_ENTROPY_LOSS.clone(),
+            optimizer: Box::new(Adam::with_defaults(LearningRate::new(0.01))),
+            scheduler: Box::new(ConstantScheduler::new(LearningRate::new(0.01))),
+            clipping: GradientClipping::None,
+        },
+        early_stopping: None,
+        epoch_start: 0,
     }
+    .run()
+    .unwrap();
 
-    let predictions = model.predict(dataset.inputs.view());
-    let loss = loss_fn.compute(predictions.view(), dataset.targets.view());
-
+    let loss = report.final_evaluation.unwrap().train.loss;
     assert!(
         loss < 0.05,
         "XOR (mini-batch) did not converge: final loss = {loss:.4}"
@@ -83,7 +90,7 @@ fn xor_converges_with_mini_batch() {
 fn three_class_converges_to_low_loss() {
     // 3 linearly separable points, one per class.
     // Exercises the full softmax output path end-to-end.
-    let dataset = ModelDataset {
+    let three_class_dataset = || ModelDataset {
         inputs: array![[0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], // (2 features, 3 samples)
         targets: array![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], // (3 classes, 3 samples)
     };
@@ -91,27 +98,31 @@ fn three_class_converges_to_low_loss() {
     // Sigmoid avoids the dead-neuron risk of ReLU(0)=0 for the [0.0, 0.0] sample
     // (He init sets biases to zero, so relu([0,0]) = 0 and its gradient is dead at epoch 0).
     let specs = NeuronLayerSpec::network_for(vec![8], &*SIGMOID, 3);
-    let mut model = NeuralNetwork::initialization(2, &specs);
 
-    let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
-    let mut optimizer = Adam::with_defaults(LearningRate::new(0.05));
-    let mut scheduler = ConstantScheduler::new(LearningRate::new(0.05));
-    let clipping = GradientClipping::None;
-
-    for _ in 0..5_000 {
-        model.train(
-            &dataset,
-            &loss_fn,
-            &mut optimizer,
-            &mut scheduler,
-            &clipping,
-            None,
-        );
+    let report = TrainingLoop {
+        model: NeuralNetwork::initialization(2, &specs),
+        callbacks: Callbacks::new(vec![]),
+        split: ModelSplit {
+            train: three_class_dataset(),
+            validation: None,
+            test: three_class_dataset(),
+        },
+        config: TrainingConfig {
+            epochs: 5_000,
+            eval_interval: 0,
+            batch_size: None,
+            loss: CROSS_ENTROPY_LOSS.clone(),
+            optimizer: Box::new(Adam::with_defaults(LearningRate::new(0.05))),
+            scheduler: Box::new(ConstantScheduler::new(LearningRate::new(0.05))),
+            clipping: GradientClipping::None,
+        },
+        early_stopping: None,
+        epoch_start: 0,
     }
+    .run()
+    .unwrap();
 
-    let predictions = model.predict(dataset.inputs.view());
-    let loss = loss_fn.compute(predictions.view(), dataset.targets.view());
-
+    let loss = report.final_evaluation.unwrap().train.loss;
     assert!(
         loss < 0.05,
         "3-class classification did not converge: final loss = {loss:.4}"

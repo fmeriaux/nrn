@@ -10,7 +10,7 @@ use std::iter::once;
 use std::sync::Arc;
 
 /// Represents a single layer in a neural network, containing weights and biases.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NeuronLayer {
     /// A 2D array where each row corresponds to a neuron and each column corresponds to an input feature.
     pub weights: Array2<f32>,
@@ -21,13 +21,14 @@ pub struct NeuronLayer {
 }
 
 /// Represents a neural network composed of multiple layers of neurons.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NeuralNetwork {
     /// A vector of [`NeuronLayer`] instances, defining the architecture of the network.
     pub layers: Vec<NeuronLayer>,
 }
 
 /// Represents the specifications for a neuron layer in a neural network.
+#[derive(Debug)]
 pub struct NeuronLayerSpec {
     /// The number of neurons in this layer.
     pub neurons: usize,
@@ -145,6 +146,17 @@ impl NeuralNetwork {
     /// Returns the input size of the network, which is the number of inputs to the first layer.
     pub fn input_size(&self) -> usize {
         self.layers[0].input_size()
+    }
+
+    /// Number of classes discriminated, inferred from the output layer:
+    /// a single sigmoid output is binary (2 classes); k softmax outputs are k classes.
+    pub fn n_classes(&self) -> usize {
+        let out = self
+            .layers
+            .last()
+            .expect("network has at least one layer")
+            .size();
+        if out == 1 { 2 } else { out }
     }
 
     /// Returns a summary of the network's architecture as a string,
@@ -471,6 +483,19 @@ mod tests {
         let mut model = make_network(Array2::zeros((1, 2)), Array1::zeros(1), SIGMOID.clone());
         model.layers[0].biases[0] = f32::INFINITY;
         assert!(!model.is_finite());
+    }
+
+    #[test]
+    fn n_classes_derives_from_output_layer_size() {
+        // 1 sigmoid output -> binary (2 classes)
+        let binary =
+            NeuralNetwork::initialization(3, &NeuronLayerSpec::network_for(vec![4], &*RELU, 2));
+        assert_eq!(binary.n_classes(), 2);
+
+        // k softmax outputs -> k classes
+        let multi =
+            NeuralNetwork::initialization(3, &NeuronLayerSpec::network_for(vec![4], &*RELU, 5));
+        assert_eq!(multi.n_classes(), 5);
     }
 
     #[test]

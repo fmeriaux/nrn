@@ -1,4 +1,5 @@
 pub mod bytes;
+pub mod checkpoint;
 pub mod classes;
 pub mod data;
 pub mod gif;
@@ -8,4 +9,3 @@ pub mod path;
 pub mod png;
 pub mod scalers;
 pub mod tensors;
-pub mod training_history;
