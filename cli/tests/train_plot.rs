@@ -126,7 +126,6 @@ fn load_history_rejects_too_few_checkpoints() {
             "2",
             "--checkpoint-interval",
             "100",
-            "--no-clip",
         ],
     )
     .success();
