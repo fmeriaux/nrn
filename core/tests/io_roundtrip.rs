@@ -7,7 +7,7 @@ use nrn::activations::RELU;
 use nrn::data::Dataset;
 use nrn::data::scalers::{MinMaxScaler, Scaler, ScalerMethod};
 use nrn::evaluation::{Evaluation, EvaluationSet};
-use nrn::io::checkpoint::{CheckpointArchive, CheckpointRecorder};
+use nrn::io::checkpoint::{CheckpointArchive, TrainingMeta, TrainingRun};
 use nrn::io::data::{load_inputs, save_inputs};
 use nrn::io::scalers::ScalerRecord;
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
@@ -65,7 +65,14 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let clipping = GradientClipping::None;
 
     let run_dir = dir.join("training");
-    let mut recorder = CheckpointRecorder::create(&run_dir, "test_dataset", false).unwrap();
+    let mut recorder = TrainingRun::create(
+        &run_dir,
+        &TrainingMeta {
+            dataset: "test_dataset".to_string(),
+        },
+        false,
+    )
+    .unwrap();
     let mut last_recorded_predictions = None;
 
     for epoch in 0..10 {

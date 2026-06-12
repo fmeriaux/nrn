@@ -1,27 +1,27 @@
 mod model_saver;
-mod progression;
-mod reporter;
+mod monitor;
 
 use crate::actions::*;
 use crate::console::{RUN_ICON, Summary, completed, loaded, recording_at, warning};
 use clap::*;
 use model_saver::ModelSaver;
-use nrn::io::checkpoint::{CheckpointArchive, CheckpointRecorder, TrainingMeta};
+use monitor::ConsoleMonitor;
+use nrn::data::ModelSplit;
+use nrn::io::checkpoint::{CheckpointArchive, CheckpointRecorder, TrainingMeta, TrainingRun};
 use nrn::loss_functions::CROSS_ENTROPY_LOSS;
+use nrn::model::NeuralNetwork;
 use nrn::optimizers::{Adam, Optimizer, StochasticGradientDescent};
 use nrn::schedulers;
 use nrn::schedulers::{ConstantScheduler, Scheduler, StepDecay};
 use nrn::training::{
-    Callbacks, EarlyStopping, FatalDivergence, GradientClipping, LearningRate, TrainingCallback,
-    TrainingConfig, TrainingLoop,
+    Callbacks, EarlyStopping, FatalDivergence, GradientClipping, LearningRate, TrainingConfig,
+    TrainingLoop,
 };
-use progression::Progression;
-use reporter::ConsoleReporter;
 use schedulers::CosineAnnealing;
 use std::error::Error;
 use std::fmt::Display;
 use std::io::{Error as IoError, ErrorKind, Result as IoResult};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 // ─── Value enums ─────────────────────────────────────────────────────────────
 
@@ -262,6 +262,18 @@ impl HyperParams {
     fn step_size(&self) -> usize {
         self.steps.unwrap_or(self.epochs)
     }
+
+    fn make_config(&self) -> TrainingConfig {
+        TrainingConfig {
+            epochs: self.epochs,
+            eval_interval: self.checkpoint_interval,
+            batch_size: self.batch_size,
+            loss: CROSS_ENTROPY_LOSS.clone(),
+            optimizer: self.make_optimizer(),
+            scheduler: self.make_scheduler(),
+            clipping: self.infer_clipping(),
+        }
+    }
 }
 
 // ─── Start ────────────────────────────────────────────────────────────────────
@@ -331,43 +343,15 @@ impl StartArgs {
         let run_dir = dataset_path.with_file_name(format!("training-model-{dataset_name}"));
         let model_save_path = dataset_path.with_file_name(format!("model-{dataset_name}"));
 
-        let interval = self.hp.checkpoint_interval;
-
-        let mut callbacks: Vec<Box<dyn TrainingCallback>> = vec![
-            Box::new(Progression::new("Training")),
-            Box::new(ConsoleReporter::new()),
-            Box::new(ModelSaver::new(model_save_path)),
-        ];
-        if interval > 0 {
-            callbacks.push(Box::new(create_checkpoint_recorder(
-                &run_dir,
-                &dataset_name,
-                self.overwrite,
-            )?));
+        let recorder = if self.hp.checkpoint_interval > 0 {
+            let recorder = create_checkpoint_recorder(&run_dir, &dataset_name, self.overwrite)?;
             recording_at(RUN_ICON, "TRAINING RUN", &run_dir);
-        }
+            Some(recorder)
+        } else {
+            None
+        };
 
-        TrainingLoop {
-            model,
-            callbacks: Callbacks::new(callbacks),
-            split,
-            config: TrainingConfig {
-                epochs: self.hp.epochs,
-                eval_interval: interval,
-                batch_size: self.hp.batch_size,
-                loss: CROSS_ENTROPY_LOSS.clone(),
-                optimizer: self.hp.make_optimizer(),
-                scheduler: self.hp.make_scheduler(),
-                clipping: self.hp.infer_clipping(),
-            },
-            early_stopping: self.hp.early_stopping(),
-            epoch_start: 0,
-        }
-        .run()?
-        .into_result()
-        .map_err(divergence_error)?;
-
-        Ok(())
+        execute_training(&self.hp, model, split, 0, model_save_path, recorder)
     }
 }
 
@@ -443,46 +427,60 @@ impl ResumeArgs {
             .epoch_at(checkpoint_idx)
             .expect("checkpoint_idx was just validated against archive.len()");
 
-        let interval = self.hp.checkpoint_interval;
-
-        let mut callbacks: Vec<Box<dyn TrainingCallback>> = vec![
-            Box::new(Progression::new("Training")),
-            Box::new(ConsoleReporter::new()),
-            Box::new(ModelSaver::new(model_save_path)),
-        ];
-        if interval > 0 {
-            let (recorder, trimmed) = CheckpointRecorder::resume(run_dir, from_epoch)?;
+        let recorder = if self.hp.checkpoint_interval > 0 {
+            let (recorder, trimmed) = TrainingRun::resume(run_dir, from_epoch)?;
             if trimmed > 0 {
                 warning(&format!(
                     "Removed {trimmed} checkpoint(s) after epoch {from_epoch}"
                 ));
             }
-            callbacks.push(Box::new(recorder));
             recording_at(RUN_ICON, "TRAINING RUN", run_dir);
-        }
+            Some(recorder)
+        } else {
+            None
+        };
 
-        TrainingLoop {
+        execute_training(
+            &self.hp,
             model,
-            callbacks: Callbacks::new(callbacks),
             split,
-            config: TrainingConfig {
-                epochs: self.hp.epochs,
-                eval_interval: interval,
-                batch_size: self.hp.batch_size,
-                loss: CROSS_ENTROPY_LOSS.clone(),
-                optimizer: self.hp.make_optimizer(),
-                scheduler: self.hp.make_scheduler(),
-                clipping: self.hp.infer_clipping(),
-            },
-            early_stopping: self.hp.early_stopping(),
-            epoch_start: from_epoch,
-        }
-        .run()?
-        .into_result()
-        .map_err(divergence_error)?;
-
-        Ok(())
+            from_epoch,
+            model_save_path,
+            recorder,
+        )
     }
+}
+
+// ─── Shared execution ─────────────────────────────────────────────────────────
+
+/// Builds the callbacks and config from `hp`, then runs the training loop to
+/// completion, mapping a fatal divergence to a user-facing error.
+fn execute_training(
+    hp: &HyperParams,
+    model: NeuralNetwork,
+    split: ModelSplit,
+    epoch_start: usize,
+    model_save_path: PathBuf,
+    recorder: Option<CheckpointRecorder>,
+) -> Result<(), Box<dyn Error>> {
+    let callbacks = Callbacks::empty()
+        .with(ConsoleMonitor::new())
+        .with(ModelSaver::new(model_save_path))
+        .with_opt(recorder);
+
+    TrainingLoop {
+        model,
+        callbacks,
+        split,
+        config: hp.make_config(),
+        early_stopping: hp.early_stopping(),
+        epoch_start,
+    }
+    .run()?
+    .into_result()
+    .map_err(divergence_error)?;
+
+    Ok(())
 }
 
 // ─── Report handling ──────────────────────────────────────────────────────────
@@ -498,14 +496,17 @@ fn divergence_error(divergence: FatalDivergence) -> Box<dyn Error> {
     .into()
 }
 
-/// Wraps [`CheckpointRecorder::create`], adding the `--overwrite` remediation
+/// Wraps [`TrainingRun::create`], adding the `--overwrite` remediation
 /// hint to an `AlreadyExists` error.
 fn create_checkpoint_recorder(
     run_dir: &Path,
     dataset_name: &str,
     overwrite: bool,
 ) -> IoResult<CheckpointRecorder> {
-    CheckpointRecorder::create(run_dir, dataset_name, overwrite).map_err(|e| {
+    let meta = TrainingMeta {
+        dataset: dataset_name.to_string(),
+    };
+    TrainingRun::create(run_dir, &meta, overwrite).map_err(|e| {
         if e.kind() == ErrorKind::AlreadyExists {
             IoError::new(e.kind(), format!("{e}; use --overwrite to replace it"))
         } else {

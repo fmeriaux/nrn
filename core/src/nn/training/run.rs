@@ -81,10 +81,7 @@ impl TrainingLoop {
             accuracy_for(self.model.n_classes()),
         );
 
-        let epochs = self.config.epochs;
-        let eval_interval = self.config.eval_interval;
-
-        if self.epoch_start == 0 && eval_interval != 0 {
+        if self.epoch_start == 0 && self.config.eval_interval != 0 {
             self.evaluate(&evaluator, 0)?;
         }
 
@@ -100,7 +97,7 @@ impl TrainingLoop {
         let mut final_epoch = self.epoch_start;
         let mut final_evaluation = None;
 
-        for epoch in (self.epoch_start + 1)..=(self.epoch_start + epochs) {
+        for epoch in (self.epoch_start + 1)..=(self.epoch_start + self.config.epochs) {
             self.model.train(
                 &self.split.train,
                 &self.config.loss,
@@ -115,14 +112,12 @@ impl TrainingLoop {
 
             if !self.model.is_finite() {
                 let recovered = early_stopping.as_mut().and_then(|es| es.best_model.take());
-
-                outcome = match recovered {
-                    Some(best) => {
-                        self.model = best;
-                        TrainingOutcome::Diverged { recovered: true }
-                    }
-                    None => TrainingOutcome::Diverged { recovered: false },
+                outcome = TrainingOutcome::Diverged {
+                    recovered: recovered.is_some(),
                 };
+                if let Some(best) = recovered {
+                    self.model = best;
+                }
                 break;
             }
 
@@ -146,17 +141,14 @@ impl TrainingLoop {
                 }
             }
 
-            if Self::is_checkpoint(eval_interval, epoch) {
-                final_evaluation = Some(self.evaluate(&evaluator, epoch)?);
+            if Self::is_checkpoint(self.config.eval_interval, epoch) {
+                final_evaluation = self.evaluate(&evaluator, epoch)?;
             }
         }
 
         let final_evaluation = match final_evaluation {
             Some(eval) => Some(eval),
-            // A diverged model with no recovered fallback is non-finite:
-            // evaluating it would panic, so there is nothing to report.
-            None if !self.model.is_finite() => None,
-            None => Some(self.evaluate(&evaluator, final_epoch)?),
+            None => self.evaluate(&evaluator, final_epoch)?,
         };
 
         // `None` exactly when there is nothing safe to persist (fatal divergence).
@@ -177,11 +169,15 @@ impl TrainingLoop {
     }
 
     /// Computes an evaluation for the current model and reports it via
-    /// [`Callbacks::on_evaluate`].
-    fn evaluate(&mut self, evaluator: &Evaluator, epoch: usize) -> IoResult<EvaluationSet> {
+    /// [`Callbacks::on_evaluate`]. Returns `None` without evaluating if the model
+    /// has diverged (non-finite weights), since evaluating it would panic.
+    fn evaluate(&mut self, evaluator: &Evaluator, epoch: usize) -> IoResult<Option<EvaluationSet>> {
+        if !self.model.is_finite() {
+            return Ok(None);
+        }
         let eval = evaluator.eval_set(&self.model, &self.split);
         self.callbacks.on_evaluate(&self.model, &eval, epoch)?;
-        Ok(eval)
+        Ok(Some(eval))
     }
 }
 

@@ -53,6 +53,26 @@ impl Callbacks {
     pub fn new(callbacks: Vec<Box<dyn TrainingCallback>>) -> Self {
         Self(callbacks)
     }
+
+    /// Starts an empty composite, to be built up with [`with`](Self::with) and
+    /// [`with_opt`](Self::with_opt).
+    pub fn empty() -> Self {
+        Self(Vec::new())
+    }
+
+    /// Appends a callback.
+    pub fn with(mut self, callback: impl TrainingCallback + 'static) -> Self {
+        self.0.push(Box::new(callback));
+        self
+    }
+
+    /// Appends a callback if present, otherwise returns `self` unchanged.
+    pub fn with_opt(self, callback: Option<impl TrainingCallback + 'static>) -> Self {
+        match callback {
+            Some(callback) => self.with(callback),
+            None => self,
+        }
+    }
 }
 
 impl TrainingCallback for Callbacks {
@@ -194,6 +214,22 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(counts.borrow().epoch_ends, 0);
+    }
+
+    #[test]
+    fn builder_appends_callbacks_and_skips_none() {
+        let first = Rc::new(RefCell::new(Counts::default()));
+        let second = Rc::new(RefCell::new(Counts::default()));
+
+        let mut callbacks = Callbacks::empty()
+            .with(CountingCallback(first.clone()))
+            .with_opt(Some(CountingCallback(second.clone())))
+            .with_opt(None::<CountingCallback>);
+
+        callbacks.on_epoch_end(1).unwrap();
+
+        assert_eq!(first.borrow().epoch_ends, 1);
+        assert_eq!(second.borrow().epoch_ends, 1);
     }
 
     #[test]

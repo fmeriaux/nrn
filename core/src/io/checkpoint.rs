@@ -15,8 +15,8 @@ use std::io::{Error, Result};
 use std::path::{Path, PathBuf};
 use std::result::Result as StdResult;
 
-/// Top-level metadata for a training history directory.
-/// Written once by [`CheckpointRecorder::create`] into `meta.json`.
+/// Top-level metadata for a training run directory.
+/// Written once by [`TrainingRun::create`] into `meta.json`.
 #[derive(Serialize, Deserialize)]
 pub struct TrainingMeta {
     pub dataset: String,
@@ -114,23 +114,21 @@ fn scan_checkpoints(dir: &Path) -> Result<Vec<CheckpointRef>> {
     Ok(checkpoints)
 }
 
-/// Writes model checkpoints to a directory.
-///
-/// Each call to [`write`](CheckpointRecorder::write) creates a subdirectory
-/// `checkpoint-{epoch:06}/` containing `model.safetensors` and `evaluations.json`.
-/// Implements [`TrainingCallback`]: [`on_evaluate`](TrainingCallback::on_evaluate)
-/// writes a checkpoint.
-#[derive(Debug)]
-pub struct CheckpointRecorder {
-    dir: PathBuf,
-}
+/// Orchestrates the directory backing a training run: creating or resuming it,
+/// purging/trimming stale checkpoints, and writing run-level metadata.
+/// Produces a [`CheckpointRecorder`], the pure runtime callback.
+pub struct TrainingRun;
 
-impl CheckpointRecorder {
-    /// Creates a fresh recorder at `path`, writing `meta.json` with the dataset name.
+impl TrainingRun {
+    /// Creates a fresh run directory at `path`, writing `meta.json`.
     ///
     /// Returns an error if `checkpoint-*` subdirectories already exist and
     /// `overwrite` is `false`; otherwise they are removed.
-    pub fn create<P: AsRef<Path>>(path: P, dataset: &str, overwrite: bool) -> Result<Self> {
+    pub fn create<P: AsRef<Path>>(
+        path: P,
+        meta: &TrainingMeta,
+        overwrite: bool,
+    ) -> Result<CheckpointRecorder> {
         let dir = Path::combine_safe_with_cwd(path)?;
         fs::create_dir_all(&dir)?;
 
@@ -147,18 +145,18 @@ impl CheckpointRecorder {
             }
         }
 
-        TrainingMeta {
-            dataset: dataset.to_string(),
-        }
-        .save(&dir)?;
+        meta.save(&dir)?;
 
         Ok(CheckpointRecorder { dir })
     }
 
-    /// Resumes recording into an existing checkpoint directory. Checkpoints whose
-    /// epoch is greater than `from_epoch` are removed (rewinding the trajectory).
-    /// Returns the recorder along with the number of checkpoints removed.
-    pub fn resume<P: AsRef<Path>>(path: P, from_epoch: usize) -> Result<(Self, usize)> {
+    /// Resumes an existing run directory. Checkpoints whose epoch is greater
+    /// than `from_epoch` are removed (rewinding the trajectory). Returns the
+    /// recorder along with the number of checkpoints removed.
+    pub fn resume<P: AsRef<Path>>(
+        path: P,
+        from_epoch: usize,
+    ) -> Result<(CheckpointRecorder, usize)> {
         let dir = Path::combine_safe_with_cwd(path)?;
         fs::create_dir_all(&dir)?;
 
@@ -174,7 +172,20 @@ impl CheckpointRecorder {
 
         Ok((CheckpointRecorder { dir }, trimmed))
     }
+}
 
+/// Writes model checkpoints to a directory.
+///
+/// Each call to [`write`](CheckpointRecorder::write) creates a subdirectory
+/// `checkpoint-{epoch:06}/` containing `model.safetensors` and `evaluations.json`.
+/// Implements [`TrainingCallback`]: [`on_evaluate`](TrainingCallback::on_evaluate)
+/// writes a checkpoint. Constructed only by [`TrainingRun`].
+#[derive(Debug)]
+pub struct CheckpointRecorder {
+    dir: PathBuf,
+}
+
+impl CheckpointRecorder {
     /// Writes `checkpoint-{epoch:06}/` containing the model weights and evaluations.
     pub fn write(
         &self,
@@ -300,6 +311,20 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+    fn create_run<P: AsRef<Path>>(
+        path: P,
+        dataset: &str,
+        overwrite: bool,
+    ) -> Result<CheckpointRecorder> {
+        TrainingRun::create(
+            path,
+            &TrainingMeta {
+                dataset: dataset.to_string(),
+            },
+            overwrite,
+        )
+    }
+
     fn sample_model() -> NeuralNetwork {
         let specs = NeuronLayerSpec::network_for(vec![3], &*RELU, 2);
         NeuralNetwork::initialization(2, &specs)
@@ -325,7 +350,7 @@ mod tests {
     #[test]
     fn meta_json_written_by_create() {
         let dir = temp_dir("meta");
-        CheckpointRecorder::create(&dir, "my_dataset", false).unwrap();
+        create_run(&dir, "my_dataset", false).unwrap();
 
         let meta = TrainingMeta::load(&dir).unwrap();
         cleanup(&dir);
@@ -336,12 +361,12 @@ mod tests {
     #[test]
     fn create_errors_if_checkpoints_exist_without_overwrite() {
         let dir = temp_dir("no_overwrite");
-        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false).unwrap();
         recorder
             .write(&sample_model(), &make_eval(0.0, false), 0)
             .unwrap();
 
-        let result = CheckpointRecorder::create(&dir, "ds", false);
+        let result = create_run(&dir, "ds", false);
         cleanup(&dir);
 
         let err = result.unwrap_err();
@@ -352,14 +377,14 @@ mod tests {
     #[test]
     fn create_with_overwrite_purges_previous_checkpoints() {
         let dir = temp_dir("overwrite");
-        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false).unwrap();
         for i in 0..3 {
             recorder
                 .write(&sample_model(), &make_eval(i as f32, false), i * 10)
                 .unwrap();
         }
 
-        let recorder = CheckpointRecorder::create(&dir, "ds", true).unwrap();
+        let recorder = create_run(&dir, "ds", true).unwrap();
         recorder
             .write(&sample_model(), &make_eval(0.0, false), 0)
             .unwrap();
@@ -373,7 +398,7 @@ mod tests {
     #[test]
     fn write_names_checkpoint_dir_by_epoch() {
         let dir = temp_dir("write_epoch");
-        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false).unwrap();
         recorder
             .write(&sample_model(), &make_eval(0.0, false), 37)
             .unwrap();
@@ -387,7 +412,7 @@ mod tests {
     #[test]
     fn roundtrip_with_validation() {
         let dir = temp_dir("roundtrip_val");
-        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false).unwrap();
         for i in 0..3 {
             recorder
                 .write(&sample_model(), &make_eval(i as f32, true), i * 10)
@@ -410,7 +435,7 @@ mod tests {
     #[test]
     fn roundtrip_without_validation() {
         let dir = temp_dir("roundtrip_noval");
-        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false).unwrap();
         for i in 0..3 {
             recorder
                 .write(&sample_model(), &make_eval(i as f32, false), i * 10)
@@ -433,7 +458,7 @@ mod tests {
         let model = sample_model();
         let inputs = Array2::from_shape_fn((2, 4), |(i, j)| (i + j) as f32 * 0.3);
 
-        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false).unwrap();
         recorder.write(&model, &make_eval(0.0, false), 0).unwrap();
 
         let archive = CheckpointArchive::load(&dir).unwrap();
@@ -447,7 +472,7 @@ mod tests {
     fn numeric_sort_beats_lexical() {
         let dir = temp_dir("sort");
         let model = sample_model();
-        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false).unwrap();
         for i in 0..12 {
             recorder
                 .write(&model, &make_eval(i as f32, false), i)
@@ -466,14 +491,14 @@ mod tests {
     #[test]
     fn resume_trims_checkpoints_after_from_epoch() {
         let dir = temp_dir("resume_trim");
-        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false).unwrap();
         for i in 0..5 {
             recorder
                 .write(&sample_model(), &make_eval(i as f32, false), i * 10)
                 .unwrap();
         }
 
-        let (_, trimmed) = CheckpointRecorder::resume(&dir, 20).unwrap();
+        let (_, trimmed) = TrainingRun::resume(&dir, 20).unwrap();
 
         let archive = CheckpointArchive::load(&dir).unwrap();
         cleanup(&dir);
@@ -485,14 +510,14 @@ mod tests {
     #[test]
     fn resume_keeps_all_when_from_epoch_is_last() {
         let dir = temp_dir("resume_keep_all");
-        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false).unwrap();
         for i in 0..3 {
             recorder
                 .write(&sample_model(), &make_eval(i as f32, false), i * 10)
                 .unwrap();
         }
 
-        let (_, trimmed) = CheckpointRecorder::resume(&dir, 20).unwrap();
+        let (_, trimmed) = TrainingRun::resume(&dir, 20).unwrap();
 
         let archive = CheckpointArchive::load(&dir).unwrap();
         cleanup(&dir);
@@ -504,14 +529,14 @@ mod tests {
     #[test]
     fn resume_continues_writing_after_resume_point() {
         let dir = temp_dir("resume_write");
-        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false).unwrap();
         for i in 0..3 {
             recorder
                 .write(&sample_model(), &make_eval(i as f32, false), i * 10)
                 .unwrap(); // 0, 10, 20
         }
 
-        let (recorder, _) = CheckpointRecorder::resume(&dir, 10).unwrap();
+        let (recorder, _) = TrainingRun::resume(&dir, 10).unwrap();
         recorder
             .write(&sample_model(), &make_eval(99.0, false), 20)
             .unwrap();
@@ -555,7 +580,7 @@ mod tests {
     #[test]
     fn model_at_out_of_range_gives_range_error() {
         let dir = temp_dir("model_at_oob");
-        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false).unwrap();
         recorder
             .write(&sample_model(), &make_eval(0.0, false), 0)
             .unwrap();
@@ -570,7 +595,7 @@ mod tests {
     #[test]
     fn model_at_missing_model_file_fails() {
         let dir = temp_dir("model_at_missing");
-        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false).unwrap();
         recorder
             .write(&sample_model(), &make_eval(0.0, false), 0)
             .unwrap();
@@ -586,7 +611,7 @@ mod tests {
     #[test]
     fn model_at_corrupt_model_file_fails() {
         let dir = temp_dir("model_at_corrupt");
-        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false).unwrap();
         recorder
             .write(&sample_model(), &make_eval(0.0, false), 0)
             .unwrap();
@@ -606,7 +631,7 @@ mod tests {
     #[test]
     fn evaluation_history_corrupted_evaluations_json_fails() {
         let dir = temp_dir("corrupt_evals");
-        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false).unwrap();
         recorder
             .write(&sample_model(), &make_eval(0.0, false), 0)
             .unwrap();
@@ -626,7 +651,7 @@ mod tests {
     #[test]
     fn on_evaluate_writes_a_checkpoint() {
         let dir = temp_dir("on_evaluate");
-        let mut recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
+        let mut recorder = create_run(&dir, "ds", false).unwrap();
 
         recorder
             .on_evaluate(&sample_model(), &make_eval(0.0, false), 5)
@@ -642,7 +667,7 @@ mod tests {
     #[test]
     fn write_fails_when_evaluations_path_is_a_directory() {
         let dir = temp_dir("write_evals_dir_conflict");
-        let recorder = CheckpointRecorder::create(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false).unwrap();
 
         // Pre-create "evaluations.json" as a directory so json::save's fs::write fails.
         fs::create_dir_all(dir.join("checkpoint-000000").join("evaluations.json")).unwrap();
@@ -655,13 +680,13 @@ mod tests {
 
     #[test]
     fn create_rejects_path_traversal() {
-        let result = CheckpointRecorder::create("../../nrn_traversal_test", "x", false);
+        let result = create_run("../../nrn_traversal_test", "x", false);
         assert!(result.is_err());
     }
 
     #[test]
     fn resume_rejects_path_traversal() {
-        let result = CheckpointRecorder::resume("../../nrn_traversal_test", 0);
+        let result = TrainingRun::resume("../../nrn_traversal_test", 0);
         assert!(result.is_err());
     }
 

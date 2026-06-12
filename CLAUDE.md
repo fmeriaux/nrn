@@ -67,7 +67,8 @@ of the scikit-learn convention). `Dataset` (row-major, `(samples, features)`) co
   - `early_stopping.rs` — `EarlyStopping` with optional best-model restore.
   - `evaluator.rs` — `Evaluator`, the scheduled-evaluation driver.
   - `callbacks.rs` — `TrainingCallback` trait (`on_train_start` / `on_epoch_end` / `on_evaluate` /
-    `on_train_end`) and `Callbacks`, a sequential composite that short-circuits on the first error.
+    `on_train_end`) and `Callbacks`, a sequential composite that short-circuits on the first error;
+    built up via `Callbacks::empty().with(..).with_opt(..)`.
 - **`gradients.rs`** — `Gradients` and `GradientClipping` (None / L2 Norm / Value).
 - **`learning_rate.rs`** — `LearningRate` newtype.
 - **`activations/`** — `Activation` trait registered via the `inventory` crate for lookup by name
@@ -121,9 +122,10 @@ round-trip via `ActivationProvider::get_by_name`.
 
 - **`cli.rs`** — top-level `clap` command enum dispatching to subcommands.
 - **`commands/`** — one module per subcommand: `synth`, `encode`, `scale`, `predict`, `plot`, and
-  `train/` — a subcommand group (`train start` / `train resume`) that wires `TrainingConfig`/`TrainingLoop`
-  (optimizer, scheduler, clipping, callbacks) from CLI args, runs it, and reports the `TrainingReport`.
-  `train/model_saver.rs` (`ModelSaver` callback), `train/reporter.rs` and `train/progression.rs`
-  (console narration + progress bars) are `TrainingCallback` implementations.
+  `train/` — a subcommand group (`train start` / `train resume`). `HyperParams::make_config()` builds
+  the `TrainingConfig` from CLI args, and the shared `execute_training()` assembles the callbacks
+  (`Callbacks::empty().with(..).with_opt(..)`) and runs the `TrainingLoop`, reporting the
+  `TrainingReport`. `train/model_saver.rs` (`ModelSaver`) and `train/monitor.rs` (`ConsoleMonitor`,
+  console narration + progress bar) are `TrainingCallback` implementations.
 - **`actions.rs`** — shared load/save helpers for models, datasets, and scalers.
 - **`console.rs`** — display helpers: status icons, `Summary`, formatted output used across commands.
