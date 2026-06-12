@@ -60,8 +60,8 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let mut model = NeuralNetwork::initialization(2, &specs);
 
     let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
-    let mut optimizer = Adam::with_defaults(LearningRate::new(0.05));
-    let mut scheduler = ConstantScheduler::new(LearningRate::new(0.05));
+    let mut optimizer = Adam::with_defaults(LearningRate::new(0.05).unwrap());
+    let mut scheduler = ConstantScheduler::new(LearningRate::new(0.05).unwrap());
     let clipping = GradientClipping::None;
 
     let run_dir = dir.join("training");

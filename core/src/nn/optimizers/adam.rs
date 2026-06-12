@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn name_is_adam() {
-        let opt = Adam::with_defaults(LearningRate::new(0.001));
+        let opt = Adam::with_defaults(LearningRate::new(0.001).unwrap());
         assert_eq!(opt.name(), "Adam");
     }
 
@@ -169,14 +169,14 @@ mod tests {
         // 1e-8 (paper default, f64) is too small for f32: squared gradients near 1e-19
         // underflow to 0, and the floor epsilon alone drives the step, causing divergence.
         // 1e-5 keeps the denominator above the f32 subnormal range.
-        let opt = Adam::with_defaults(LearningRate::new(0.001));
+        let opt = Adam::with_defaults(LearningRate::new(0.001).unwrap());
         assert_eq!(opt.epsilon, 1e-5);
     }
 
     #[test]
     #[should_panic(expected = "Beta1 must be in (0, 1)")]
     fn adam_rejects_invalid_beta1() {
-        Adam::new(LearningRate::new(0.01), 1.5, 0.999, 1e-8);
+        Adam::new(LearningRate::new(0.01).unwrap(), 1.5, 0.999, 1e-8);
     }
 
     #[test]
@@ -184,7 +184,7 @@ mod tests {
         // On the first update, m_hat = grad and v_hat = grad^2, so the step is
         // lr * grad / |grad| = lr * sign(grad), independent of the gradient magnitude.
         let lr = 0.01;
-        let mut opt = Adam::with_defaults(LearningRate::new(lr));
+        let mut opt = Adam::with_defaults(LearningRate::new(lr).unwrap());
         let mut l = layer(array![[1.0, 1.0]], array![1.0]);
         let grads = Gradients {
             dw: array![[2.0, -3.0]],
@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn adam_zero_gradient_leaves_params_unchanged() {
-        let mut opt = Adam::with_defaults(LearningRate::new(0.1));
+        let mut opt = Adam::with_defaults(LearningRate::new(0.1).unwrap());
         let mut l = layer(array![[1.0, -2.0]], array![3.0]);
         let grads = Gradients {
             dw: Array2::zeros((1, 2)),
@@ -213,7 +213,7 @@ mod tests {
     #[test]
     fn adam_minimizes_simple_quadratic() {
         // f(w) = 0.5 * w^2 has gradient w and minimum at 0; Adam should drive w → 0.
-        let mut opt = Adam::with_defaults(LearningRate::new(0.1));
+        let mut opt = Adam::with_defaults(LearningRate::new(0.1).unwrap());
         let mut l = layer(array![[5.0]], array![0.0]);
         for _ in 0..200 {
             let w = l.weights[[0, 0]];

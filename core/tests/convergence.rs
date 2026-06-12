@@ -5,7 +5,7 @@ use nrn::loss_functions::CROSS_ENTROPY_LOSS;
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::Adam;
 use nrn::schedulers::ConstantScheduler;
-use nrn::training::{Callbacks, GradientClipping, LearningRate, TrainingConfig, TrainingLoop};
+use nrn::training::{Callbacks, GradientClipping, HyperParams, LearningRate, TrainingLoop};
 
 #[test]
 fn xor_converges_to_low_loss() {
@@ -25,16 +25,18 @@ fn xor_converges_to_low_loss() {
             validation: None,
             test: xor_dataset(),
         },
-        config: TrainingConfig {
+        hyperparams: HyperParams {
             epochs: 10_000,
-            eval_interval: 0,
+            checkpoint_interval: 0,
             batch_size: None,
             loss: CROSS_ENTROPY_LOSS.clone(),
-            optimizer: Box::new(Adam::with_defaults(LearningRate::new(0.1))),
-            scheduler: Box::new(ConstantScheduler::new(LearningRate::new(0.1))),
+            optimizer: Box::new(Adam::with_defaults(LearningRate::new(0.1).unwrap())),
+            scheduler: Box::new(ConstantScheduler::new(LearningRate::new(0.1).unwrap())),
             clipping: GradientClipping::None,
+            early_stopping: None,
+            val_ratio: 0.1,
+            test_ratio: 0.1,
         },
-        early_stopping: None,
         epoch_start: 0,
     }
     .run()
@@ -64,16 +66,18 @@ fn xor_converges_with_mini_batch() {
             validation: None,
             test: xor_dataset(),
         },
-        config: TrainingConfig {
+        hyperparams: HyperParams {
             epochs: 8_000,
-            eval_interval: 0,
+            checkpoint_interval: 0,
             batch_size: Some(2),
             loss: CROSS_ENTROPY_LOSS.clone(),
-            optimizer: Box::new(Adam::with_defaults(LearningRate::new(0.01))),
-            scheduler: Box::new(ConstantScheduler::new(LearningRate::new(0.01))),
+            optimizer: Box::new(Adam::with_defaults(LearningRate::new(0.01).unwrap())),
+            scheduler: Box::new(ConstantScheduler::new(LearningRate::new(0.01).unwrap())),
             clipping: GradientClipping::None,
+            early_stopping: None,
+            val_ratio: 0.1,
+            test_ratio: 0.1,
         },
-        early_stopping: None,
         epoch_start: 0,
     }
     .run()
@@ -107,16 +111,18 @@ fn three_class_converges_to_low_loss() {
             validation: None,
             test: three_class_dataset(),
         },
-        config: TrainingConfig {
+        hyperparams: HyperParams {
             epochs: 5_000,
-            eval_interval: 0,
+            checkpoint_interval: 0,
             batch_size: None,
             loss: CROSS_ENTROPY_LOSS.clone(),
-            optimizer: Box::new(Adam::with_defaults(LearningRate::new(0.05))),
-            scheduler: Box::new(ConstantScheduler::new(LearningRate::new(0.05))),
+            optimizer: Box::new(Adam::with_defaults(LearningRate::new(0.05).unwrap())),
+            scheduler: Box::new(ConstantScheduler::new(LearningRate::new(0.05).unwrap())),
             clipping: GradientClipping::None,
+            early_stopping: None,
+            val_ratio: 0.1,
+            test_ratio: 0.1,
         },
-        early_stopping: None,
         epoch_start: 0,
     }
     .run()

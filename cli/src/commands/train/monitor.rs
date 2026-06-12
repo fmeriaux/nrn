@@ -3,7 +3,7 @@ use console::style;
 use indicatif::ProgressBar;
 use nrn::evaluation::EvaluationSet;
 use nrn::model::NeuralNetwork;
-use nrn::training::{TrainingCallback, TrainingConfig, TrainingOutcome};
+use nrn::training::{HyperParams, TrainingCallback, TrainingOutcome};
 use std::io::Result;
 
 /// Reports the training run lifecycle on the console: a progress bar tracks
@@ -21,30 +21,30 @@ impl ConsoleMonitor {
 }
 
 impl TrainingCallback for ConsoleMonitor {
-    fn on_train_start(&mut self, config: &TrainingConfig) -> Result<()> {
-        self.bar.set_length(config.epochs as u64);
+    fn on_train_start(&mut self, hyperparams: &HyperParams) -> Result<()> {
+        self.bar.set_length(hyperparams.epochs as u64);
         self.bar.set_message("Training");
 
         self.bar.suspend(|| {
             trace(&format!(
                 "Training for {} epochs",
-                style(config.epochs).yellow()
+                style(hyperparams.epochs).yellow()
             ));
             trace(&format!(
                 "Using {} loss function",
-                style(config.loss.name()).bold().blue()
+                style(hyperparams.loss.name()).bold().blue()
             ));
             trace(&format!(
                 "Using {} optimizer",
-                style(config.optimizer.name()).bold().blue()
+                style(hyperparams.optimizer.name()).bold().blue()
             ));
             trace(&format!(
                 "Using {} scheduler",
-                style(config.scheduler.name()).bold().blue()
+                style(hyperparams.scheduler.name()).bold().blue()
             ));
-            trace(&config.clipping.summary());
+            trace(&hyperparams.clipping.summary());
 
-            match config.batch_size {
+            match hyperparams.batch_size {
                 Some(batch_size) => trace(&format!(
                     "Using mini-batches of {} samples",
                     style(batch_size).yellow()
@@ -52,10 +52,10 @@ impl TrainingCallback for ConsoleMonitor {
                 None => trace("Using full-batch gradient descent"),
             }
 
-            if config.eval_interval > 0 {
+            if hyperparams.checkpoint_interval > 0 {
                 trace(&format!(
                     "Recording a checkpoint every {} epochs",
-                    style(config.eval_interval).yellow()
+                    style(hyperparams.checkpoint_interval).yellow()
                 ));
             }
         });

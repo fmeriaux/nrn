@@ -1,4 +1,4 @@
-use super::config::TrainingConfig;
+use super::config::HyperParams;
 use super::outcome::TrainingOutcome;
 use crate::evaluation::EvaluationSet;
 use crate::model::NeuralNetwork;
@@ -8,11 +8,11 @@ use std::io::Result;
 ///
 /// All methods have default no-op implementations — implement only what you need.
 /// The training loop owns the checkpoint scheduling: it computes an [`EvaluationSet`]
-/// at epoch 0, at each multiple of `eval_interval`, and at the final epoch, then
+/// at epoch 0, at each multiple of `checkpoint_interval`, and at the final epoch, then
 /// dispatches it via [`on_evaluate`](TrainingCallback::on_evaluate).
 pub trait TrainingCallback {
-    /// Called once before training begins, with the run configuration.
-    fn on_train_start(&mut self, _config: &TrainingConfig) -> Result<()> {
+    /// Called once before training begins, with the run's hyperparameters.
+    fn on_train_start(&mut self, _hyperparams: &HyperParams) -> Result<()> {
         Ok(())
     }
 
@@ -22,7 +22,7 @@ pub trait TrainingCallback {
     }
 
     /// Called when the loop has computed an [`EvaluationSet`] at `epoch`
-    /// (epoch 0, a multiple of `eval_interval`, or the final epoch).
+    /// (epoch 0, a multiple of `checkpoint_interval`, or the final epoch).
     fn on_evaluate(
         &mut self,
         _model: &NeuralNetwork,
@@ -76,10 +76,10 @@ impl Callbacks {
 }
 
 impl TrainingCallback for Callbacks {
-    fn on_train_start(&mut self, config: &TrainingConfig) -> Result<()> {
+    fn on_train_start(&mut self, hyperparams: &HyperParams) -> Result<()> {
         self.0
             .iter_mut()
-            .try_for_each(|cb| cb.on_train_start(config))
+            .try_for_each(|cb| cb.on_train_start(hyperparams))
     }
 
     fn on_epoch_end(&mut self, epoch: usize) -> Result<()> {
@@ -128,15 +128,18 @@ mod tests {
 
     impl TrainingCallback for DefaultCallback {}
 
-    fn sample_config() -> TrainingConfig {
-        TrainingConfig {
+    fn sample_config() -> HyperParams {
+        HyperParams {
             epochs: 1,
-            eval_interval: 1,
+            checkpoint_interval: 1,
             batch_size: None,
             loss: CROSS_ENTROPY_LOSS.clone(),
-            optimizer: Box::new(Adam::with_defaults(LearningRate::new(0.01))),
-            scheduler: Box::new(ConstantScheduler::new(LearningRate::new(0.01))),
+            optimizer: Box::new(Adam::with_defaults(LearningRate::new(0.01).unwrap())),
+            scheduler: Box::new(ConstantScheduler::new(LearningRate::new(0.01).unwrap())),
             clipping: GradientClipping::None,
+            early_stopping: None,
+            val_ratio: 0.1,
+            test_ratio: 0.1,
         }
     }
 

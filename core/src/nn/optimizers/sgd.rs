@@ -55,13 +55,13 @@ mod tests {
 
     #[test]
     fn name_is_sgd() {
-        let opt = StochasticGradientDescent::new(LearningRate::new(0.1));
+        let opt = StochasticGradientDescent::new(LearningRate::new(0.1).unwrap());
         assert_eq!(opt.name(), "Stochastic Gradient Descent (SGD)");
     }
 
     #[test]
     fn sgd_subtracts_scaled_gradient() {
-        let mut opt = StochasticGradientDescent::new(LearningRate::new(0.1));
+        let mut opt = StochasticGradientDescent::new(LearningRate::new(0.1).unwrap());
         let mut l = layer(array![[1.0, 2.0]], array![1.0]);
         let grads = Gradients {
             dw: array![[0.5, 1.0]],
@@ -76,7 +76,7 @@ mod tests {
 
     #[test]
     fn sgd_zero_gradient_leaves_params_unchanged() {
-        let mut opt = StochasticGradientDescent::new(LearningRate::new(0.5));
+        let mut opt = StochasticGradientDescent::new(LearningRate::new(0.5).unwrap());
         let mut l = layer(array![[1.0, -2.0]], array![3.0]);
         let grads = Gradients {
             dw: Array2::zeros((1, 2)),
@@ -89,8 +89,8 @@ mod tests {
 
     #[test]
     fn set_learning_rate_changes_the_update_magnitude() {
-        let mut opt = StochasticGradientDescent::new(LearningRate::new(0.1));
-        opt.set_learning_rate(LearningRate::new(1.0));
+        let mut opt = StochasticGradientDescent::new(LearningRate::new(0.1).unwrap());
+        opt.set_learning_rate(LearningRate::new(1.0).unwrap());
 
         let mut l = layer(array![[1.0]], array![0.0]);
         let grads = Gradients {
@@ -105,7 +105,7 @@ mod tests {
     #[test]
     fn step_is_a_noop_for_stateless_sgd() {
         // SGD keeps no internal state, so it relies on the trait's default `step`.
-        let mut opt = StochasticGradientDescent::new(LearningRate::new(0.1));
+        let mut opt = StochasticGradientDescent::new(LearningRate::new(0.1).unwrap());
         opt.step();
         assert_eq!(opt.learning_rate.value(), 0.1);
     }

@@ -14,7 +14,7 @@ use nrn::optimizers::{Adam, Optimizer, StochasticGradientDescent};
 use nrn::schedulers;
 use nrn::schedulers::{ConstantScheduler, Scheduler, StepDecay};
 use nrn::training::{
-    Callbacks, EarlyStopping, FatalDivergence, GradientClipping, LearningRate, TrainingConfig,
+    Callbacks, EarlyStoppingConfig, FatalDivergence, GradientClipping, HyperParams, LearningRate,
     TrainingLoop,
 };
 use schedulers::CosineAnnealing;
@@ -79,7 +79,7 @@ impl TrainCommand {
 // ─── Shared hyperparameters ───────────────────────────────────────────────────
 
 #[derive(Args, Debug)]
-pub struct HyperParams {
+pub struct TrainArgs {
     /// Number of epochs to train
     #[arg(short, long)]
     pub epochs: usize,
@@ -153,7 +153,7 @@ pub struct HyperParams {
     batch_size: Option<usize>,
 }
 
-impl HyperParams {
+impl TrainArgs {
     fn validate(&self) -> Result<(), Box<dyn Error>> {
         if self.epochs < 1 {
             return Err("The number of epochs must be greater than zero.".into());
@@ -210,18 +210,22 @@ impl HyperParams {
         match self.scheduler {
             SchedulerType::Constant => Box::new(ConstantScheduler::new(self.lr())),
             SchedulerType::Cosine => {
-                let cosine = CosineAnnealing::new(self.lr_min(), self.lr(), self.step_size());
+                let cosine = CosineAnnealing::new(self.lr_min(), self.lr(), self.step_size())
+                    .expect("validate() guarantees lr_min < lr and a positive step size");
                 if self.warm_restarts {
-                    Box::new(cosine.with_restarts(true, self.cycle_multiplier.unwrap_or(1)))
+                    Box::new(
+                        cosine
+                            .with_restarts(true, self.cycle_multiplier.unwrap_or(1))
+                            .expect("validate() guarantees a cycle multiplier of at least 1"),
+                    )
                 } else {
                     Box::new(cosine)
                 }
             }
-            SchedulerType::Step => Box::new(StepDecay::new(
-                self.lr(),
-                self.step_size(),
-                self.decay_factor,
-            )),
+            SchedulerType::Step => Box::new(
+                StepDecay::new(self.lr(), self.step_size(), self.decay_factor)
+                    .expect("validate() guarantees a positive step size and decay factor"),
+            ),
         }
     }
 
@@ -229,49 +233,50 @@ impl HyperParams {
         if self.no_clip {
             GradientClipping::None
         } else if let Some(value) = self.clip_value {
-            GradientClipping::Value {
-                min: -value,
-                max: value,
-            }
+            GradientClipping::value(-value, value)
+                .expect("validate() guarantees a positive clip value")
         } else {
-            GradientClipping::Norm {
-                max_norm: self.clip_norm,
-            }
+            GradientClipping::norm(self.clip_norm)
+                .expect("validate() guarantees a positive clip norm")
         }
     }
 
-    fn early_stopping(&self) -> Option<EarlyStopping> {
+    fn early_stopping(&self) -> Option<EarlyStoppingConfig> {
         if self.early_stopping > 0 {
-            Some(EarlyStopping::new(
-                self.early_stopping,
-                self.restore_best_model,
-            ))
+            Some(EarlyStoppingConfig {
+                patience: self.early_stopping,
+                restore_best_model: self.restore_best_model,
+            })
         } else {
             None
         }
     }
 
     fn lr(&self) -> LearningRate {
-        LearningRate::new(self.lr)
+        LearningRate::new(self.lr).expect("validate() guarantees a non-negative learning rate")
     }
 
     fn lr_min(&self) -> LearningRate {
         LearningRate::new(self.lr_min.unwrap_or(0.0))
+            .expect("validate() guarantees a non-negative minimum learning rate")
     }
 
     fn step_size(&self) -> usize {
         self.steps.unwrap_or(self.epochs)
     }
 
-    fn make_config(&self) -> TrainingConfig {
-        TrainingConfig {
+    fn make_hyperparams(&self) -> HyperParams {
+        HyperParams {
             epochs: self.epochs,
-            eval_interval: self.checkpoint_interval,
+            checkpoint_interval: self.checkpoint_interval,
             batch_size: self.batch_size,
             loss: CROSS_ENTROPY_LOSS.clone(),
             optimizer: self.make_optimizer(),
             scheduler: self.make_scheduler(),
             clipping: self.infer_clipping(),
+            early_stopping: self.early_stopping(),
+            val_ratio: self.val_ratio,
+            test_ratio: self.test_ratio,
         }
     }
 }
@@ -300,7 +305,7 @@ pub struct StartArgs {
     overwrite: bool,
 
     #[command(flatten)]
-    hp: HyperParams,
+    hp: TrainArgs,
 }
 
 impl StartArgs {
@@ -351,7 +356,14 @@ impl StartArgs {
             None
         };
 
-        execute_training(&self.hp, model, split, 0, model_save_path, recorder)
+        execute_training(
+            self.hp.make_hyperparams(),
+            model,
+            split,
+            0,
+            model_save_path,
+            recorder,
+        )
     }
 }
 
@@ -367,7 +379,7 @@ pub struct ResumeArgs {
     from: Option<usize>,
 
     #[command(flatten)]
-    hp: HyperParams,
+    hp: TrainArgs,
 }
 
 impl ResumeArgs {
@@ -442,7 +454,7 @@ impl ResumeArgs {
         };
 
         execute_training(
-            &self.hp,
+            self.hp.make_hyperparams(),
             model,
             split,
             from_epoch,
@@ -454,10 +466,10 @@ impl ResumeArgs {
 
 // ─── Shared execution ─────────────────────────────────────────────────────────
 
-/// Builds the callbacks and config from `hp`, then runs the training loop to
-/// completion, mapping a fatal divergence to a user-facing error.
+/// Builds the callbacks, then runs the training loop to completion, mapping a
+/// fatal divergence to a user-facing error.
 fn execute_training(
-    hp: &HyperParams,
+    hyperparams: HyperParams,
     model: NeuralNetwork,
     split: ModelSplit,
     epoch_start: usize,
@@ -473,8 +485,7 @@ fn execute_training(
         model,
         callbacks,
         split,
-        config: hp.make_config(),
-        early_stopping: hp.early_stopping(),
+        hyperparams,
         epoch_start,
     }
     .run()?

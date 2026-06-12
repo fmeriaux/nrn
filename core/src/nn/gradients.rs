@@ -1,4 +1,5 @@
 use ndarray::{Array1, Array2};
+use std::fmt;
 
 /// Small constant to prevent division by zero in gradient clipping.
 /// This value was chosen to be sufficiently small to avoid affecting the clipping behavior
@@ -12,6 +13,57 @@ pub enum GradientClipping {
     Norm { max_norm: f32 },
     /// Gradients are clipped to a maximum value element-wise.
     Value { min: f32, max: f32 },
+}
+
+/// Returned by [`GradientClipping::norm`] / [`GradientClipping::value`]
+/// when the given bounds are invalid.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GradientClippingError {
+    /// The max norm for [`GradientClipping::Norm`] was not a positive value.
+    NonPositiveNorm(f32),
+    /// The `(min, max)` range for [`GradientClipping::Value`] was not `min < max`.
+    InvalidRange { min: f32, max: f32 },
+}
+
+impl fmt::Display for GradientClippingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GradientClippingError::NonPositiveNorm(max_norm) => write!(
+                f,
+                "the gradient clipping norm must be a positive value, got {max_norm}"
+            ),
+            GradientClippingError::InvalidRange { min, max } => write!(
+                f,
+                "the gradient clipping range must satisfy min < max, got min={min}, max={max}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for GradientClippingError {}
+
+impl GradientClipping {
+    /// Creates a [`GradientClipping::Norm`] clipping by the L2 norm.
+    /// # Errors
+    /// Returns [`GradientClippingError::NonPositiveNorm`] when `max_norm` is not positive.
+    pub fn norm(max_norm: f32) -> Result<Self, GradientClippingError> {
+        if max_norm > 0.0 {
+            Ok(GradientClipping::Norm { max_norm })
+        } else {
+            Err(GradientClippingError::NonPositiveNorm(max_norm))
+        }
+    }
+
+    /// Creates a [`GradientClipping::Value`] element-wise clipping over `[min, max]`.
+    /// # Errors
+    /// Returns [`GradientClippingError::InvalidRange`] when `min >= max`.
+    pub fn value(min: f32, max: f32) -> Result<Self, GradientClippingError> {
+        if min < max {
+            Ok(GradientClipping::Value { min, max })
+        } else {
+            Err(GradientClippingError::InvalidRange { min, max })
+        }
+    }
 }
 
 /// Represents the gradients computed during backpropagation for a single layer.

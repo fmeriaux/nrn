@@ -1,5 +1,15 @@
 use crate::model::NeuralNetwork;
 
+/// Declarative early-stopping settings, part of a [`crate::training::HyperParams`] spec.
+/// Constructs the runtime [`EarlyStopping`] via [`EarlyStopping::new`].
+#[derive(Clone)]
+pub struct EarlyStoppingConfig {
+    /// The number of consecutive epochs without improvement after which training will be stopped.
+    pub patience: usize,
+    /// Whether to restore the model to the state with the best observed loss when stopping.
+    pub restore_best_model: bool,
+}
+
 /// Early stopping mechanism is used to halt training when the model's performance on a validation set
 /// stops improving, thereby preventing overfitting.
 pub struct EarlyStopping {
