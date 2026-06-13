@@ -1,8 +1,9 @@
-use super::recap::{FieldOverride, print_recap};
+use super::recap::print_recap;
 use crate::console::{Summary, completed, styled_bar, trace, warning};
 use console::style;
 use indicatif::ProgressBar;
 use nrn::evaluation::EvaluationSet;
+use nrn::io::hyperparams::HyperParamsRecord;
 use nrn::model::NeuralNetwork;
 use nrn::training::{HyperParams, TrainingCallback, TrainingOutcome};
 use std::io::Result;
@@ -13,25 +14,27 @@ use std::io::Result;
 /// its redraws, and cleared before the final summary.
 pub struct ConsoleMonitor {
     bar: ProgressBar,
-    overrides: Vec<FieldOverride>,
+    current: HyperParamsRecord,
+    previous: Option<HyperParamsRecord>,
 }
 
 impl ConsoleMonitor {
-    pub fn new(overrides: Vec<FieldOverride>) -> Self {
+    pub fn new(current: HyperParamsRecord, previous: Option<HyperParamsRecord>) -> Self {
         Self {
             bar: styled_bar(),
-            overrides,
+            current,
+            previous,
         }
     }
 }
 
 impl TrainingCallback for ConsoleMonitor {
     fn on_train_start(&mut self, hyperparams: &HyperParams) -> Result<()> {
-        self.bar.set_length(hyperparams.epochs as u64);
+        self.bar.set_length(hyperparams.epochs() as u64);
         self.bar.set_message("Training");
 
         self.bar.suspend(|| {
-            print_recap(hyperparams, &self.overrides);
+            print_recap(&self.current, self.previous.as_ref());
         });
 
         Ok(())

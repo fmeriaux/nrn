@@ -17,7 +17,7 @@ use crate::learning_rate::LearningRate;
 use crate::model::NeuronLayer;
 use ndarray::ArrayD;
 use std::collections::HashMap;
-use std::io::Result;
+use std::fmt;
 
 /// Optimizer-agnostic snapshot of internal state (e.g. Adam's moment
 /// estimates), shaped like a model: named tensors of arbitrary rank plus
@@ -27,6 +27,41 @@ pub struct OptimizerState {
     pub tensors: Vec<(String, ArrayD<f32>)>,
     pub metadata: HashMap<String, String>,
 }
+
+/// Returned by [`Optimizer::restore`] when an [`OptimizerState`] is missing
+/// or malformed for the optimizer being restored.
+#[derive(Debug)]
+pub enum OptimizerStateError {
+    /// The state is missing its `time_step` metadata entry.
+    MissingTimeStep,
+    /// The `time_step` metadata entry could not be parsed as an integer.
+    InvalidTimeStep,
+    /// A tensor was present but did not have the expected rank.
+    WrongRank { tensor: String, expected: usize },
+    /// A required tensor was missing from the state.
+    MissingTensor(String),
+}
+
+impl fmt::Display for OptimizerStateError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            OptimizerStateError::MissingTimeStep => {
+                write!(f, "optimizer state is missing `time_step`")
+            }
+            OptimizerStateError::InvalidTimeStep => {
+                write!(f, "optimizer state has an invalid `time_step`")
+            }
+            OptimizerStateError::WrongRank { tensor, expected } => {
+                write!(f, "tensor `{tensor}` is not rank {expected}")
+            }
+            OptimizerStateError::MissingTensor(name) => {
+                write!(f, "optimizer state is missing `{name}`")
+            }
+        }
+    }
+}
+
+impl std::error::Error for OptimizerStateError {}
 
 pub trait Optimizer {
     /// Returns a human-readable name for this optimizer.
@@ -54,13 +89,13 @@ pub trait Optimizer {
 
     /// Returns a snapshot of this optimizer's internal state for checkpointing,
     /// or `None` for stateless optimizers (e.g. SGD).
-    fn save_state(&self) -> Option<OptimizerState> {
+    fn to_state(&self) -> Option<OptimizerState> {
         None
     }
 
-    /// Restores internal state previously returned by [`save_state`](Optimizer::save_state).
+    /// Restores internal state previously returned by [`to_state`](Optimizer::to_state).
     /// The default implementation ignores `state` (stateless optimizers).
-    fn load_state(&mut self, _state: &OptimizerState) -> Result<()> {
+    fn restore(&mut self, _state: &OptimizerState) -> Result<(), OptimizerStateError> {
         Ok(())
     }
 }

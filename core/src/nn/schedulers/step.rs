@@ -1,7 +1,6 @@
-use crate::learning_rate::LearningRate;
+use crate::learning_rate::{LearningRate, LearningRateError};
 use crate::schedulers::{Scheduler, SchedulerState};
 use std::fmt;
-use std::io::Result as IoResult;
 
 #[derive(Debug)]
 pub struct StepDecay {
@@ -11,13 +10,16 @@ pub struct StepDecay {
     decay_factor: f32,
 }
 
-/// Returned by [`StepDecay::new`] when `steps` is zero or `decay_factor` is not in (0, 1).
+/// Returned by [`StepDecay::new`] / [`StepDecay::from_values`] when `steps` is
+/// zero, `decay_factor` is not in (0, 1), or the initial learning rate is invalid.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum StepDecayError {
     /// `steps` was zero.
     ZeroSteps,
     /// `decay_factor` was not strictly between 0 and 1.
     InvalidDecayFactor(f32),
+    /// The initial learning rate was invalid.
+    LearningRate(LearningRateError),
 }
 
 impl fmt::Display for StepDecayError {
@@ -27,11 +29,18 @@ impl fmt::Display for StepDecayError {
             StepDecayError::InvalidDecayFactor(decay_factor) => {
                 write!(f, "the decay factor must be in (0, 1), got {decay_factor}")
             }
+            StepDecayError::LearningRate(e) => write!(f, "{e}"),
         }
     }
 }
 
 impl std::error::Error for StepDecayError {}
+
+impl From<LearningRateError> for StepDecayError {
+    fn from(e: LearningRateError) -> Self {
+        StepDecayError::LearningRate(e)
+    }
+}
 
 impl StepDecay {
     /// Creates a new [`StepDecay`] scheduler.
@@ -57,6 +66,18 @@ impl StepDecay {
             decay_factor,
         })
     }
+
+    /// Creates a new [`StepDecay`] scheduler from a raw initial learning rate value.
+    /// # Errors
+    /// Returns [`StepDecayError`] if `initial` is invalid, `steps` is zero, or
+    /// `decay_factor` is not in (0, 1).
+    pub fn from_values(
+        initial: f32,
+        steps: usize,
+        decay_factor: f32,
+    ) -> Result<Self, StepDecayError> {
+        Self::new(LearningRate::new(initial)?, steps, decay_factor)
+    }
 }
 
 impl Scheduler for StepDecay {
@@ -81,15 +102,14 @@ impl Scheduler for StepDecay {
         learning_rate
     }
 
-    fn save_state(&self) -> Option<SchedulerState> {
+    fn to_state(&self) -> Option<SchedulerState> {
         Some(SchedulerState {
             current_step: self.current_step,
         })
     }
 
-    fn load_state(&mut self, state: &SchedulerState) -> IoResult<()> {
+    fn restore(&mut self, state: &SchedulerState) {
         self.current_step = state.current_step;
-        Ok(())
     }
 }
 

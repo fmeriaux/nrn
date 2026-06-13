@@ -236,11 +236,11 @@ impl CheckpointRecorder {
             checkpoint_dir.join("evaluations"),
         )?;
 
-        let mut state = optimizer.save_state().unwrap_or(OptimizerState {
+        let mut state = optimizer.to_state().unwrap_or(OptimizerState {
             tensors: Vec::new(),
             metadata: HashMap::new(),
         });
-        if let Some(scheduler_state) = scheduler.save_state() {
+        if let Some(scheduler_state) = scheduler.to_state() {
             state.metadata.insert(
                 "scheduler.current_step".to_string(),
                 scheduler_state.current_step.to_string(),

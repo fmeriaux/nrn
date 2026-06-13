@@ -3,7 +3,7 @@ use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use nrn::data::scalers::{Scaler, ScalerMethod};
 use nrn::data::{Dataset, ModelSplit};
 use nrn::evaluation::{Evaluation, EvaluationSet};
-use nrn::io::checkpoint::CheckpointArchive;
+use nrn::io::run::CheckpointArchive;
 use nrn::model::NeuralNetwork;
 use nrn::training::GradientClipping;
 use pathdiff::diff_paths;

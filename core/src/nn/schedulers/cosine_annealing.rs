@@ -1,8 +1,7 @@
-use crate::learning_rate::LearningRate;
+use crate::learning_rate::{LearningRate, LearningRateError};
 use crate::schedulers::{Scheduler, SchedulerState};
 use core::f32::consts::PI;
 use std::fmt;
-use std::io::Result as IoResult;
 
 /// A cosine annealing learning rate scheduler.
 ///
@@ -33,8 +32,8 @@ pub struct CosineAnnealing {
     steps_multiplier: usize,
 }
 
-/// Returned by [`CosineAnnealing::new`] / [`CosineAnnealing::with_restarts`]
-/// when the given parameters are invalid.
+/// Returned by [`CosineAnnealing::new`] / [`CosineAnnealing::from_values`] /
+/// [`CosineAnnealing::with_restarts`] when the given parameters are invalid.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CosineAnnealingError {
     /// `max` was not strictly greater than `min`.
@@ -43,6 +42,8 @@ pub enum CosineAnnealingError {
     ZeroSteps,
     /// `steps_multiplier` (for warm restarts) was less than 1.
     ZeroStepsMultiplier,
+    /// One of the learning rate bounds was invalid.
+    LearningRate(LearningRateError),
 }
 
 impl fmt::Display for CosineAnnealingError {
@@ -58,11 +59,18 @@ impl fmt::Display for CosineAnnealingError {
             CosineAnnealingError::ZeroStepsMultiplier => {
                 write!(f, "the cycle multiplier must be at least 1")
             }
+            CosineAnnealingError::LearningRate(e) => write!(f, "{e}"),
         }
     }
 }
 
 impl std::error::Error for CosineAnnealingError {}
+
+impl From<LearningRateError> for CosineAnnealingError {
+    fn from(e: LearningRateError) -> Self {
+        CosineAnnealingError::LearningRate(e)
+    }
+}
 
 impl CosineAnnealing {
     /// Creates a new [`CosineAnnealing`] scheduler.
@@ -92,6 +100,14 @@ impl CosineAnnealing {
             restarts: false,
             steps_multiplier: 1,
         })
+    }
+
+    /// Creates a new [`CosineAnnealing`] scheduler from raw learning rate bounds.
+    /// # Errors
+    /// Returns [`CosineAnnealingError`] if `min` or `max` are invalid, `max` is not
+    /// greater than `min`, or `steps` is zero.
+    pub fn from_values(min: f32, max: f32, steps: usize) -> Result<Self, CosineAnnealingError> {
+        Self::new(LearningRate::new(min)?, LearningRate::new(max)?, steps)
     }
 
     /// Enables or disables warm restarts and sets the steps multiplier.
@@ -146,15 +162,14 @@ impl Scheduler for CosineAnnealing {
         lr
     }
 
-    fn save_state(&self) -> Option<SchedulerState> {
+    fn to_state(&self) -> Option<SchedulerState> {
         Some(SchedulerState {
             current_step: self.current_step,
         })
     }
 
-    fn load_state(&mut self, state: &SchedulerState) -> IoResult<()> {
+    fn restore(&mut self, state: &SchedulerState) {
         self.current_step = state.current_step;
-        Ok(())
     }
 }
 

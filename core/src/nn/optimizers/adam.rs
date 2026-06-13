@@ -1,10 +1,9 @@
 use crate::gradients::Gradients;
 use crate::learning_rate::LearningRate;
 use crate::model::NeuronLayer;
-use crate::optimizers::{Optimizer, OptimizerState};
+use crate::optimizers::{Optimizer, OptimizerState, OptimizerStateError};
 use ndarray::{Array1, Array2};
 use std::collections::HashMap;
-use std::io::{Error, ErrorKind::InvalidData, Result as IoResult};
 
 /// Adam optimizer state, maintaining first and second moment estimates.
 struct AdamState {
@@ -127,7 +126,7 @@ impl Optimizer for Adam {
         self.time_step += 1;
     }
 
-    fn save_state(&self) -> Option<OptimizerState> {
+    fn to_state(&self) -> Option<OptimizerState> {
         let mut tensors = Vec::with_capacity(self.states.len() * 4);
         for (layer_index, state) in &self.states {
             tensors.push((
@@ -154,13 +153,13 @@ impl Optimizer for Adam {
         Some(OptimizerState { tensors, metadata })
     }
 
-    fn load_state(&mut self, state: &OptimizerState) -> IoResult<()> {
+    fn restore(&mut self, state: &OptimizerState) -> Result<(), OptimizerStateError> {
         self.time_step = state
             .metadata
             .get("time_step")
-            .ok_or_else(|| Error::new(InvalidData, "optimizer state is missing `time_step`"))?
+            .ok_or(OptimizerStateError::MissingTimeStep)?
             .parse()
-            .map_err(|e| Error::new(InvalidData, format!("invalid `time_step`: {e}")))?;
+            .map_err(|_| OptimizerStateError::InvalidTimeStep)?;
 
         let mut partials: HashMap<usize, PartialAdamState> = HashMap::new();
 
@@ -202,13 +201,9 @@ struct PartialAdamState {
 }
 
 impl PartialAdamState {
-    fn into_state(self, layer_index: usize) -> IoResult<AdamState> {
-        let missing = |field: &str| {
-            Error::new(
-                InvalidData,
-                format!("optimizer state is missing `layer{layer_index}.{field}`"),
-            )
-        };
+    fn into_state(self, layer_index: usize) -> Result<AdamState, OptimizerStateError> {
+        let missing =
+            |field: &str| OptimizerStateError::MissingTensor(format!("layer{layer_index}.{field}"));
 
         Ok(AdamState {
             m_weights: self.m_weights.ok_or_else(|| missing("m_weights"))?,
@@ -219,18 +214,24 @@ impl PartialAdamState {
     }
 }
 
-fn to_array2(name: &str, array: &ndarray::ArrayD<f32>) -> IoResult<Array2<f32>> {
+fn to_array2(name: &str, array: &ndarray::ArrayD<f32>) -> Result<Array2<f32>, OptimizerStateError> {
     array
         .clone()
         .into_dimensionality()
-        .map_err(|e| Error::new(InvalidData, format!("tensor `{name}` is not rank 2: {e}")))
+        .map_err(|_| OptimizerStateError::WrongRank {
+            tensor: name.to_string(),
+            expected: 2,
+        })
 }
 
-fn to_array1(name: &str, array: &ndarray::ArrayD<f32>) -> IoResult<Array1<f32>> {
+fn to_array1(name: &str, array: &ndarray::ArrayD<f32>) -> Result<Array1<f32>, OptimizerStateError> {
     array
         .clone()
         .into_dimensionality()
-        .map_err(|e| Error::new(InvalidData, format!("tensor `{name}` is not rank 1: {e}")))
+        .map_err(|_| OptimizerStateError::WrongRank {
+            tensor: name.to_string(),
+            expected: 1,
+        })
 }
 
 #[cfg(test)]
@@ -338,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn save_load_state_roundtrip_preserves_moments_and_time_step() {
+    fn to_state_restore_roundtrip_preserves_moments_and_time_step() {
         let mut opt = Adam::with_defaults(LearningRate::new(0.01).unwrap());
         let mut l = layer(array![[1.0, 1.0]], array![1.0]);
         let grads = Gradients {
@@ -348,10 +349,10 @@ mod tests {
         opt.update(0, &mut l, &grads);
         opt.step();
 
-        let state = opt.save_state().unwrap();
+        let state = opt.to_state().unwrap();
 
         let mut restored = Adam::with_defaults(LearningRate::new(0.01).unwrap());
-        restored.load_state(&state).unwrap();
+        restored.restore(&state).unwrap();
 
         // Applying the same update from the restored optimizer must reproduce
         // the same step as continuing with the original optimizer.
@@ -365,13 +366,13 @@ mod tests {
     }
 
     #[test]
-    fn load_state_rejects_missing_time_step() {
+    fn restore_rejects_missing_time_step() {
         let mut opt = Adam::with_defaults(LearningRate::new(0.01).unwrap());
         let state = OptimizerState {
             tensors: Vec::new(),
             metadata: HashMap::new(),
         };
 
-        assert!(opt.load_state(&state).is_err());
+        assert!(opt.restore(&state).is_err());
     }
 }

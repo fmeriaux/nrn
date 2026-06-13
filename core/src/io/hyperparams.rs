@@ -81,10 +81,10 @@ pub struct EarlyStoppingRecord {
     pub restore_best_model: bool,
 }
 
-/// Serializable mirror of [`HyperParams`], persisted in [`crate::io::checkpoint::TrainingMeta`].
+/// Serializable mirror of [`HyperParams`], persisted in [`crate::io::run::TrainingMeta`].
 ///
 /// `layers` is intentionally omitted: the model architecture is reconstructed from
-/// `model.safetensors` by [`crate::io::checkpoint::CheckpointArchive::model_at`].
+/// `model.safetensors` by [`crate::io::run::CheckpointArchive::model_at`].
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct HyperParamsRecord {
     pub epochs: usize,
@@ -180,15 +180,14 @@ impl HyperParamsRecord {
         };
 
         let scheduler: Box<dyn Scheduler> = match &self.scheduler {
-            SchedulerRecord::Constant => Box::new(ConstantScheduler::new(lr)),
+            SchedulerRecord::Constant => Box::new(ConstantScheduler::from_value(self.lr)?),
             SchedulerRecord::Cosine {
                 lr_min,
                 steps,
                 warm_restarts,
                 cycle_multiplier,
             } => {
-                let lr_min = LearningRate::new(*lr_min)?;
-                let cosine = CosineAnnealing::new(lr_min, lr, *steps)?;
+                let cosine = CosineAnnealing::from_values(*lr_min, self.lr, *steps)?;
                 if *warm_restarts {
                     Box::new(cosine.with_restarts(true, *cycle_multiplier)?)
                 } else {
@@ -198,7 +197,7 @@ impl HyperParamsRecord {
             SchedulerRecord::Step {
                 decay_factor,
                 steps,
-            } => Box::new(StepDecay::new(lr, *steps, *decay_factor)?),
+            } => Box::new(StepDecay::from_values(self.lr, *steps, *decay_factor)?),
         };
 
         let clipping = GradientClipping::try_from(&self.clipping)?;
@@ -213,20 +212,18 @@ impl HyperParamsRecord {
             LossRecord::CrossEntropy => CROSS_ENTROPY_LOSS.clone(),
         };
 
-        let hyperparams = HyperParams {
-            epochs: self.epochs,
-            checkpoint_interval: self.checkpoint_interval,
-            batch_size: self.batch_size,
+        let hyperparams = HyperParams::new(
+            self.epochs,
+            self.checkpoint_interval,
+            self.batch_size,
             loss,
             optimizer,
             scheduler,
             clipping,
             early_stopping,
-            val_ratio: self.val_ratio,
-            test_ratio: self.test_ratio,
-        };
-
-        hyperparams.validate()?;
+            self.val_ratio,
+            self.test_ratio,
+        )?;
 
         Ok(hyperparams)
     }
@@ -255,6 +252,8 @@ impl HyperParamsRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::activations::SIGMOID;
+    use crate::model::{NeuralNetwork, NeuronLayerSpec};
 
     #[test]
     fn optimizer_record_roundtrips_through_json() {
@@ -339,18 +338,20 @@ mod tests {
         let record = HyperParamsRecord::sample();
         let hyperparams = record.into_hyperparams().unwrap();
 
-        assert_eq!(hyperparams.epochs, 10);
-        assert_eq!(hyperparams.checkpoint_interval, 5);
-        assert_eq!(hyperparams.batch_size, Some(32));
-        assert_eq!(hyperparams.optimizer.name(), "Adam");
-        assert_eq!(hyperparams.scheduler.name(), "Constant");
+        assert_eq!(hyperparams.epochs(), 10);
+        assert_eq!(hyperparams.checkpoint_interval(), 5);
+        assert_eq!(hyperparams.batch_size(), Some(32));
+        assert_eq!(hyperparams.optimizer().name(), "Adam");
+        assert_eq!(hyperparams.scheduler().name(), "Constant");
         assert!(matches!(
-            hyperparams.clipping,
-            GradientClipping::Norm { max_norm } if max_norm == 1.0
+            hyperparams.clipping(),
+            GradientClipping::Norm { max_norm } if *max_norm == 1.0
         ));
-        assert!(hyperparams.early_stopping.is_some());
-        assert_eq!(hyperparams.val_ratio, 0.1);
-        assert_eq!(hyperparams.test_ratio, 0.1);
+        let specs = NeuronLayerSpec::network_for(vec![2], &*SIGMOID, 2);
+        let model = NeuralNetwork::initialization(2, &specs);
+        assert!(hyperparams.build_early_stopping(&model).is_some());
+        assert_eq!(hyperparams.val_ratio(), 0.1);
+        assert_eq!(hyperparams.test_ratio(), 0.1);
     }
 
     #[test]
@@ -364,7 +365,7 @@ mod tests {
         };
 
         let hyperparams = record.into_hyperparams().unwrap();
-        assert_eq!(hyperparams.scheduler.name(), "Cosine Annealing");
+        assert_eq!(hyperparams.scheduler().name(), "Cosine Annealing");
     }
 
     #[test]
@@ -376,7 +377,7 @@ mod tests {
         };
 
         let hyperparams = record.into_hyperparams().unwrap();
-        assert_eq!(hyperparams.scheduler.name(), "Step Decay");
+        assert_eq!(hyperparams.scheduler().name(), "Step Decay");
     }
 
     #[test]

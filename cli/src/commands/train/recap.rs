@@ -1,17 +1,9 @@
 use crate::console::TRACE_ICON;
 use console::style;
 use nrn::io::hyperparams::{
-    ClippingRecord, EarlyStoppingRecord, HyperParamsRecord, OptimizerRecord, SchedulerRecord,
+    ClippingRecord, EarlyStoppingRecord, HyperParamsRecord, LossRecord, OptimizerRecord,
+    SchedulerRecord,
 };
-use nrn::training::{EarlyStoppingConfig, GradientClipping, HyperParams};
-
-/// A hyperparameter that was changed at `train resume` relative to the run's
-/// stored metadata. Purely informational: it annotates the recap line for
-/// `field` with the value that was in the metadata before the override.
-pub struct FieldOverride {
-    pub field: &'static str,
-    pub meta_value: String,
-}
 
 /// Recap row labels, in display order. [`print_recap`] iterates over these to
 /// compute the leader-dot alignment.
@@ -28,8 +20,9 @@ const FIELDS: &[&str] = &[
 ];
 
 /// Prints the `TRAINING HYPERPARAMETERS` recap: one bullet-leader line per
-/// field, with overridden fields annotated `▲ was <meta_value>`.
-pub fn print_recap(hyperparams: &HyperParams, overrides: &[FieldOverride]) {
+/// field of `current`. If `previous` is given and a field differs from its
+/// value in `previous`, the line is annotated `▲ was <previous value>`.
+pub fn print_recap(current: &HyperParamsRecord, previous: Option<&HyperParamsRecord>) {
     let label_width = FIELDS.iter().map(|f| f.len()).max().unwrap_or(0);
 
     println!(
@@ -40,59 +33,70 @@ pub fn print_recap(hyperparams: &HyperParams, overrides: &[FieldOverride]) {
 
     print_row(
         "Epochs",
-        &hyperparams.epochs.to_string(),
-        overrides,
+        &current.epochs.to_string(),
         label_width,
+        previous
+            .filter(|p| p.epochs != current.epochs)
+            .map(|p| p.epochs.to_string()),
     );
-    print_row("Loss", hyperparams.loss.name(), overrides, label_width);
+    print_row("Loss", &loss_value(&current.loss), label_width, None);
     print_row(
         "Optimizer",
-        &optimizer_value(hyperparams),
-        overrides,
+        &optimizer_value(current),
         label_width,
+        previous
+            .filter(|p| p.optimizer != current.optimizer || p.lr != current.lr)
+            .map(optimizer_value),
     );
     print_row(
         "Scheduler",
-        &hyperparams.scheduler.name().to_lowercase(),
-        overrides,
+        &scheduler_value(&current.scheduler),
         label_width,
+        previous
+            .filter(|p| p.scheduler != current.scheduler)
+            .map(|p| scheduler_value(&p.scheduler)),
     );
     print_row(
         "Clipping",
-        &clipping_value(&hyperparams.clipping),
-        overrides,
+        &clipping_value(&current.clipping),
         label_width,
+        previous
+            .filter(|p| p.clipping != current.clipping)
+            .map(|p| clipping_value(&p.clipping)),
     );
     print_row(
         "Batches",
-        &batches_value(hyperparams.batch_size),
-        overrides,
+        &batches_value(current.batch_size),
         label_width,
+        previous
+            .filter(|p| p.batch_size != current.batch_size)
+            .map(|p| batches_value(p.batch_size)),
     );
     print_row(
         "Split",
-        &format!(
-            "val {} · test {}",
-            hyperparams.val_ratio, hyperparams.test_ratio
-        ),
-        overrides,
+        &format!("val {} · test {}", current.val_ratio, current.test_ratio),
         label_width,
+        None,
     );
     print_row(
         "Checkpoints",
-        &checkpoints_value(hyperparams.checkpoint_interval),
-        overrides,
+        &checkpoints_value(current.checkpoint_interval),
         label_width,
+        previous
+            .filter(|p| p.checkpoint_interval != current.checkpoint_interval)
+            .map(|p| checkpoints_value(p.checkpoint_interval)),
     );
     print_row(
         "Early stopping",
-        &early_stopping_value(&hyperparams.early_stopping),
-        overrides,
+        &early_stopping_value(&current.early_stopping),
         label_width,
+        previous
+            .filter(|p| p.early_stopping != current.early_stopping)
+            .map(|p| early_stopping_value(&p.early_stopping)),
     );
 }
 
-fn print_row(field: &'static str, value: &str, overrides: &[FieldOverride], label_width: usize) {
+fn print_row(field: &'static str, value: &str, label_width: usize, was: Option<String>) {
     let leader = ".".repeat(label_width + 3 - field.len());
     let mut line = format!(
         "   {} {} {}",
@@ -101,29 +105,40 @@ fn print_row(field: &'static str, value: &str, overrides: &[FieldOverride], labe
         style(value).yellow()
     );
 
-    if let Some(over) = overrides.iter().find(|over| over.field == field) {
-        line.push_str(&format!(
-            "   {}",
-            style(format!("▲ was {}", over.meta_value)).yellow()
-        ));
+    if let Some(was) = was {
+        line.push_str(&format!("   {}", style(format!("▲ was {was}")).yellow()));
     }
 
     println!("{line}");
 }
 
-pub(crate) fn optimizer_value(hyperparams: &HyperParams) -> String {
-    format!(
-        "{} · lr {}",
-        hyperparams.optimizer.name(),
-        hyperparams.optimizer.learning_rate().value()
-    )
+pub(crate) fn loss_value(loss: &LossRecord) -> String {
+    match loss {
+        LossRecord::CrossEntropy => "Cross-Entropy".to_string(),
+    }
 }
 
-pub(crate) fn clipping_value(clipping: &GradientClipping) -> String {
+pub(crate) fn optimizer_value(record: &HyperParamsRecord) -> String {
+    let name = match record.optimizer {
+        OptimizerRecord::Sgd => "Stochastic Gradient Descent (SGD)",
+        OptimizerRecord::Adam => "Adam",
+    };
+    format!("{name} · lr {}", record.lr)
+}
+
+pub(crate) fn scheduler_value(scheduler: &SchedulerRecord) -> String {
+    match scheduler {
+        SchedulerRecord::Constant => "constant".to_string(),
+        SchedulerRecord::Cosine { .. } => "cosine annealing".to_string(),
+        SchedulerRecord::Step { .. } => "step decay".to_string(),
+    }
+}
+
+pub(crate) fn clipping_value(clipping: &ClippingRecord) -> String {
     match clipping {
-        GradientClipping::None => "none".to_string(),
-        GradientClipping::Norm { max_norm } => format!("norm · max {max_norm}"),
-        GradientClipping::Value { min, max } => format!("value · min {min} · max {max}"),
+        ClippingRecord::None => "none".to_string(),
+        ClippingRecord::Norm { max_norm } => format!("norm · max {max_norm}"),
+        ClippingRecord::Value { min, max } => format!("value · min {min} · max {max}"),
     }
 }
 
@@ -142,50 +157,7 @@ pub(crate) fn checkpoints_value(checkpoint_interval: usize) -> String {
     }
 }
 
-pub(crate) fn early_stopping_value(early_stopping: &Option<EarlyStoppingConfig>) -> String {
-    match early_stopping {
-        Some(config) if config.restore_best_model => {
-            format!("patience {} · restore best", config.patience)
-        }
-        Some(config) => format!("patience {}", config.patience),
-        None => "disabled".to_string(),
-    }
-}
-
-/// Renders the `Optimizer` recap value (`<name> · lr <rate>`) from a stored record,
-/// used to capture the metadata value before a `--lr` override is applied.
-pub(crate) fn optimizer_record_value(record: &HyperParamsRecord) -> String {
-    let name = match record.optimizer {
-        OptimizerRecord::Sgd => "Stochastic Gradient Descent (SGD)",
-        OptimizerRecord::Adam => "Adam",
-    };
-    format!("{name} · lr {}", record.lr)
-}
-
-/// Renders the `Scheduler` recap value from a stored record, used to capture
-/// the metadata value before a `--lr-min` override is applied.
-pub(crate) fn scheduler_record_value(scheduler: &SchedulerRecord) -> String {
-    match scheduler {
-        SchedulerRecord::Constant => "constant".to_string(),
-        SchedulerRecord::Cosine { .. } => "cosine annealing".to_string(),
-        SchedulerRecord::Step { .. } => "step decay".to_string(),
-    }
-}
-
-/// Renders the `Clipping` recap value from a stored record, used to capture
-/// the metadata value before a `--clip-norm`/`--clip-value`/`--no-clip` override is applied.
-pub(crate) fn clipping_record_value(clipping: &ClippingRecord) -> String {
-    match clipping {
-        ClippingRecord::None => "none".to_string(),
-        ClippingRecord::Norm { max_norm } => format!("norm · max {max_norm}"),
-        ClippingRecord::Value { min, max } => format!("value · min {min} · max {max}"),
-    }
-}
-
-/// Renders the `Early stopping` recap value from a stored record, used to
-/// capture the metadata value before an `--early-stopping`/`--restore-best-model`
-/// override is applied.
-pub(crate) fn early_stopping_record_value(early_stopping: &Option<EarlyStoppingRecord>) -> String {
+pub(crate) fn early_stopping_value(early_stopping: &Option<EarlyStoppingRecord>) -> String {
     match early_stopping {
         Some(record) if record.restore_best_model => {
             format!("patience {} · restore best", record.patience)

@@ -1,6 +1,7 @@
-use super::early_stopping::EarlyStoppingConfig;
+use super::early_stopping::{EarlyStopping, EarlyStoppingConfig};
 use crate::gradients::GradientClipping;
 use crate::loss_functions::LossFunction;
+use crate::model::NeuralNetwork;
 use crate::optimizers::Optimizer;
 use crate::schedulers::Scheduler;
 use std::fmt;
@@ -10,24 +11,24 @@ use std::sync::Arc;
 /// [`crate::training::TrainingLoop`] and passed by reference to
 /// [`crate::training::TrainingCallback::on_train_start`].
 pub struct HyperParams {
-    pub epochs: usize,
+    epochs: usize,
     /// Interval (in epochs) between scheduled evaluations/checkpoints; `0` disables them.
-    pub checkpoint_interval: usize,
-    pub batch_size: Option<usize>,
-    pub loss: Arc<dyn LossFunction>,
-    pub optimizer: Box<dyn Optimizer>,
-    pub scheduler: Box<dyn Scheduler>,
-    pub clipping: GradientClipping,
-    pub early_stopping: Option<EarlyStoppingConfig>,
+    checkpoint_interval: usize,
+    batch_size: Option<usize>,
+    loss: Arc<dyn LossFunction>,
+    optimizer: Box<dyn Optimizer>,
+    scheduler: Box<dyn Scheduler>,
+    clipping: GradientClipping,
+    early_stopping: Option<EarlyStoppingConfig>,
     /// Fraction of the dataset held out for validation. Part of the run's
     /// identity (the resulting split), not consumed by [`crate::training::TrainingLoop`].
-    pub val_ratio: f32,
+    val_ratio: f32,
     /// Fraction of the dataset held out for testing. Part of the run's
     /// identity (the resulting split), not consumed by [`crate::training::TrainingLoop`].
-    pub test_ratio: f32,
+    test_ratio: f32,
 }
 
-/// Returned by [`HyperParams::validate`] when a cross-field invariant is violated.
+/// Returned by [`HyperParams::new`] when a cross-field invariant is violated.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HyperParamsError {
     /// `epochs` was zero.
@@ -71,26 +72,111 @@ impl fmt::Display for HyperParamsError {
 impl std::error::Error for HyperParamsError {}
 
 impl HyperParams {
-    /// Validates the cross-field invariants of this spec.
-    pub fn validate(&self) -> Result<(), HyperParamsError> {
-        if self.epochs < 1 {
+    /// Creates a new hyperparameter spec, validating its cross-field invariants.
+    /// # Errors
+    /// Returns [`HyperParamsError`] if any invariant is violated.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        epochs: usize,
+        checkpoint_interval: usize,
+        batch_size: Option<usize>,
+        loss: Arc<dyn LossFunction>,
+        optimizer: Box<dyn Optimizer>,
+        scheduler: Box<dyn Scheduler>,
+        clipping: GradientClipping,
+        early_stopping: Option<EarlyStoppingConfig>,
+        val_ratio: f32,
+        test_ratio: f32,
+    ) -> Result<Self, HyperParamsError> {
+        if epochs < 1 {
             return Err(HyperParamsError::ZeroEpochs);
         }
-        if self.batch_size == Some(0) {
+        if batch_size == Some(0) {
             return Err(HyperParamsError::ZeroBatchSize);
         }
-        if !(0.0..1.0).contains(&self.val_ratio) {
-            return Err(HyperParamsError::InvalidValRatio(self.val_ratio));
+        if !(0.0..1.0).contains(&val_ratio) {
+            return Err(HyperParamsError::InvalidValRatio(val_ratio));
         }
-        if self.test_ratio <= 0.0 || self.test_ratio >= 1.0 {
-            return Err(HyperParamsError::InvalidTestRatio(self.test_ratio));
+        if test_ratio <= 0.0 || test_ratio >= 1.0 {
+            return Err(HyperParamsError::InvalidTestRatio(test_ratio));
         }
-        if self.val_ratio + self.test_ratio >= 1.0 {
+        if val_ratio + test_ratio >= 1.0 {
             return Err(HyperParamsError::SplitRatiosTooLarge {
-                val_ratio: self.val_ratio,
-                test_ratio: self.test_ratio,
+                val_ratio,
+                test_ratio,
             });
         }
-        Ok(())
+
+        Ok(HyperParams {
+            epochs,
+            checkpoint_interval,
+            batch_size,
+            loss,
+            optimizer,
+            scheduler,
+            clipping,
+            early_stopping,
+            val_ratio,
+            test_ratio,
+        })
+    }
+
+    pub fn epochs(&self) -> usize {
+        self.epochs
+    }
+
+    pub fn checkpoint_interval(&self) -> usize {
+        self.checkpoint_interval
+    }
+
+    pub fn batch_size(&self) -> Option<usize> {
+        self.batch_size
+    }
+
+    pub fn loss(&self) -> &Arc<dyn LossFunction> {
+        &self.loss
+    }
+
+    pub fn clipping(&self) -> &GradientClipping {
+        &self.clipping
+    }
+
+    pub fn val_ratio(&self) -> f32 {
+        self.val_ratio
+    }
+
+    pub fn test_ratio(&self) -> f32 {
+        self.test_ratio
+    }
+
+    pub fn optimizer(&self) -> &dyn Optimizer {
+        self.optimizer.as_ref()
+    }
+
+    pub fn optimizer_mut(&mut self) -> &mut Box<dyn Optimizer> {
+        &mut self.optimizer
+    }
+
+    pub fn scheduler(&self) -> &dyn Scheduler {
+        self.scheduler.as_ref()
+    }
+
+    pub fn scheduler_mut(&mut self) -> &mut Box<dyn Scheduler> {
+        &mut self.scheduler
+    }
+
+    /// Borrows the optimizer and scheduler mutably at once, for a single
+    /// [`crate::model::NeuralNetwork::train`] step.
+    pub fn optimizer_and_scheduler_mut(&mut self) -> (&mut dyn Optimizer, &mut dyn Scheduler) {
+        (self.optimizer.as_mut(), self.scheduler.as_mut())
+    }
+
+    /// Builds the runtime [`EarlyStopping`] tracker from this spec's config,
+    /// seeding its best model from `init_model`. Returns `None` if early
+    /// stopping is not configured.
+    pub fn build_early_stopping(&self, init_model: &NeuralNetwork) -> Option<EarlyStopping> {
+        self.early_stopping
+            .clone()
+            .map(|config| EarlyStopping::new(config, init_model))
     }
 }

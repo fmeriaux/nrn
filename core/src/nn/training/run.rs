@@ -1,7 +1,4 @@
 use super::callbacks::{Callbacks, TrainingCallback};
-use super::early_stopping::EarlyStopping;
-#[cfg(test)]
-use super::early_stopping::EarlyStoppingConfig;
 use super::evaluator::Evaluator;
 use super::hyperparams::HyperParams;
 use super::outcome::TrainingOutcome;
@@ -78,38 +75,37 @@ impl TrainingLoop {
         // Accuracy is strictly determined by the number of classes, itself encoded
         // in the output layer — derive it from the model rather than taking it as config.
         let evaluator = Evaluator::new(
-            self.hyperparams.loss.clone(),
+            self.hyperparams.loss().clone(),
             accuracy_for(self.model.n_classes()),
         );
 
-        if self.epoch_start == 0 && self.hyperparams.checkpoint_interval != 0 {
+        if self.epoch_start == 0 && self.hyperparams.checkpoint_interval() != 0 {
             self.checkpoint(&evaluator, 0)?;
         }
 
         let mut early_stopping = self
-            .hyperparams
-            .early_stopping
-            .clone()
-            .map(EarlyStopping::new);
-        // Seed best model before epoch 1 so divergence at the first epoch can recover.
-        if let Some(ref mut es) = early_stopping
-            && self.split.validation.is_some()
-        {
-            es.seed_best_model(&self.model);
-        }
+            .split
+            .validation
+            .is_some()
+            .then(|| self.hyperparams.build_early_stopping(&self.model))
+            .flatten();
 
         let mut outcome = TrainingOutcome::Completed;
         let mut final_epoch = self.epoch_start;
         let mut final_evaluation = None;
 
-        for epoch in (self.epoch_start + 1)..=(self.epoch_start + self.hyperparams.epochs) {
+        for epoch in (self.epoch_start + 1)..=(self.epoch_start + self.hyperparams.epochs()) {
+            let loss = self.hyperparams.loss().clone();
+            let clipping = *self.hyperparams.clipping();
+            let batch_size = self.hyperparams.batch_size();
+            let (optimizer, scheduler) = self.hyperparams.optimizer_and_scheduler_mut();
             self.model.train(
                 &self.split.train,
-                &self.hyperparams.loss,
-                self.hyperparams.optimizer.as_mut(),
-                self.hyperparams.scheduler.as_mut(),
-                &self.hyperparams.clipping,
-                self.hyperparams.batch_size,
+                &loss,
+                optimizer,
+                scheduler,
+                &clipping,
+                batch_size,
             );
 
             final_epoch = epoch;
@@ -130,23 +126,17 @@ impl TrainingLoop {
 
             if let Some(ref mut es) = early_stopping
                 && let Some(validation) = &self.split.validation
+                && es.check(validation, &self.model, &evaluator)
             {
-                let preds = self.model.predict(validation.inputs.view());
-                let loss = evaluator
-                    .eval_predictions(preds.view(), validation.targets.view())
-                    .loss;
-
-                if es.check(loss, &self.model) {
-                    let restored = es.best_model.is_some();
-                    if let Some(best) = es.best_model.take() {
-                        self.model = best;
-                    }
-                    outcome = TrainingOutcome::EarlyStopped { restored };
-                    break;
+                let restored = es.best_model.is_some();
+                if let Some(best) = es.best_model.take() {
+                    self.model = best;
                 }
+                outcome = TrainingOutcome::EarlyStopped { restored };
+                break;
             }
 
-            if Self::is_checkpoint(self.hyperparams.checkpoint_interval, epoch) {
+            if Self::is_checkpoint(self.hyperparams.checkpoint_interval(), epoch) {
                 final_evaluation = self.checkpoint(&evaluator, epoch)?;
             }
         }
@@ -187,8 +177,8 @@ impl TrainingLoop {
         let eval = evaluator.eval_set(&self.model, &self.split);
         self.callbacks.on_checkpoint(
             &self.model,
-            self.hyperparams.optimizer.as_ref(),
-            self.hyperparams.scheduler.as_ref(),
+            self.hyperparams.optimizer(),
+            self.hyperparams.scheduler(),
             &eval,
             epoch,
         )?;
@@ -198,6 +188,7 @@ impl TrainingLoop {
 
 #[cfg(test)]
 mod tests {
+    use super::super::early_stopping::EarlyStoppingConfig;
     use super::*;
     use crate::activations::SIGMOID;
     use crate::data::ModelDataset;
@@ -238,19 +229,25 @@ mod tests {
         }
     }
 
-    fn sample_hyperparams(epochs: usize, checkpoint_interval: usize, lr: f32) -> HyperParams {
-        HyperParams {
+    fn sample_hyperparams(
+        epochs: usize,
+        checkpoint_interval: usize,
+        lr: f32,
+        early_stopping: Option<EarlyStoppingConfig>,
+    ) -> HyperParams {
+        HyperParams::new(
             epochs,
             checkpoint_interval,
-            batch_size: None,
-            loss: CROSS_ENTROPY_LOSS.clone(),
-            optimizer: Box::new(Adam::with_defaults(LearningRate::new(lr).unwrap())),
-            scheduler: Box::new(ConstantScheduler::new(LearningRate::new(lr).unwrap())),
-            clipping: GradientClipping::None,
-            early_stopping: None,
-            val_ratio: 0.1,
-            test_ratio: 0.1,
-        }
+            None,
+            CROSS_ENTROPY_LOSS.clone(),
+            Box::new(Adam::with_defaults(LearningRate::new(lr).unwrap())),
+            Box::new(ConstantScheduler::new(LearningRate::new(lr).unwrap())),
+            GradientClipping::None,
+            early_stopping,
+            0.1,
+            0.1,
+        )
+        .unwrap()
     }
 
     #[derive(Default)]
@@ -379,12 +376,10 @@ mod tests {
     }
 
     fn training_loop(
-        mut hyperparams: HyperParams,
+        hyperparams: HyperParams,
         with_validation: bool,
-        early_stopping: Option<EarlyStoppingConfig>,
         counts: Rc<RefCell<Counts>>,
     ) -> TrainingLoop {
-        hyperparams.early_stopping = early_stopping;
         TrainingLoop {
             model: sample_model(),
             callbacks: Callbacks::new(vec![Box::new(CountingCallback(counts))]),
@@ -407,8 +402,8 @@ mod tests {
     #[test]
     fn evaluation_schedule_includes_epoch_zero_multiples_and_final_epoch() {
         let counts = Rc::new(RefCell::new(Counts::default()));
-        let hyperparams = sample_hyperparams(7, 3, 0.01);
-        let training_loop = training_loop(hyperparams, false, None, counts.clone());
+        let hyperparams = sample_hyperparams(7, 3, 0.01, None);
+        let training_loop = training_loop(hyperparams, false, counts.clone());
 
         let report = training_loop.run().unwrap();
 
@@ -425,8 +420,8 @@ mod tests {
     #[test]
     fn eval_interval_zero_only_emits_the_final_evaluation() {
         let counts = Rc::new(RefCell::new(Counts::default()));
-        let hyperparams = sample_hyperparams(3, 0, 0.01);
-        let training_loop = training_loop(hyperparams, false, None, counts.clone());
+        let hyperparams = sample_hyperparams(3, 0, 0.01, None);
+        let training_loop = training_loop(hyperparams, false, counts.clone());
 
         let report = training_loop.run().unwrap();
 
@@ -437,12 +432,9 @@ mod tests {
     #[test]
     fn early_stopping_halts_training_and_restores_best_model() {
         let counts = Rc::new(RefCell::new(Counts::default()));
-        let hyperparams = sample_hyperparams(50, 1, 5.0);
-        let early_stopping = Some(EarlyStoppingConfig {
-            patience: 1,
-            restore_best_model: true,
-        });
-        let training_loop = training_loop(hyperparams, true, early_stopping, counts.clone());
+        let early_stopping = Some(EarlyStoppingConfig::new(1, true).unwrap());
+        let hyperparams = sample_hyperparams(50, 1, 5.0, early_stopping);
+        let training_loop = training_loop(hyperparams, true, counts.clone());
 
         let report = training_loop.run().unwrap();
 
@@ -460,8 +452,8 @@ mod tests {
     #[test]
     fn fatal_divergence_without_recovery_is_reported_as_data() {
         let counts = Rc::new(RefCell::new(Counts::default()));
-        let hyperparams = sample_hyperparams(5, 1, 1e30);
-        let training_loop = training_loop(hyperparams, false, None, counts.clone());
+        let hyperparams = sample_hyperparams(5, 1, 1e30, None);
+        let training_loop = training_loop(hyperparams, false, counts.clone());
 
         let report = training_loop.run().unwrap();
 
@@ -481,12 +473,9 @@ mod tests {
     #[test]
     fn divergence_recovers_seeded_best_model_when_restore_enabled() {
         let counts = Rc::new(RefCell::new(Counts::default()));
-        let hyperparams = sample_hyperparams(5, 1, 1e30);
-        let early_stopping = Some(EarlyStoppingConfig {
-            patience: 10,
-            restore_best_model: true,
-        });
-        let training_loop = training_loop(hyperparams, true, early_stopping, counts.clone());
+        let early_stopping = Some(EarlyStoppingConfig::new(10, true).unwrap());
+        let hyperparams = sample_hyperparams(5, 1, 1e30, early_stopping);
+        let training_loop = training_loop(hyperparams, true, counts.clone());
 
         let report = training_loop.run().unwrap();
 
@@ -500,7 +489,7 @@ mod tests {
 
     #[test]
     fn callback_error_during_evaluation_is_propagated() {
-        let hyperparams = sample_hyperparams(3, 1, 0.01);
+        let hyperparams = sample_hyperparams(3, 1, 0.01, None);
         let training_loop = TrainingLoop {
             model: sample_model(),
             callbacks: Callbacks::new(vec![Box::new(FailingOnEvaluate)]),
@@ -514,7 +503,7 @@ mod tests {
 
     #[test]
     fn callback_error_during_train_end_is_propagated() {
-        let hyperparams = sample_hyperparams(3, 1, 0.01);
+        let hyperparams = sample_hyperparams(3, 1, 0.01, None);
         let training_loop = TrainingLoop {
             model: sample_model(),
             callbacks: Callbacks::new(vec![Box::new(FailingOnTrainEnd)]),
@@ -529,8 +518,8 @@ mod tests {
     #[test]
     fn final_evaluation_is_reused_when_last_epoch_is_a_checkpoint() {
         let counts = Rc::new(RefCell::new(Counts::default()));
-        let hyperparams = sample_hyperparams(6, 3, 0.01);
-        let report = training_loop(hyperparams, false, None, counts.clone())
+        let hyperparams = sample_hyperparams(6, 3, 0.01, None);
+        let report = training_loop(hyperparams, false, counts.clone())
             .run()
             .unwrap();
 
@@ -543,10 +532,8 @@ mod tests {
     #[test]
     fn into_result_is_ok_for_non_fatal_outcomes() {
         let counts = Rc::new(RefCell::new(Counts::default()));
-        let hyperparams = sample_hyperparams(7, 3, 0.01);
-        let report = training_loop(hyperparams, false, None, counts)
-            .run()
-            .unwrap();
+        let hyperparams = sample_hyperparams(7, 3, 0.01, None);
+        let report = training_loop(hyperparams, false, counts).run().unwrap();
 
         assert_eq!(report.outcome, TrainingOutcome::Completed);
         assert!(report.into_result().is_ok());
@@ -555,10 +542,8 @@ mod tests {
     #[test]
     fn into_result_is_err_for_unrecovered_divergence() {
         let counts = Rc::new(RefCell::new(Counts::default()));
-        let hyperparams = sample_hyperparams(5, 1, 1e30);
-        let report = training_loop(hyperparams, false, None, counts)
-            .run()
-            .unwrap();
+        let hyperparams = sample_hyperparams(5, 1, 1e30, None);
+        let report = training_loop(hyperparams, false, counts).run().unwrap();
 
         assert_eq!(
             report.outcome,
@@ -578,7 +563,7 @@ mod tests {
 
     #[test]
     fn callback_error_during_train_start_is_propagated() {
-        let hyperparams = sample_hyperparams(3, 1, 0.01);
+        let hyperparams = sample_hyperparams(3, 1, 0.01, None);
         let training_loop = TrainingLoop {
             model: sample_model(),
             callbacks: Callbacks::new(vec![Box::new(FailingOnTrainStart)]),
@@ -592,7 +577,7 @@ mod tests {
 
     #[test]
     fn callback_error_during_epoch_end_is_propagated() {
-        let hyperparams = sample_hyperparams(3, 1, 0.01);
+        let hyperparams = sample_hyperparams(3, 1, 0.01, None);
         let training_loop = TrainingLoop {
             model: sample_model(),
             callbacks: Callbacks::new(vec![Box::new(FailingOnEpochEnd)]),
@@ -607,7 +592,7 @@ mod tests {
     #[test]
     fn callback_error_during_in_loop_checkpoint_is_propagated() {
         // eval_interval == 1: epoch 0 evaluates fine, the epoch-1 checkpoint fails.
-        let hyperparams = sample_hyperparams(3, 1, 0.01);
+        let hyperparams = sample_hyperparams(3, 1, 0.01, None);
         let training_loop = TrainingLoop {
             model: sample_model(),
             callbacks: Callbacks::new(vec![Box::new(FailingOnEvaluateAfterFirst)]),
@@ -623,7 +608,7 @@ mod tests {
     fn callback_error_during_final_fallback_evaluation_is_propagated() {
         // eval_interval == 0: no epoch-0 pre-eval and no in-loop checkpoints, so the
         // only evaluation is the final fallback — and that is where the failure surfaces.
-        let hyperparams = sample_hyperparams(3, 0, 0.01);
+        let hyperparams = sample_hyperparams(3, 0, 0.01, None);
         let training_loop = TrainingLoop {
             model: sample_model(),
             callbacks: Callbacks::new(vec![Box::new(FailingOnEvaluateAfterFirst)]),
@@ -638,12 +623,9 @@ mod tests {
     #[test]
     fn early_stopping_halts_without_restoring_when_restore_disabled() {
         let counts = Rc::new(RefCell::new(Counts::default()));
-        let hyperparams = sample_hyperparams(50, 1, 5.0);
-        let early_stopping = Some(EarlyStoppingConfig {
-            patience: 1,
-            restore_best_model: false,
-        });
-        let report = training_loop(hyperparams, true, early_stopping, counts.clone())
+        let early_stopping = Some(EarlyStoppingConfig::new(1, false).unwrap());
+        let hyperparams = sample_hyperparams(50, 1, 5.0, early_stopping);
+        let report = training_loop(hyperparams, true, counts.clone())
             .run()
             .unwrap();
 

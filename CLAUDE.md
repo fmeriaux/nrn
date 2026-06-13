@@ -113,7 +113,7 @@ checkpoint evaluation series are tensors too. Scalers are JSON. `io/tensors.rs` 
 adapter and (de)serialization helpers; the `io` module does the activation-name → `Arc<dyn Activation>`
 round-trip via `ActivationProvider::get_by_name`.
 
-- **`io/checkpoint.rs`** — `CheckpointRecorder` (a `TrainingCallback`) writes one
+- **`io/run.rs`** — `CheckpointRecorder` (a `TrainingCallback`) writes one
   `checkpoint-{epoch:06}/model.safetensors` + `evaluations.json` per checkpoint interval, with run-level
   `TrainingMeta`. `CheckpointRecorder::resume(dir, from_epoch)` reopens a directory and trims checkpoints
   after `from_epoch`. `CheckpointArchive` reads back: `model_at(i)`, `epoch_at(i)`, `evaluation_history()`.

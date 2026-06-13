@@ -13,7 +13,6 @@ pub use cosine_annealing::*;
 pub use step::*;
 
 use crate::learning_rate::LearningRate;
-use std::io::Result;
 
 /// Scheduler-agnostic snapshot of internal state (the current step count),
 /// for checkpointing and resuming. Encoding to/from safetensors lives in
@@ -43,13 +42,11 @@ pub trait Scheduler {
 
     /// Returns a snapshot of this scheduler's internal state for checkpointing,
     /// or `None` for schedulers with no state to resume (e.g. constant).
-    fn save_state(&self) -> Option<SchedulerState> {
+    fn to_state(&self) -> Option<SchedulerState> {
         None
     }
 
-    /// Restores internal state previously returned by [`save_state`](Scheduler::save_state).
+    /// Restores internal state previously returned by [`to_state`](Scheduler::to_state).
     /// The default implementation ignores `state` (stateless schedulers).
-    fn load_state(&mut self, _state: &SchedulerState) -> Result<()> {
-        Ok(())
-    }
+    fn restore(&mut self, _state: &SchedulerState) {}
 }

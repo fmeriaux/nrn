@@ -137,18 +137,19 @@ mod tests {
     impl TrainingCallback for DefaultCallback {}
 
     fn sample_config() -> HyperParams {
-        HyperParams {
-            epochs: 1,
-            checkpoint_interval: 1,
-            batch_size: None,
-            loss: CROSS_ENTROPY_LOSS.clone(),
-            optimizer: Box::new(Adam::with_defaults(LearningRate::new(0.01).unwrap())),
-            scheduler: Box::new(ConstantScheduler::new(LearningRate::new(0.01).unwrap())),
-            clipping: GradientClipping::None,
-            early_stopping: None,
-            val_ratio: 0.1,
-            test_ratio: 0.1,
-        }
+        HyperParams::new(
+            1,
+            1,
+            None,
+            CROSS_ENTROPY_LOSS.clone(),
+            Box::new(Adam::with_defaults(LearningRate::new(0.01).unwrap())),
+            Box::new(ConstantScheduler::new(LearningRate::new(0.01).unwrap())),
+            GradientClipping::None,
+            None,
+            0.1,
+            0.1,
+        )
+        .unwrap()
     }
 
     fn sample_model() -> NeuralNetwork {

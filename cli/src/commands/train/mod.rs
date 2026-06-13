@@ -8,15 +8,14 @@ use clap::*;
 use model_saver::ModelSaver;
 use monitor::ConsoleMonitor;
 use nrn::data::ModelSplit;
-use nrn::io::checkpoint::{CheckpointRecorder, TrainingMeta, TrainingRun};
 use nrn::io::hyperparams::{
     ClippingRecord, EarlyStoppingRecord, HyperParamsRecord, LossRecord, OptimizerRecord,
     SchedulerRecord,
 };
+use nrn::io::run::{CheckpointRecorder, TrainingMeta, TrainingRun};
 use nrn::model::NeuralNetwork;
 use nrn::schedulers::SchedulerState;
 use nrn::training::{Callbacks, FatalDivergence, HyperParams, TrainingLoop};
-use recap::FieldOverride;
 use std::error::Error;
 use std::fmt::Display;
 use std::io::{Error as IoError, ErrorKind, Result as IoResult};
@@ -288,7 +287,8 @@ impl StartArgs {
             0,
             model_save_path,
             recorder,
-            Vec::new(),
+            record,
+            None,
         )
     }
 }
@@ -299,7 +299,9 @@ impl StartArgs {
 /// dataset, model architecture, and split ratios are fixed by the run's
 /// metadata and cannot be changed here. Changing the optimizer or scheduler
 /// *algorithm* (as opposed to its learning rate / decay parameters) also
-/// isn't supported on resume — start a new run for that.
+/// isn't supported on resume — start a new run for that, since the restored
+/// optimizer/scheduler state (moment estimates, step counters) is only
+/// meaningful for the algorithm that produced it.
 #[derive(Args, Debug)]
 pub struct ResumeOverrides {
     /// Override: number of epochs to train
@@ -348,38 +350,17 @@ pub struct ResumeOverrides {
 }
 
 impl ResumeOverrides {
-    /// Applies the requested overrides onto `record` in place, returning the
-    /// [`FieldOverride`]s whose value actually changed (for the recap).
-    fn apply(&self, record: &mut HyperParamsRecord) -> Vec<FieldOverride> {
-        let mut overrides = Vec::new();
-
-        if let Some(epochs) = self.epochs
-            && epochs != record.epochs
-        {
-            overrides.push(FieldOverride {
-                field: "Epochs",
-                meta_value: record.epochs.to_string(),
-            });
+    /// Applies the requested overrides onto `record` in place.
+    fn apply(&self, record: &mut HyperParamsRecord) {
+        if let Some(epochs) = self.epochs {
             record.epochs = epochs;
         }
 
-        if let Some(checkpoint_interval) = self.checkpoint_interval
-            && checkpoint_interval != record.checkpoint_interval
-        {
-            overrides.push(FieldOverride {
-                field: "Checkpoints",
-                meta_value: recap::checkpoints_value(record.checkpoint_interval),
-            });
+        if let Some(checkpoint_interval) = self.checkpoint_interval {
             record.checkpoint_interval = checkpoint_interval;
         }
 
-        if let Some(lr) = self.lr
-            && lr != record.lr
-        {
-            overrides.push(FieldOverride {
-                field: "Optimizer",
-                meta_value: recap::optimizer_record_value(record),
-            });
+        if let Some(lr) = self.lr {
             record.lr = lr;
         }
 
@@ -387,20 +368,9 @@ impl ResumeOverrides {
             && let SchedulerRecord::Cosine {
                 lr_min: current_lr_min,
                 ..
-            } = &record.scheduler
-            && lr_min != *current_lr_min
-        {
-            overrides.push(FieldOverride {
-                field: "Scheduler",
-                meta_value: recap::scheduler_record_value(&record.scheduler),
-            });
-            if let SchedulerRecord::Cosine {
-                lr_min: current_lr_min,
-                ..
             } = &mut record.scheduler
-            {
-                *current_lr_min = lr_min;
-            }
+        {
+            *current_lr_min = lr_min;
         }
 
         let new_clipping = if self.no_clip {
@@ -414,13 +384,7 @@ impl ResumeOverrides {
             self.clip_norm
                 .map(|max_norm| ClippingRecord::Norm { max_norm })
         };
-        if let Some(clipping) = new_clipping
-            && clipping != record.clipping
-        {
-            overrides.push(FieldOverride {
-                field: "Clipping",
-                meta_value: recap::clipping_record_value(&record.clipping),
-            });
+        if let Some(clipping) = new_clipping {
             record.clipping = clipping;
         }
 
@@ -434,7 +398,7 @@ impl ResumeOverrides {
                     .as_ref()
                     .is_none_or(|es| es.restore_best_model)
             });
-            let new_early_stopping = if patience > 0 {
+            record.early_stopping = if patience > 0 {
                 Some(EarlyStoppingRecord {
                     patience,
                     restore_best_model,
@@ -442,31 +406,15 @@ impl ResumeOverrides {
             } else {
                 None
             };
-            if new_early_stopping != record.early_stopping {
-                overrides.push(FieldOverride {
-                    field: "Early stopping",
-                    meta_value: recap::early_stopping_record_value(&record.early_stopping),
-                });
-                record.early_stopping = new_early_stopping;
-            }
         }
 
         if self.full_batch || self.batch_size.is_some() {
-            let new_batch_size = if self.full_batch {
+            record.batch_size = if self.full_batch {
                 None
             } else {
                 self.batch_size
             };
-            if new_batch_size != record.batch_size {
-                overrides.push(FieldOverride {
-                    field: "Batches",
-                    meta_value: recap::batches_value(record.batch_size),
-                });
-                record.batch_size = new_batch_size;
-            }
         }
-
-        overrides
     }
 }
 
@@ -492,8 +440,9 @@ impl ResumeArgs {
         let dataset = load_dataset(&meta.dataset)?;
         dataset.validate()?;
 
+        let previous = meta.hyperparams.clone();
         let mut record = meta.hyperparams.clone();
-        let overrides = self.overrides.apply(&mut record);
+        self.overrides.apply(&mut record);
         let mut hyperparams = record.into_hyperparams()?;
 
         let split = dataset
@@ -543,13 +492,13 @@ impl ResumeArgs {
                 .and_then(|s| s.parse().ok())
             {
                 hyperparams
-                    .scheduler
-                    .load_state(&SchedulerState { current_step })?;
+                    .scheduler_mut()
+                    .restore(&SchedulerState { current_step });
             }
-            hyperparams.optimizer.load_state(&state)?;
+            hyperparams.optimizer_mut().restore(&state)?;
             completed(&format!(
                 "Restored {} optimizer state from checkpoint at epoch {from_epoch}",
-                hyperparams.optimizer.name()
+                hyperparams.optimizer().name()
             ));
         }
 
@@ -573,7 +522,8 @@ impl ResumeArgs {
             from_epoch,
             model_save_path,
             recorder,
-            overrides,
+            record,
+            Some(previous),
         )
     }
 }
@@ -582,6 +532,7 @@ impl ResumeArgs {
 
 /// Builds the callbacks, then runs the training loop to completion, mapping a
 /// fatal divergence to a user-facing error.
+#[allow(clippy::too_many_arguments)]
 fn execute_training(
     hyperparams: HyperParams,
     model: NeuralNetwork,
@@ -589,10 +540,11 @@ fn execute_training(
     epoch_start: usize,
     model_save_path: PathBuf,
     recorder: Option<CheckpointRecorder>,
-    overrides: Vec<FieldOverride>,
+    current: HyperParamsRecord,
+    previous: Option<HyperParamsRecord>,
 ) -> Result<(), Box<dyn Error>> {
     let callbacks = Callbacks::empty()
-        .with(ConsoleMonitor::new(overrides))
+        .with(ConsoleMonitor::new(current, previous))
         .with(ModelSaver::new(model_save_path))
         .with_opt(recorder);
 
