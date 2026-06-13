@@ -14,6 +14,7 @@ use nrn::io::hyperparams::{
     SchedulerRecord,
 };
 use nrn::model::NeuralNetwork;
+use nrn::schedulers::SchedulerState;
 use nrn::training::{Callbacks, FatalDivergence, HyperParams, TrainingLoop};
 use recap::FieldOverride;
 use std::error::Error;
@@ -264,15 +265,7 @@ impl StartArgs {
         completed(split.summary().as_str());
 
         let model = match &self.model {
-            Some(path) => {
-                if matches!(self.hp.optimizer, OptimizerType::Adam) {
-                    warning(
-                        "Resuming with Adam: optimizer state is not restored, \
-                         its moments restart from zero for the first epochs",
-                    );
-                }
-                load_model(path)?
-            }
+            Some(path) => load_model(path)?,
             None => initialize_model_with(&dataset, self.layers.clone(), self.auto_layers),
         };
 
@@ -501,7 +494,7 @@ impl ResumeArgs {
 
         let mut record = meta.hyperparams.clone();
         let overrides = self.overrides.apply(&mut record);
-        let hyperparams = record.into_hyperparams()?;
+        let mut hyperparams = record.into_hyperparams()?;
 
         let split = dataset
             .to_model_dataset()
@@ -534,13 +527,6 @@ impl ResumeArgs {
         let model = archive.model_at(checkpoint_idx)?;
         loaded(&model);
 
-        if matches!(record.optimizer, OptimizerRecord::Adam) {
-            warning(
-                "Resuming with Adam: optimizer state is not restored, \
-                 its moments restart from zero for the first epochs",
-            );
-        }
-
         let model_save_path = run_dir
             .parent()
             .unwrap_or(Path::new("."))
@@ -549,6 +535,23 @@ impl ResumeArgs {
         let from_epoch = archive
             .epoch_at(checkpoint_idx)
             .expect("checkpoint_idx was just validated against archive.len()");
+
+        if let Some(state) = archive.optimizer_at(checkpoint_idx)? {
+            if let Some(current_step) = state
+                .metadata
+                .get("scheduler.current_step")
+                .and_then(|s| s.parse().ok())
+            {
+                hyperparams
+                    .scheduler
+                    .load_state(&SchedulerState { current_step })?;
+            }
+            hyperparams.optimizer.load_state(&state)?;
+            completed(&format!(
+                "Restored {} optimizer state from checkpoint at epoch {from_epoch}",
+                hyperparams.optimizer.name()
+            ));
+        }
 
         let recorder = if record.checkpoint_interval > 0 {
             let trimmed = run.trim_after(from_epoch)?;

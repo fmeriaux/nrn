@@ -1,9 +1,10 @@
 use crate::gradients::Gradients;
 use crate::learning_rate::LearningRate;
 use crate::model::NeuronLayer;
-use crate::optimizers::Optimizer;
+use crate::optimizers::{Optimizer, OptimizerState};
 use ndarray::{Array1, Array2};
 use std::collections::HashMap;
+use std::io::{Error, ErrorKind::InvalidData, Result as IoResult};
 
 /// Adam optimizer state, maintaining first and second moment estimates.
 struct AdamState {
@@ -125,6 +126,111 @@ impl Optimizer for Adam {
     fn step(&mut self) {
         self.time_step += 1;
     }
+
+    fn save_state(&self) -> Option<OptimizerState> {
+        let mut tensors = Vec::with_capacity(self.states.len() * 4);
+        for (layer_index, state) in &self.states {
+            tensors.push((
+                format!("layer{layer_index}.m_weights"),
+                state.m_weights.clone().into_dyn(),
+            ));
+            tensors.push((
+                format!("layer{layer_index}.v_weights"),
+                state.v_weights.clone().into_dyn(),
+            ));
+            tensors.push((
+                format!("layer{layer_index}.m_biases"),
+                state.m_biases.clone().into_dyn(),
+            ));
+            tensors.push((
+                format!("layer{layer_index}.v_biases"),
+                state.v_biases.clone().into_dyn(),
+            ));
+        }
+
+        let mut metadata = HashMap::new();
+        metadata.insert("time_step".to_string(), self.time_step.to_string());
+
+        Some(OptimizerState { tensors, metadata })
+    }
+
+    fn load_state(&mut self, state: &OptimizerState) -> IoResult<()> {
+        self.time_step = state
+            .metadata
+            .get("time_step")
+            .ok_or_else(|| Error::new(InvalidData, "optimizer state is missing `time_step`"))?
+            .parse()
+            .map_err(|e| Error::new(InvalidData, format!("invalid `time_step`: {e}")))?;
+
+        let mut partials: HashMap<usize, PartialAdamState> = HashMap::new();
+
+        for (name, array) in &state.tensors {
+            let Some((layer, field)) = name.split_once('.') else {
+                continue;
+            };
+            let Some(layer_index) = layer.strip_prefix("layer").and_then(|s| s.parse().ok()) else {
+                continue;
+            };
+
+            let partial = partials.entry(layer_index).or_default();
+            match field {
+                "m_weights" => partial.m_weights = Some(to_array2(name, array)?),
+                "v_weights" => partial.v_weights = Some(to_array2(name, array)?),
+                "m_biases" => partial.m_biases = Some(to_array1(name, array)?),
+                "v_biases" => partial.v_biases = Some(to_array1(name, array)?),
+                _ => continue,
+            }
+        }
+
+        for (layer_index, partial) in partials {
+            self.states
+                .insert(layer_index, partial.into_state(layer_index)?);
+        }
+
+        Ok(())
+    }
+}
+
+/// Per-layer Adam moment tensors collected from an [`OptimizerState`] while
+/// loading, before being assembled into an [`AdamState`].
+#[derive(Default)]
+struct PartialAdamState {
+    m_weights: Option<Array2<f32>>,
+    v_weights: Option<Array2<f32>>,
+    m_biases: Option<Array1<f32>>,
+    v_biases: Option<Array1<f32>>,
+}
+
+impl PartialAdamState {
+    fn into_state(self, layer_index: usize) -> IoResult<AdamState> {
+        let missing = |field: &str| {
+            Error::new(
+                InvalidData,
+                format!("optimizer state is missing `layer{layer_index}.{field}`"),
+            )
+        };
+
+        Ok(AdamState {
+            m_weights: self.m_weights.ok_or_else(|| missing("m_weights"))?,
+            v_weights: self.v_weights.ok_or_else(|| missing("v_weights"))?,
+            m_biases: self.m_biases.ok_or_else(|| missing("m_biases"))?,
+            v_biases: self.v_biases.ok_or_else(|| missing("v_biases"))?,
+        })
+    }
+}
+
+fn to_array2(name: &str, array: &ndarray::ArrayD<f32>) -> IoResult<Array2<f32>> {
+    array
+        .clone()
+        .into_dimensionality()
+        .map_err(|e| Error::new(InvalidData, format!("tensor `{name}` is not rank 2: {e}")))
+}
+
+fn to_array1(name: &str, array: &ndarray::ArrayD<f32>) -> IoResult<Array1<f32>> {
+    array
+        .clone()
+        .into_dimensionality()
+        .map_err(|e| Error::new(InvalidData, format!("tensor `{name}` is not rank 1: {e}")))
 }
 
 #[cfg(test)]
@@ -229,5 +335,43 @@ mod tests {
             opt.step();
         }
         converged_near_zero(l.weights[[0, 0]], 0.5).unwrap();
+    }
+
+    #[test]
+    fn save_load_state_roundtrip_preserves_moments_and_time_step() {
+        let mut opt = Adam::with_defaults(LearningRate::new(0.01).unwrap());
+        let mut l = layer(array![[1.0, 1.0]], array![1.0]);
+        let grads = Gradients {
+            dw: array![[2.0, -3.0]],
+            db: array![0.5],
+        };
+        opt.update(0, &mut l, &grads);
+        opt.step();
+
+        let state = opt.save_state().unwrap();
+
+        let mut restored = Adam::with_defaults(LearningRate::new(0.01).unwrap());
+        restored.load_state(&state).unwrap();
+
+        // Applying the same update from the restored optimizer must reproduce
+        // the same step as continuing with the original optimizer.
+        let mut from_original = l.clone();
+        let mut from_restored = l.clone();
+        opt.update(0, &mut from_original, &grads);
+        restored.update(0, &mut from_restored, &grads);
+
+        assert_eq!(from_original.weights, from_restored.weights);
+        assert_eq!(from_original.biases, from_restored.biases);
+    }
+
+    #[test]
+    fn load_state_rejects_missing_time_step() {
+        let mut opt = Adam::with_defaults(LearningRate::new(0.01).unwrap());
+        let state = OptimizerState {
+            tensors: Vec::new(),
+            metadata: HashMap::new(),
+        };
+
+        assert!(opt.load_state(&state).is_err());
     }
 }

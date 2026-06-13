@@ -386,6 +386,53 @@ fn resume_with_lr_override_shows_marker_on_optimizer_line() {
 }
 
 #[test]
+fn resume_restores_adam_optimizer_state() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    nrn(
+        dir,
+        &[
+            "synth",
+            "--seed",
+            "2",
+            "--distribution",
+            "ring",
+            "--clusters",
+            "2",
+            "--samples",
+            "20",
+        ],
+    )
+    .success();
+
+    let ds_name = "ring-c2-f2-n20-seed2";
+
+    nrn(
+        dir,
+        &[
+            "train",
+            "start",
+            ds_name,
+            "--epochs",
+            "2",
+            "--checkpoint-interval",
+            "1",
+            "--no-clip",
+            "--lr",
+            "0.001",
+        ],
+    )
+    .success();
+
+    let run_arg = format!("training-model-{ds_name}");
+
+    nrn(dir, &["train", "resume", &run_arg, "--epochs", "3"])
+        .success()
+        .stdout(contains("Restored Adam optimizer state"));
+}
+
+#[test]
 fn resume_rejects_val_ratio_override() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();

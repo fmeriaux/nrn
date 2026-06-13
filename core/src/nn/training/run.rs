@@ -83,7 +83,7 @@ impl TrainingLoop {
         );
 
         if self.epoch_start == 0 && self.hyperparams.checkpoint_interval != 0 {
-            self.evaluate(&evaluator, 0)?;
+            self.checkpoint(&evaluator, 0)?;
         }
 
         let mut early_stopping = self
@@ -147,13 +147,13 @@ impl TrainingLoop {
             }
 
             if Self::is_checkpoint(self.hyperparams.checkpoint_interval, epoch) {
-                final_evaluation = self.evaluate(&evaluator, epoch)?;
+                final_evaluation = self.checkpoint(&evaluator, epoch)?;
             }
         }
 
         let final_evaluation = match final_evaluation {
             Some(eval) => Some(eval),
-            None => self.evaluate(&evaluator, final_epoch)?,
+            None => self.checkpoint(&evaluator, final_epoch)?,
         };
 
         // `None` exactly when there is nothing safe to persist (fatal divergence).
@@ -174,14 +174,24 @@ impl TrainingLoop {
     }
 
     /// Computes an evaluation for the current model and reports it via
-    /// [`Callbacks::on_evaluate`]. Returns `None` without evaluating if the model
+    /// [`Callbacks::on_checkpoint`]. Returns `None` without evaluating if the model
     /// has diverged (non-finite weights), since evaluating it would panic.
-    fn evaluate(&mut self, evaluator: &Evaluator, epoch: usize) -> IoResult<Option<EvaluationSet>> {
+    fn checkpoint(
+        &mut self,
+        evaluator: &Evaluator,
+        epoch: usize,
+    ) -> IoResult<Option<EvaluationSet>> {
         if !self.model.is_finite() {
             return Ok(None);
         }
         let eval = evaluator.eval_set(&self.model, &self.split);
-        self.callbacks.on_evaluate(&self.model, &eval, epoch)?;
+        self.callbacks.on_checkpoint(
+            &self.model,
+            self.hyperparams.optimizer.as_ref(),
+            self.hyperparams.scheduler.as_ref(),
+            &eval,
+            epoch,
+        )?;
         Ok(Some(eval))
     }
 }
@@ -193,8 +203,8 @@ mod tests {
     use crate::data::ModelDataset;
     use crate::loss_functions::CROSS_ENTROPY_LOSS;
     use crate::model::NeuronLayer;
-    use crate::optimizers::Adam;
-    use crate::schedulers::ConstantScheduler;
+    use crate::optimizers::{Adam, Optimizer};
+    use crate::schedulers::{ConstantScheduler, Scheduler};
     use crate::training::{GradientClipping, LearningRate};
     use ndarray::array;
     use std::cell::RefCell;
@@ -266,9 +276,11 @@ mod tests {
             Ok(())
         }
 
-        fn on_evaluate(
+        fn on_checkpoint(
             &mut self,
             _model: &NeuralNetwork,
+            _optimizer: &dyn Optimizer,
+            _scheduler: &dyn Scheduler,
             _eval: &EvaluationSet,
             epoch: usize,
         ) -> IoResult<()> {
@@ -296,9 +308,11 @@ mod tests {
     struct FailingOnEvaluate;
 
     impl TrainingCallback for FailingOnEvaluate {
-        fn on_evaluate(
+        fn on_checkpoint(
             &mut self,
             _model: &NeuralNetwork,
+            _optimizer: &dyn Optimizer,
+            _scheduler: &dyn Scheduler,
             _eval: &EvaluationSet,
             _epoch: usize,
         ) -> IoResult<()> {
@@ -348,9 +362,11 @@ mod tests {
     struct FailingOnEvaluateAfterFirst;
 
     impl TrainingCallback for FailingOnEvaluateAfterFirst {
-        fn on_evaluate(
+        fn on_checkpoint(
             &mut self,
             _model: &NeuralNetwork,
+            _optimizer: &dyn Optimizer,
+            _scheduler: &dyn Scheduler,
             _eval: &EvaluationSet,
             epoch: usize,
         ) -> IoResult<()> {

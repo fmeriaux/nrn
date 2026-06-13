@@ -2,6 +2,8 @@ use super::hyperparams::HyperParams;
 use super::outcome::TrainingOutcome;
 use crate::evaluation::EvaluationSet;
 use crate::model::NeuralNetwork;
+use crate::optimizers::Optimizer;
+use crate::schedulers::Scheduler;
 use std::io::Result;
 
 /// Observes training lifecycle events.
@@ -9,7 +11,7 @@ use std::io::Result;
 /// All methods have default no-op implementations — implement only what you need.
 /// The training loop owns the checkpoint scheduling: it computes an [`EvaluationSet`]
 /// at epoch 0, at each multiple of `checkpoint_interval`, and at the final epoch, then
-/// dispatches it via [`on_evaluate`](TrainingCallback::on_evaluate).
+/// dispatches it via [`on_checkpoint`](TrainingCallback::on_checkpoint).
 pub trait TrainingCallback {
     /// Called once before training begins, with the run's hyperparameters.
     fn on_train_start(&mut self, _hyperparams: &HyperParams) -> Result<()> {
@@ -23,9 +25,13 @@ pub trait TrainingCallback {
 
     /// Called when the loop has computed an [`EvaluationSet`] at `epoch`
     /// (epoch 0, a multiple of `checkpoint_interval`, or the final epoch).
-    fn on_evaluate(
+    /// `optimizer` and `scheduler` give access to their internal state for
+    /// checkpointing (e.g. Adam moments, scheduler step count).
+    fn on_checkpoint(
         &mut self,
         _model: &NeuralNetwork,
+        _optimizer: &dyn Optimizer,
+        _scheduler: &dyn Scheduler,
         _eval: &EvaluationSet,
         _epoch: usize,
     ) -> Result<()> {
@@ -86,15 +92,17 @@ impl TrainingCallback for Callbacks {
         self.0.iter_mut().try_for_each(|cb| cb.on_epoch_end(epoch))
     }
 
-    fn on_evaluate(
+    fn on_checkpoint(
         &mut self,
         model: &NeuralNetwork,
+        optimizer: &dyn Optimizer,
+        scheduler: &dyn Scheduler,
         eval: &EvaluationSet,
         epoch: usize,
     ) -> Result<()> {
         self.0
             .iter_mut()
-            .try_for_each(|cb| cb.on_evaluate(model, eval, epoch))
+            .try_for_each(|cb| cb.on_checkpoint(model, optimizer, scheduler, eval, epoch))
     }
 
     fn on_train_end(
@@ -167,10 +175,16 @@ mod tests {
         let mut callback = DefaultCallback;
         let config = sample_config();
         let model = sample_model();
+        let optimizer = Adam::with_defaults(LearningRate::new(0.01).unwrap());
+        let scheduler = ConstantScheduler::new(LearningRate::new(0.01).unwrap());
 
         assert!(callback.on_train_start(&config).is_ok());
         assert!(callback.on_epoch_end(0).is_ok());
-        assert!(callback.on_evaluate(&model, &sample_eval(), 0).is_ok());
+        assert!(
+            callback
+                .on_checkpoint(&model, &optimizer, &scheduler, &sample_eval(), 0)
+                .is_ok()
+        );
         assert!(
             callback
                 .on_train_end(

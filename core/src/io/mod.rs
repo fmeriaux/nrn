@@ -6,6 +6,7 @@ pub mod gif;
 pub mod hyperparams;
 pub mod json;
 pub mod model;
+pub mod optimizer;
 pub mod path;
 pub mod png;
 pub mod scalers;

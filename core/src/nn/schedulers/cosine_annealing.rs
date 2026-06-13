@@ -1,7 +1,8 @@
 use crate::learning_rate::LearningRate;
-use crate::schedulers::Scheduler;
+use crate::schedulers::{Scheduler, SchedulerState};
 use core::f32::consts::PI;
 use std::fmt;
+use std::io::Result as IoResult;
 
 /// A cosine annealing learning rate scheduler.
 ///
@@ -143,6 +144,17 @@ impl Scheduler for CosineAnnealing {
         }
 
         lr
+    }
+
+    fn save_state(&self) -> Option<SchedulerState> {
+        Some(SchedulerState {
+            current_step: self.current_step,
+        })
+    }
+
+    fn load_state(&mut self, state: &SchedulerState) -> IoResult<()> {
+        self.current_step = state.current_step;
+        Ok(())
     }
 }
 

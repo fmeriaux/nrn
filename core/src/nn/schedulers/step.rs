@@ -1,6 +1,7 @@
 use crate::learning_rate::LearningRate;
-use crate::schedulers::Scheduler;
+use crate::schedulers::{Scheduler, SchedulerState};
 use std::fmt;
+use std::io::Result as IoResult;
 
 #[derive(Debug)]
 pub struct StepDecay {
@@ -78,6 +79,17 @@ impl Scheduler for StepDecay {
         .expect("a positive decay factor applied to a valid learning rate stays valid");
         self.current_step += 1;
         learning_rate
+    }
+
+    fn save_state(&self) -> Option<SchedulerState> {
+        Some(SchedulerState {
+            current_step: self.current_step,
+        })
+    }
+
+    fn load_state(&mut self, state: &SchedulerState) -> IoResult<()> {
+        self.current_step = state.current_step;
+        Ok(())
     }
 }
 

@@ -105,7 +105,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
                 },
             };
             recorder
-                .on_evaluate(&model, &evaluation, epoch * 5)
+                .on_checkpoint(&model, &optimizer, &scheduler, &evaluation, epoch * 5)
                 .unwrap();
             last_recorded_predictions = Some(predictions);
         }
@@ -128,6 +128,11 @@ fn full_pipeline_roundtrips_through_safetensors() {
         last_recorded_predictions.unwrap(),
         last_model.predict(model_dataset.inputs.view())
     );
+
+    // Adam has internal state, so each checkpoint also has an optimizer.safetensors.
+    let last_optimizer_state = archive.optimizer_at(archive.len() - 1).unwrap().unwrap();
+    assert!(!last_optimizer_state.tensors.is_empty());
+    assert!(last_optimizer_state.metadata.contains_key("time_step"));
 
     // --- Inputs (single-vector prediction file) -------------------------
     let inputs = array![0.0, 1.0];

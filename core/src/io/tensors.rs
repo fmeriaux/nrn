@@ -7,7 +7,7 @@
 
 use crate::io::bytes::secure_read;
 use crate::io::path::PathExt;
-use ndarray::{Array, Array1, Array2, Dimension};
+use ndarray::{Array, Array1, Array2, ArrayD, Dimension, IxDyn};
 use safetensors::{Dtype, SafeTensors, View, serialize};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -97,6 +97,22 @@ pub fn read_array1(name: &str, tensors: &SafeTensors) -> Result<Array1<f32>> {
 pub fn read_array2(name: &str, tensors: &SafeTensors) -> Result<Array2<f32>> {
     let (shape, data) = read_f32(name, tensors, 2)?;
     Array2::from_shape_vec((shape[0], shape[1]), data).map_err(invalid)
+}
+
+/// Reads a tensor of arbitrary rank as an `ArrayD<f32>`, e.g. for optimizer
+/// state tensors whose rank depends on the layer they belong to.
+pub fn read_arrayd<V: View>(view: &V) -> Result<ArrayD<f32>> {
+    if view.dtype() != Dtype::F32 {
+        return Err(invalid("tensor is not f32"));
+    }
+
+    let data: Vec<f32> = view
+        .data()
+        .chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect();
+
+    ArrayD::from_shape_vec(IxDyn(view.shape()), data).map_err(invalid)
 }
 
 /// Looks up a required entry in the `__metadata__` map.

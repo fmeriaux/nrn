@@ -3,9 +3,12 @@ use crate::evaluation_history::{EpochEvaluation, EvaluationHistory};
 use crate::io::bytes::secure_read;
 use crate::io::hyperparams::HyperParamsRecord;
 use crate::io::json;
+use crate::io::optimizer as optimizer_io;
 use crate::io::path::PathExt;
 use crate::io::tensors;
 use crate::model::NeuralNetwork;
+use crate::optimizers::{Optimizer, OptimizerState};
+use crate::schedulers::Scheduler;
 use crate::training::TrainingCallback;
 use safetensors::SafeTensors;
 use serde::{Deserialize, Serialize};
@@ -200,8 +203,9 @@ impl TrainingRun {
 /// Writes model checkpoints to a directory.
 ///
 /// Each call to [`write`](CheckpointRecorder::write) creates a subdirectory
-/// `checkpoint-{epoch:06}/` containing `model.safetensors` and `evaluations.json`.
-/// Implements [`TrainingCallback`]: [`on_evaluate`](TrainingCallback::on_evaluate)
+/// `checkpoint-{epoch:06}/` containing `model.safetensors`, `evaluations.json`,
+/// and (if the optimizer or scheduler have internal state) `optimizer.safetensors`.
+/// Implements [`TrainingCallback`]: [`on_checkpoint`](TrainingCallback::on_checkpoint)
 /// writes a checkpoint. Obtained via [`TrainingRun::recorder`].
 #[derive(Debug)]
 pub struct CheckpointRecorder {
@@ -209,10 +213,13 @@ pub struct CheckpointRecorder {
 }
 
 impl CheckpointRecorder {
-    /// Writes `checkpoint-{epoch:06}/` containing the model weights and evaluations.
+    /// Writes `checkpoint-{epoch:06}/` containing the model weights, evaluations,
+    /// and any optimizer/scheduler state.
     pub fn write(
         &self,
         model: &NeuralNetwork,
+        optimizer: &dyn Optimizer,
+        scheduler: &dyn Scheduler,
         evaluation: &EvaluationSet,
         epoch: usize,
     ) -> Result<()> {
@@ -229,18 +236,34 @@ impl CheckpointRecorder {
             checkpoint_dir.join("evaluations"),
         )?;
 
+        let mut state = optimizer.save_state().unwrap_or(OptimizerState {
+            tensors: Vec::new(),
+            metadata: HashMap::new(),
+        });
+        if let Some(scheduler_state) = scheduler.save_state() {
+            state.metadata.insert(
+                "scheduler.current_step".to_string(),
+                scheduler_state.current_step.to_string(),
+            );
+        }
+        if !state.tensors.is_empty() || !state.metadata.is_empty() {
+            optimizer_io::save(&state, checkpoint_dir.join("optimizer"))?;
+        }
+
         Ok(())
     }
 }
 
 impl TrainingCallback for CheckpointRecorder {
-    fn on_evaluate(
+    fn on_checkpoint(
         &mut self,
         model: &NeuralNetwork,
+        optimizer: &dyn Optimizer,
+        scheduler: &dyn Scheduler,
         eval: &EvaluationSet,
         epoch: usize,
     ) -> Result<()> {
-        self.write(model, eval, epoch)
+        self.write(model, optimizer, scheduler, eval, epoch)
     }
 }
 
@@ -297,6 +320,27 @@ impl CheckpointArchive {
         NeuralNetwork::from_tensors(&st, &metadata)
     }
 
+    /// Loads the optimizer/scheduler state at position `index`, or `Ok(None)`
+    /// if the checkpoint has no `optimizer.safetensors` (stateless optimizer,
+    /// or a checkpoint written before this state was tracked).
+    pub fn optimizer_at(&self, index: usize) -> Result<Option<OptimizerState>> {
+        let entry = self.entries.get(index).ok_or_else(|| {
+            Error::new(
+                InvalidData,
+                format!(
+                    "checkpoint index {index} out of range (archive has {} checkpoints)",
+                    self.entries.len()
+                ),
+            )
+        })?;
+
+        if !entry.dir.join("optimizer.safetensors").exists() {
+            return Ok(None);
+        }
+
+        optimizer_io::load(entry.dir.join("optimizer")).map(Some)
+    }
+
     /// Reads all `evaluations.json` files into a pure [`EvaluationHistory`].
     pub fn evaluation_history(&self) -> Result<EvaluationHistory> {
         let mut history = Vec::with_capacity(self.entries.len());
@@ -318,7 +362,18 @@ mod tests {
     use super::*;
     use crate::activations::RELU;
     use crate::model::NeuronLayerSpec;
+    use crate::optimizers::Adam;
+    use crate::schedulers::ConstantScheduler;
+    use crate::training::LearningRate;
     use ndarray::Array2;
+
+    fn sample_optimizer() -> Adam {
+        Adam::with_defaults(LearningRate::new(0.01).unwrap())
+    }
+
+    fn sample_scheduler() -> ConstantScheduler {
+        ConstantScheduler::new(LearningRate::new(0.01).unwrap())
+    }
 
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = PathBuf::from(format!(
@@ -388,7 +443,13 @@ mod tests {
         let dir = temp_dir("no_overwrite");
         let recorder = create_run(&dir, "ds", false).unwrap();
         recorder
-            .write(&sample_model(), &make_eval(0.0, false), 0)
+            .write(
+                &sample_model(),
+                &sample_optimizer(),
+                &sample_scheduler(),
+                &make_eval(0.0, false),
+                0,
+            )
             .unwrap();
 
         let result = create_run(&dir, "ds", false);
@@ -405,13 +466,25 @@ mod tests {
         let recorder = create_run(&dir, "ds", false).unwrap();
         for i in 0..3 {
             recorder
-                .write(&sample_model(), &make_eval(i as f32, false), i * 10)
+                .write(
+                    &sample_model(),
+                    &sample_optimizer(),
+                    &sample_scheduler(),
+                    &make_eval(i as f32, false),
+                    i * 10,
+                )
                 .unwrap();
         }
 
         let recorder = create_run(&dir, "ds", true).unwrap();
         recorder
-            .write(&sample_model(), &make_eval(0.0, false), 0)
+            .write(
+                &sample_model(),
+                &sample_optimizer(),
+                &sample_scheduler(),
+                &make_eval(0.0, false),
+                0,
+            )
             .unwrap();
 
         let archive = CheckpointArchive::load(&dir).unwrap();
@@ -425,7 +498,13 @@ mod tests {
         let dir = temp_dir("write_epoch");
         let recorder = create_run(&dir, "ds", false).unwrap();
         recorder
-            .write(&sample_model(), &make_eval(0.0, false), 37)
+            .write(
+                &sample_model(),
+                &sample_optimizer(),
+                &sample_scheduler(),
+                &make_eval(0.0, false),
+                37,
+            )
             .unwrap();
 
         let exists = dir.join("checkpoint-000037").is_dir();
@@ -440,7 +519,13 @@ mod tests {
         let recorder = create_run(&dir, "ds", false).unwrap();
         for i in 0..3 {
             recorder
-                .write(&sample_model(), &make_eval(i as f32, true), i * 10)
+                .write(
+                    &sample_model(),
+                    &sample_optimizer(),
+                    &sample_scheduler(),
+                    &make_eval(i as f32, true),
+                    i * 10,
+                )
                 .unwrap();
         }
 
@@ -463,7 +548,13 @@ mod tests {
         let recorder = create_run(&dir, "ds", false).unwrap();
         for i in 0..3 {
             recorder
-                .write(&sample_model(), &make_eval(i as f32, false), i * 10)
+                .write(
+                    &sample_model(),
+                    &sample_optimizer(),
+                    &sample_scheduler(),
+                    &make_eval(i as f32, false),
+                    i * 10,
+                )
                 .unwrap();
         }
 
@@ -484,7 +575,15 @@ mod tests {
         let inputs = Array2::from_shape_fn((2, 4), |(i, j)| (i + j) as f32 * 0.3);
 
         let recorder = create_run(&dir, "ds", false).unwrap();
-        recorder.write(&model, &make_eval(0.0, false), 0).unwrap();
+        recorder
+            .write(
+                &model,
+                &sample_optimizer(),
+                &sample_scheduler(),
+                &make_eval(0.0, false),
+                0,
+            )
+            .unwrap();
 
         let archive = CheckpointArchive::load(&dir).unwrap();
         let loaded = archive.model_at(0).unwrap();
@@ -500,7 +599,13 @@ mod tests {
         let recorder = create_run(&dir, "ds", false).unwrap();
         for i in 0..12 {
             recorder
-                .write(&model, &make_eval(i as f32, false), i)
+                .write(
+                    &model,
+                    &sample_optimizer(),
+                    &sample_scheduler(),
+                    &make_eval(i as f32, false),
+                    i,
+                )
                 .unwrap();
         }
 
@@ -519,7 +624,13 @@ mod tests {
         let recorder = create_run(&dir, "ds", false).unwrap();
         for i in 0..5 {
             recorder
-                .write(&sample_model(), &make_eval(i as f32, false), i * 10)
+                .write(
+                    &sample_model(),
+                    &sample_optimizer(),
+                    &sample_scheduler(),
+                    &make_eval(i as f32, false),
+                    i * 10,
+                )
                 .unwrap();
         }
 
@@ -538,7 +649,13 @@ mod tests {
         let recorder = create_run(&dir, "ds", false).unwrap();
         for i in 0..3 {
             recorder
-                .write(&sample_model(), &make_eval(i as f32, false), i * 10)
+                .write(
+                    &sample_model(),
+                    &sample_optimizer(),
+                    &sample_scheduler(),
+                    &make_eval(i as f32, false),
+                    i * 10,
+                )
                 .unwrap();
         }
 
@@ -557,14 +674,26 @@ mod tests {
         let recorder = create_run(&dir, "ds", false).unwrap();
         for i in 0..3 {
             recorder
-                .write(&sample_model(), &make_eval(i as f32, false), i * 10)
+                .write(
+                    &sample_model(),
+                    &sample_optimizer(),
+                    &sample_scheduler(),
+                    &make_eval(i as f32, false),
+                    i * 10,
+                )
                 .unwrap(); // 0, 10, 20
         }
 
         let run = TrainingRun::open(&dir).unwrap();
         run.trim_after(10).unwrap();
         run.recorder()
-            .write(&sample_model(), &make_eval(99.0, false), 20)
+            .write(
+                &sample_model(),
+                &sample_optimizer(),
+                &sample_scheduler(),
+                &make_eval(99.0, false),
+                20,
+            )
             .unwrap();
 
         let archive = CheckpointArchive::load(&dir).unwrap();
@@ -608,7 +737,13 @@ mod tests {
         let dir = temp_dir("model_at_oob");
         let recorder = create_run(&dir, "ds", false).unwrap();
         recorder
-            .write(&sample_model(), &make_eval(0.0, false), 0)
+            .write(
+                &sample_model(),
+                &sample_optimizer(),
+                &sample_scheduler(),
+                &make_eval(0.0, false),
+                0,
+            )
             .unwrap();
 
         let archive = CheckpointArchive::load(&dir).unwrap();
@@ -623,7 +758,13 @@ mod tests {
         let dir = temp_dir("model_at_missing");
         let recorder = create_run(&dir, "ds", false).unwrap();
         recorder
-            .write(&sample_model(), &make_eval(0.0, false), 0)
+            .write(
+                &sample_model(),
+                &sample_optimizer(),
+                &sample_scheduler(),
+                &make_eval(0.0, false),
+                0,
+            )
             .unwrap();
         fs::remove_file(dir.join("checkpoint-000000").join("model.safetensors")).unwrap();
 
@@ -639,7 +780,13 @@ mod tests {
         let dir = temp_dir("model_at_corrupt");
         let recorder = create_run(&dir, "ds", false).unwrap();
         recorder
-            .write(&sample_model(), &make_eval(0.0, false), 0)
+            .write(
+                &sample_model(),
+                &sample_optimizer(),
+                &sample_scheduler(),
+                &make_eval(0.0, false),
+                0,
+            )
             .unwrap();
         fs::write(
             dir.join("checkpoint-000000").join("model.safetensors"),
@@ -659,7 +806,13 @@ mod tests {
         let dir = temp_dir("corrupt_evals");
         let recorder = create_run(&dir, "ds", false).unwrap();
         recorder
-            .write(&sample_model(), &make_eval(0.0, false), 0)
+            .write(
+                &sample_model(),
+                &sample_optimizer(),
+                &sample_scheduler(),
+                &make_eval(0.0, false),
+                0,
+            )
             .unwrap();
         fs::write(
             dir.join("checkpoint-000000").join("evaluations.json"),
@@ -675,12 +828,18 @@ mod tests {
     }
 
     #[test]
-    fn on_evaluate_writes_a_checkpoint() {
-        let dir = temp_dir("on_evaluate");
+    fn on_checkpoint_writes_a_checkpoint() {
+        let dir = temp_dir("on_checkpoint");
         let mut recorder = create_run(&dir, "ds", false).unwrap();
 
         recorder
-            .on_evaluate(&sample_model(), &make_eval(0.0, false), 5)
+            .on_checkpoint(
+                &sample_model(),
+                &sample_optimizer(),
+                &sample_scheduler(),
+                &make_eval(0.0, false),
+                5,
+            )
             .unwrap();
 
         let archive = CheckpointArchive::load(&dir).unwrap();
@@ -691,6 +850,70 @@ mod tests {
     }
 
     #[test]
+    fn write_with_adam_writes_optimizer_state() {
+        let dir = temp_dir("optimizer_adam");
+        let recorder = create_run(&dir, "ds", false).unwrap();
+
+        let mut optimizer = sample_optimizer();
+        let mut trained_model = sample_model();
+        let gradients = crate::gradients::Gradients {
+            dw: Array2::from_elem(trained_model.layers[0].weights.dim(), 0.1),
+            db: ndarray::Array1::from_elem(trained_model.layers[0].biases.dim(), 0.1),
+        };
+        optimizer.update(0, &mut trained_model.layers[0], &gradients);
+        optimizer.step();
+
+        recorder
+            .write(
+                &trained_model,
+                &optimizer,
+                &sample_scheduler(),
+                &make_eval(0.0, false),
+                0,
+            )
+            .unwrap();
+
+        let exists = dir.join("checkpoint-000000/optimizer.safetensors").exists();
+        let archive = CheckpointArchive::load(&dir).unwrap();
+        let state = archive.optimizer_at(0).unwrap();
+        cleanup(&dir);
+
+        assert!(exists);
+        let state = state.unwrap();
+        assert!(!state.tensors.is_empty());
+        assert_eq!(
+            state.metadata.get("time_step").map(String::as_str),
+            Some("2")
+        );
+    }
+
+    #[test]
+    fn write_with_sgd_writes_no_optimizer_file() {
+        let dir = temp_dir("optimizer_sgd");
+        let recorder = create_run(&dir, "ds", false).unwrap();
+
+        let optimizer =
+            crate::optimizers::StochasticGradientDescent::new(LearningRate::new(0.01).unwrap());
+        recorder
+            .write(
+                &sample_model(),
+                &optimizer,
+                &sample_scheduler(),
+                &make_eval(0.0, false),
+                0,
+            )
+            .unwrap();
+
+        let exists = dir.join("checkpoint-000000/optimizer.safetensors").exists();
+        let archive = CheckpointArchive::load(&dir).unwrap();
+        let state = archive.optimizer_at(0).unwrap();
+        cleanup(&dir);
+
+        assert!(!exists);
+        assert!(state.is_none());
+    }
+
+    #[test]
     fn write_fails_when_evaluations_path_is_a_directory() {
         let dir = temp_dir("write_evals_dir_conflict");
         let recorder = create_run(&dir, "ds", false).unwrap();
@@ -698,7 +921,13 @@ mod tests {
         // Pre-create "evaluations.json" as a directory so json::save's fs::write fails.
         fs::create_dir_all(dir.join("checkpoint-000000").join("evaluations.json")).unwrap();
 
-        let result = recorder.write(&sample_model(), &make_eval(0.0, false), 0);
+        let result = recorder.write(
+            &sample_model(),
+            &sample_optimizer(),
+            &sample_scheduler(),
+            &make_eval(0.0, false),
+            0,
+        );
         cleanup(&dir);
 
         assert!(result.is_err());
