@@ -1,9 +1,9 @@
 use super::callbacks::{Callbacks, TrainingCallback};
-use super::config::HyperParams;
 use super::early_stopping::EarlyStopping;
 #[cfg(test)]
 use super::early_stopping::EarlyStoppingConfig;
 use super::evaluator::Evaluator;
+use super::hyperparams::HyperParams;
 use super::outcome::TrainingOutcome;
 use crate::accuracies::accuracy_for;
 use crate::data::ModelSplit;
@@ -90,7 +90,7 @@ impl TrainingLoop {
             .hyperparams
             .early_stopping
             .clone()
-            .map(|cfg| EarlyStopping::new(cfg.patience, cfg.restore_best_model));
+            .map(EarlyStopping::new);
         // Seed best model before epoch 1 so divergence at the first epoch can recover.
         if let Some(ref mut es) = early_stopping
             && self.split.validation.is_some()

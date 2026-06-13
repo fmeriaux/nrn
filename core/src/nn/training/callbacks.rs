@@ -1,4 +1,4 @@
-use super::config::HyperParams;
+use super::hyperparams::HyperParams;
 use super::outcome::TrainingOutcome;
 use crate::evaluation::EvaluationSet;
 use crate::model::NeuralNetwork;

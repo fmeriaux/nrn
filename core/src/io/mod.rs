@@ -3,6 +3,7 @@ pub mod checkpoint;
 pub mod classes;
 pub mod data;
 pub mod gif;
+pub mod hyperparams;
 pub mod json;
 pub mod model;
 pub mod path;

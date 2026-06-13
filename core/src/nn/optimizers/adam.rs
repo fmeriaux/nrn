@@ -82,6 +82,10 @@ impl Optimizer for Adam {
         "Adam"
     }
 
+    fn learning_rate(&self) -> LearningRate {
+        self.learning_rate
+    }
+
     fn set_learning_rate(&mut self, learning_rate: LearningRate) {
         self.learning_rate = learning_rate;
     }

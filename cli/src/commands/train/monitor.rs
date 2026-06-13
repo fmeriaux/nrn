@@ -1,3 +1,4 @@
+use super::recap::{FieldOverride, print_recap};
 use crate::console::{Summary, completed, styled_bar, trace, warning};
 use console::style;
 use indicatif::ProgressBar;
@@ -12,11 +13,15 @@ use std::io::Result;
 /// its redraws, and cleared before the final summary.
 pub struct ConsoleMonitor {
     bar: ProgressBar,
+    overrides: Vec<FieldOverride>,
 }
 
 impl ConsoleMonitor {
-    pub fn new() -> Self {
-        Self { bar: styled_bar() }
+    pub fn new(overrides: Vec<FieldOverride>) -> Self {
+        Self {
+            bar: styled_bar(),
+            overrides,
+        }
     }
 }
 
@@ -26,38 +31,7 @@ impl TrainingCallback for ConsoleMonitor {
         self.bar.set_message("Training");
 
         self.bar.suspend(|| {
-            trace(&format!(
-                "Training for {} epochs",
-                style(hyperparams.epochs).yellow()
-            ));
-            trace(&format!(
-                "Using {} loss function",
-                style(hyperparams.loss.name()).bold().blue()
-            ));
-            trace(&format!(
-                "Using {} optimizer",
-                style(hyperparams.optimizer.name()).bold().blue()
-            ));
-            trace(&format!(
-                "Using {} scheduler",
-                style(hyperparams.scheduler.name()).bold().blue()
-            ));
-            trace(&hyperparams.clipping.summary());
-
-            match hyperparams.batch_size {
-                Some(batch_size) => trace(&format!(
-                    "Using mini-batches of {} samples",
-                    style(batch_size).yellow()
-                )),
-                None => trace("Using full-batch gradient descent"),
-            }
-
-            if hyperparams.checkpoint_interval > 0 {
-                trace(&format!(
-                    "Recording a checkpoint every {} epochs",
-                    style(hyperparams.checkpoint_interval).yellow()
-                ));
-            }
+            print_recap(hyperparams, &self.overrides);
         });
 
         Ok(())

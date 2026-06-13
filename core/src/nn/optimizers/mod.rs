@@ -20,6 +20,9 @@ pub trait Optimizer {
     /// Returns a human-readable name for this optimizer.
     fn name(&self) -> &'static str;
 
+    /// Returns the optimizer's current learning rate.
+    fn learning_rate(&self) -> LearningRate;
+
     /// Sets the learning rate for the optimizer.
     /// This allows dynamic adjustment of the learning rate during training.
     fn set_learning_rate(&mut self, learning_rate: LearningRate);

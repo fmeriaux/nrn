@@ -9,6 +9,7 @@ use nrn::data::scalers::{MinMaxScaler, Scaler, ScalerMethod};
 use nrn::evaluation::{Evaluation, EvaluationSet};
 use nrn::io::checkpoint::{CheckpointArchive, TrainingMeta, TrainingRun};
 use nrn::io::data::{load_inputs, save_inputs};
+use nrn::io::hyperparams::HyperParamsRecord;
 use nrn::io::scalers::ScalerRecord;
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
@@ -69,6 +70,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
         &run_dir,
         &TrainingMeta {
             dataset: "test_dataset".to_string(),
+            hyperparams: HyperParamsRecord::sample(),
         },
         false,
     )

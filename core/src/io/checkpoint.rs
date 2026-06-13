@@ -1,6 +1,7 @@
 use crate::evaluation::{Evaluation, EvaluationSet};
 use crate::evaluation_history::{EpochEvaluation, EvaluationHistory};
 use crate::io::bytes::secure_read;
+use crate::io::hyperparams::HyperParamsRecord;
 use crate::io::json;
 use crate::io::path::PathExt;
 use crate::io::tensors;
@@ -20,6 +21,7 @@ use std::result::Result as StdResult;
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TrainingMeta {
     pub dataset: String,
+    pub hyperparams: HyperParamsRecord,
 }
 
 impl TrainingMeta {
@@ -341,6 +343,7 @@ mod tests {
             path,
             &TrainingMeta {
                 dataset: dataset.to_string(),
+                hyperparams: HyperParamsRecord::sample(),
             },
             overwrite,
         )?

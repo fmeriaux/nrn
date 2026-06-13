@@ -28,6 +28,10 @@ impl Optimizer for StochasticGradientDescent {
         "Stochastic Gradient Descent (SGD)"
     }
 
+    fn learning_rate(&self) -> LearningRate {
+        self.learning_rate
+    }
+
     fn set_learning_rate(&mut self, learning_rate: LearningRate) {
         self.learning_rate = learning_rate;
     }

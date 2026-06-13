@@ -1,4 +1,5 @@
 use crate::model::NeuralNetwork;
+use std::fmt;
 
 /// Declarative early-stopping settings, part of a [`crate::training::HyperParams`] spec.
 /// Constructs the runtime [`EarlyStopping`] via [`EarlyStopping::new`].
@@ -8,6 +9,37 @@ pub struct EarlyStoppingConfig {
     pub patience: usize,
     /// Whether to restore the model to the state with the best observed loss when stopping.
     pub restore_best_model: bool,
+}
+
+/// Returned by [`EarlyStoppingConfig::new`] when `patience` is zero.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EarlyStoppingConfigError;
+
+impl fmt::Display for EarlyStoppingConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "early stopping patience must be greater than zero")
+    }
+}
+
+impl std::error::Error for EarlyStoppingConfigError {}
+
+impl EarlyStoppingConfig {
+    /// Creates a new early-stopping config.
+    /// # Errors
+    /// Returns [`EarlyStoppingConfigError`] when `patience` is zero.
+    pub fn new(
+        patience: usize,
+        restore_best_model: bool,
+    ) -> Result<Self, EarlyStoppingConfigError> {
+        if patience > 0 {
+            Ok(EarlyStoppingConfig {
+                patience,
+                restore_best_model,
+            })
+        } else {
+            Err(EarlyStoppingConfigError)
+        }
+    }
 }
 
 /// Early stopping mechanism is used to halt training when the model's performance on a validation set
@@ -26,17 +58,13 @@ pub struct EarlyStopping {
 }
 
 impl EarlyStopping {
-    /// Creates a new `EarlyStopping` instance with the specified patience and restore_best_model flag.
-    /// # Panics
-    /// - When the `patience` is zero.
-    pub fn new(patience: usize, restore_best_model: bool) -> Self {
-        assert!(patience > 0, "Patience must be greater than zero.");
-
+    /// Creates a new `EarlyStopping` instance from the given config.
+    pub fn new(config: EarlyStoppingConfig) -> Self {
         EarlyStopping {
-            patience,
+            patience: config.patience,
             best_loss: f32::INFINITY,
             epochs_without_improvement: 0,
-            restore_best_model,
+            restore_best_model: config.restore_best_model,
             best_model: None,
         }
     }
@@ -78,7 +106,7 @@ mod tests {
         // Sequence: loss 1.0 → 0.5 (best, saved) → 0.8 → 0.9 (patience=2 exhausted)
         // After stop, best_model must reflect the state at loss=0.5, not the final state.
         let specs = NeuronLayerSpec::network_for(vec![2], &*SIGMOID, 2);
-        let mut es = EarlyStopping::new(2, true);
+        let mut es = EarlyStopping::new(EarlyStoppingConfig::new(2, true).unwrap());
 
         let model_initial = NeuralNetwork::initialization(2, &specs);
         let mut model_at_best = model_initial.clone();
@@ -104,7 +132,7 @@ mod tests {
         // With restore_best_model = false, an improvement must NOT clone the model.
         let specs = NeuronLayerSpec::network_for(vec![2], &*SIGMOID, 2);
         let model = NeuralNetwork::initialization(2, &specs);
-        let mut es = EarlyStopping::new(2, false);
+        let mut es = EarlyStopping::new(EarlyStoppingConfig::new(2, false).unwrap());
 
         assert!(!es.check(1.0, &model)); // improvement, but no snapshot is taken
         assert!(es.best_model.is_none());
@@ -114,7 +142,7 @@ mod tests {
     fn seed_best_model_seeds_when_restore_enabled() {
         let specs = NeuronLayerSpec::network_for(vec![2], &*SIGMOID, 2);
         let model = NeuralNetwork::initialization(2, &specs);
-        let mut es = EarlyStopping::new(2, true);
+        let mut es = EarlyStopping::new(EarlyStoppingConfig::new(2, true).unwrap());
 
         es.seed_best_model(&model);
 
@@ -125,10 +153,18 @@ mod tests {
     fn seed_best_model_is_noop_when_restore_disabled() {
         let specs = NeuronLayerSpec::network_for(vec![2], &*SIGMOID, 2);
         let model = NeuralNetwork::initialization(2, &specs);
-        let mut es = EarlyStopping::new(2, false);
+        let mut es = EarlyStopping::new(EarlyStoppingConfig::new(2, false).unwrap());
 
         es.seed_best_model(&model);
 
         assert!(es.best_model.is_none());
+    }
+
+    #[test]
+    fn rejects_zero_patience() {
+        match EarlyStoppingConfig::new(0, false) {
+            Err(EarlyStoppingConfigError) => {}
+            Ok(_) => panic!("expected EarlyStoppingConfigError"),
+        }
     }
 }

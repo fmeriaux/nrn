@@ -1,5 +1,6 @@
 mod model_saver;
 mod monitor;
+mod recap;
 
 use crate::actions::*;
 use crate::console::{RUN_ICON, Summary, completed, loaded, recording_at, warning};
@@ -8,16 +9,13 @@ use model_saver::ModelSaver;
 use monitor::ConsoleMonitor;
 use nrn::data::ModelSplit;
 use nrn::io::checkpoint::{CheckpointRecorder, TrainingMeta, TrainingRun};
-use nrn::loss_functions::CROSS_ENTROPY_LOSS;
-use nrn::model::NeuralNetwork;
-use nrn::optimizers::{Adam, Optimizer, StochasticGradientDescent};
-use nrn::schedulers;
-use nrn::schedulers::{ConstantScheduler, Scheduler, StepDecay};
-use nrn::training::{
-    Callbacks, EarlyStoppingConfig, FatalDivergence, GradientClipping, HyperParams, LearningRate,
-    TrainingLoop,
+use nrn::io::hyperparams::{
+    ClippingRecord, EarlyStoppingRecord, HyperParamsRecord, LossRecord, OptimizerRecord,
+    SchedulerRecord,
 };
-use schedulers::CosineAnnealing;
+use nrn::model::NeuralNetwork;
+use nrn::training::{Callbacks, FatalDivergence, HyperParams, TrainingLoop};
+use recap::FieldOverride;
 use std::error::Error;
 use std::fmt::Display;
 use std::io::{Error as IoError, ErrorKind, Result as IoResult};
@@ -154,129 +152,65 @@ pub struct TrainArgs {
 }
 
 impl TrainArgs {
-    fn validate(&self) -> Result<(), Box<dyn Error>> {
-        if self.epochs < 1 {
-            return Err("The number of epochs must be greater than zero.".into());
-        }
-        if self.lr < 0.0 {
-            return Err("The learning rate must be a non-negative value.".into());
-        }
-        if let Some(lr_min) = self.lr_min
-            && (lr_min < 0.0 || lr_min >= self.lr)
-        {
-            return Err("The minimum learning rate must be non-negative and less than the initial learning rate.".into());
-        }
-        if self.decay_factor <= 0.0 {
-            return Err("The decay factor must be a positive value.".into());
-        }
-        if let Some(steps) = self.steps
-            && steps < 1
-        {
-            return Err("The step size must be greater than zero.".into());
-        }
-        if self.clip_norm <= 0.0 {
-            return Err("The gradient clipping norm must be a positive value.".into());
-        }
-        if let Some(clip_value) = self.clip_value
-            && clip_value <= 0.0
-        {
-            return Err("The gradient clipping value must be a positive value.".into());
-        }
-        if let Some(cycle_multiplier) = self.cycle_multiplier
-            && cycle_multiplier < 1
-        {
-            return Err("The cycle multiplier must be at least 1.".into());
-        }
-        if self.val_ratio < 0.0 || self.val_ratio >= 1.0 {
-            return Err("Validation ratio must be in the range [0.0, 1.0)".into());
-        }
-        if self.test_ratio <= 0.0 || self.test_ratio >= 1.0 {
-            return Err("Test ratio must be in the range [0.0, 1.0)".into());
-        }
-        if self.val_ratio + self.test_ratio >= 1.0 {
-            return Err("The sum of validation and test ratios must be less than 1.0".into());
-        }
-        Ok(())
-    }
+    /// Maps these CLI arguments onto a [`HyperParamsRecord`], the serializable
+    /// counterpart reconstructed (and validated) via
+    /// [`HyperParamsRecord::into_hyperparams`].
+    fn to_record(&self) -> HyperParamsRecord {
+        let optimizer = match self.optimizer {
+            OptimizerType::Sgd => OptimizerRecord::Sgd,
+            OptimizerType::Adam => OptimizerRecord::Adam,
+        };
 
-    fn make_optimizer(&self) -> Box<dyn Optimizer> {
-        match self.optimizer {
-            OptimizerType::Sgd => Box::new(StochasticGradientDescent::new(self.lr())),
-            OptimizerType::Adam => Box::new(Adam::with_defaults(self.lr())),
-        }
-    }
+        let steps = self.steps.unwrap_or(self.epochs);
 
-    fn make_scheduler(&self) -> Box<dyn Scheduler> {
-        match self.scheduler {
-            SchedulerType::Constant => Box::new(ConstantScheduler::new(self.lr())),
-            SchedulerType::Cosine => {
-                let cosine = CosineAnnealing::new(self.lr_min(), self.lr(), self.step_size())
-                    .expect("validate() guarantees lr_min < lr and a positive step size");
-                if self.warm_restarts {
-                    Box::new(
-                        cosine
-                            .with_restarts(true, self.cycle_multiplier.unwrap_or(1))
-                            .expect("validate() guarantees a cycle multiplier of at least 1"),
-                    )
-                } else {
-                    Box::new(cosine)
-                }
-            }
-            SchedulerType::Step => Box::new(
-                StepDecay::new(self.lr(), self.step_size(), self.decay_factor)
-                    .expect("validate() guarantees a positive step size and decay factor"),
-            ),
-        }
-    }
+        let scheduler = match self.scheduler {
+            SchedulerType::Constant => SchedulerRecord::Constant,
+            SchedulerType::Cosine => SchedulerRecord::Cosine {
+                lr_min: self.lr_min.unwrap_or(0.0),
+                steps,
+                warm_restarts: self.warm_restarts,
+                cycle_multiplier: self.cycle_multiplier.unwrap_or(1),
+            },
+            SchedulerType::Step => SchedulerRecord::Step {
+                decay_factor: self.decay_factor,
+                steps,
+            },
+        };
 
-    fn infer_clipping(&self) -> GradientClipping {
-        if self.no_clip {
-            GradientClipping::None
+        let clipping = if self.no_clip {
+            ClippingRecord::None
         } else if let Some(value) = self.clip_value {
-            GradientClipping::value(-value, value)
-                .expect("validate() guarantees a positive clip value")
+            ClippingRecord::Value {
+                min: -value,
+                max: value,
+            }
         } else {
-            GradientClipping::norm(self.clip_norm)
-                .expect("validate() guarantees a positive clip norm")
-        }
-    }
+            ClippingRecord::Norm {
+                max_norm: self.clip_norm,
+            }
+        };
 
-    fn early_stopping(&self) -> Option<EarlyStoppingConfig> {
-        if self.early_stopping > 0 {
-            Some(EarlyStoppingConfig {
+        let early_stopping = if self.early_stopping > 0 {
+            Some(EarlyStoppingRecord {
                 patience: self.early_stopping,
                 restore_best_model: self.restore_best_model,
             })
         } else {
             None
-        }
-    }
+        };
 
-    fn lr(&self) -> LearningRate {
-        LearningRate::new(self.lr).expect("validate() guarantees a non-negative learning rate")
-    }
-
-    fn lr_min(&self) -> LearningRate {
-        LearningRate::new(self.lr_min.unwrap_or(0.0))
-            .expect("validate() guarantees a non-negative minimum learning rate")
-    }
-
-    fn step_size(&self) -> usize {
-        self.steps.unwrap_or(self.epochs)
-    }
-
-    fn make_hyperparams(&self) -> HyperParams {
-        HyperParams {
+        HyperParamsRecord {
             epochs: self.epochs,
             checkpoint_interval: self.checkpoint_interval,
             batch_size: self.batch_size,
-            loss: CROSS_ENTROPY_LOSS.clone(),
-            optimizer: self.make_optimizer(),
-            scheduler: self.make_scheduler(),
-            clipping: self.infer_clipping(),
-            early_stopping: self.early_stopping(),
+            lr: self.lr,
+            optimizer,
+            scheduler,
+            clipping,
+            early_stopping,
             val_ratio: self.val_ratio,
             test_ratio: self.test_ratio,
+            loss: LossRecord::CrossEntropy,
         }
     }
 }
@@ -309,27 +243,24 @@ pub struct StartArgs {
 }
 
 impl StartArgs {
-    fn validate(&self) -> Result<(), Box<dyn Error>> {
-        self.hp.validate()?;
+    pub fn run(&self) -> Result<(), Box<dyn Error>> {
         if let Some(ref layers) = self.layers
             && layers.contains(&0)
         {
             return Err("Each hidden layer must have at least one neuron.".into());
         }
-        Ok(())
-    }
-
-    pub fn run(&self) -> Result<(), Box<dyn Error>> {
-        self.validate()?;
 
         let dataset_name = get_file_stem(Path::new(&self.dataset));
         let dataset_path = Path::new(&self.dataset);
         let dataset = load_dataset(&self.dataset)?;
         dataset.validate()?;
 
+        let record = self.hp.to_record();
+        let hyperparams = record.into_hyperparams()?;
+
         let split = dataset
             .to_model_dataset()
-            .split(self.hp.val_ratio, self.hp.test_ratio);
+            .split(record.val_ratio, record.test_ratio);
         completed(split.summary().as_str());
 
         let model = match &self.model {
@@ -348,8 +279,9 @@ impl StartArgs {
         let run_dir = dataset_path.with_file_name(format!("training-model-{dataset_name}"));
         let model_save_path = dataset_path.with_file_name(format!("model-{dataset_name}"));
 
-        let recorder = if self.hp.checkpoint_interval > 0 {
-            let recorder = create_checkpoint_recorder(&run_dir, &dataset_name, self.overwrite)?;
+        let recorder = if record.checkpoint_interval > 0 {
+            let recorder =
+                create_checkpoint_recorder(&run_dir, &dataset_name, &record, self.overwrite)?;
             recording_at(RUN_ICON, "TRAINING RUN", &run_dir);
             Some(recorder)
         } else {
@@ -357,17 +289,193 @@ impl StartArgs {
         };
 
         execute_training(
-            self.hp.make_hyperparams(),
+            hyperparams,
             model,
             split,
             0,
             model_save_path,
             recorder,
+            Vec::new(),
         )
     }
 }
 
 // ─── Resume ───────────────────────────────────────────────────────────────────
+
+/// Overridable hyperparameters at `train resume`. Unlike `train start`, the
+/// dataset, model architecture, and split ratios are fixed by the run's
+/// metadata and cannot be changed here. Changing the optimizer or scheduler
+/// *algorithm* (as opposed to its learning rate / decay parameters) also
+/// isn't supported on resume — start a new run for that.
+#[derive(Args, Debug)]
+pub struct ResumeOverrides {
+    /// Override: number of epochs to train
+    #[arg(short, long)]
+    epochs: Option<usize>,
+
+    /// Override: checkpoint interval (0 = no checkpoints)
+    #[arg(short = 'k', long)]
+    checkpoint_interval: Option<usize>,
+
+    /// Override: learning rate
+    #[arg(long)]
+    lr: Option<f32>,
+
+    /// Override: minimum learning rate (only applies if the run uses a cosine scheduler)
+    #[arg(long)]
+    lr_min: Option<f32>,
+
+    /// Override: gradient clipping L2 norm
+    #[arg(long, conflicts_with_all = &["clip_value", "no_clip"])]
+    clip_norm: Option<f32>,
+
+    /// Override: element-wise gradient clipping value
+    #[arg(long, conflicts_with_all = &["clip_norm", "no_clip"])]
+    clip_value: Option<f32>,
+
+    /// Override: disable gradient clipping
+    #[arg(long, conflicts_with_all = &["clip_norm", "clip_value"])]
+    no_clip: bool,
+
+    /// Override: early stopping patience (0 = disabled)
+    #[arg(long)]
+    early_stopping: Option<usize>,
+
+    /// Override: restore the best model when early stopping triggers
+    #[arg(long)]
+    restore_best_model: Option<bool>,
+
+    /// Override: mini-batch size
+    #[arg(long, conflicts_with = "full_batch")]
+    batch_size: Option<usize>,
+
+    /// Override: use full-batch gradient descent
+    #[arg(long, conflicts_with = "batch_size")]
+    full_batch: bool,
+}
+
+impl ResumeOverrides {
+    /// Applies the requested overrides onto `record` in place, returning the
+    /// [`FieldOverride`]s whose value actually changed (for the recap).
+    fn apply(&self, record: &mut HyperParamsRecord) -> Vec<FieldOverride> {
+        let mut overrides = Vec::new();
+
+        if let Some(epochs) = self.epochs
+            && epochs != record.epochs
+        {
+            overrides.push(FieldOverride {
+                field: "Epochs",
+                meta_value: record.epochs.to_string(),
+            });
+            record.epochs = epochs;
+        }
+
+        if let Some(checkpoint_interval) = self.checkpoint_interval
+            && checkpoint_interval != record.checkpoint_interval
+        {
+            overrides.push(FieldOverride {
+                field: "Checkpoints",
+                meta_value: recap::checkpoints_value(record.checkpoint_interval),
+            });
+            record.checkpoint_interval = checkpoint_interval;
+        }
+
+        if let Some(lr) = self.lr
+            && lr != record.lr
+        {
+            overrides.push(FieldOverride {
+                field: "Optimizer",
+                meta_value: recap::optimizer_record_value(record),
+            });
+            record.lr = lr;
+        }
+
+        if let Some(lr_min) = self.lr_min
+            && let SchedulerRecord::Cosine {
+                lr_min: current_lr_min,
+                ..
+            } = &record.scheduler
+            && lr_min != *current_lr_min
+        {
+            overrides.push(FieldOverride {
+                field: "Scheduler",
+                meta_value: recap::scheduler_record_value(&record.scheduler),
+            });
+            if let SchedulerRecord::Cosine {
+                lr_min: current_lr_min,
+                ..
+            } = &mut record.scheduler
+            {
+                *current_lr_min = lr_min;
+            }
+        }
+
+        let new_clipping = if self.no_clip {
+            Some(ClippingRecord::None)
+        } else if let Some(value) = self.clip_value {
+            Some(ClippingRecord::Value {
+                min: -value,
+                max: value,
+            })
+        } else {
+            self.clip_norm
+                .map(|max_norm| ClippingRecord::Norm { max_norm })
+        };
+        if let Some(clipping) = new_clipping
+            && clipping != record.clipping
+        {
+            overrides.push(FieldOverride {
+                field: "Clipping",
+                meta_value: recap::clipping_record_value(&record.clipping),
+            });
+            record.clipping = clipping;
+        }
+
+        if self.early_stopping.is_some() || self.restore_best_model.is_some() {
+            let patience = self
+                .early_stopping
+                .unwrap_or_else(|| record.early_stopping.as_ref().map_or(0, |es| es.patience));
+            let restore_best_model = self.restore_best_model.unwrap_or_else(|| {
+                record
+                    .early_stopping
+                    .as_ref()
+                    .is_none_or(|es| es.restore_best_model)
+            });
+            let new_early_stopping = if patience > 0 {
+                Some(EarlyStoppingRecord {
+                    patience,
+                    restore_best_model,
+                })
+            } else {
+                None
+            };
+            if new_early_stopping != record.early_stopping {
+                overrides.push(FieldOverride {
+                    field: "Early stopping",
+                    meta_value: recap::early_stopping_record_value(&record.early_stopping),
+                });
+                record.early_stopping = new_early_stopping;
+            }
+        }
+
+        if self.full_batch || self.batch_size.is_some() {
+            let new_batch_size = if self.full_batch {
+                None
+            } else {
+                self.batch_size
+            };
+            if new_batch_size != record.batch_size {
+                overrides.push(FieldOverride {
+                    field: "Batches",
+                    meta_value: recap::batches_value(record.batch_size),
+                });
+                record.batch_size = new_batch_size;
+            }
+        }
+
+        overrides
+    }
+}
 
 #[derive(Args, Debug)]
 pub struct ResumeArgs {
@@ -379,13 +487,11 @@ pub struct ResumeArgs {
     from: Option<usize>,
 
     #[command(flatten)]
-    hp: TrainArgs,
+    overrides: ResumeOverrides,
 }
 
 impl ResumeArgs {
     pub fn run(&self) -> Result<(), Box<dyn Error>> {
-        self.hp.validate()?;
-
         let run_dir = Path::new(&self.run_dir);
         let run = TrainingRun::open(run_dir)?;
         let meta = run.meta();
@@ -393,9 +499,13 @@ impl ResumeArgs {
         let dataset = load_dataset(&meta.dataset)?;
         dataset.validate()?;
 
+        let mut record = meta.hyperparams.clone();
+        let overrides = self.overrides.apply(&mut record);
+        let hyperparams = record.into_hyperparams()?;
+
         let split = dataset
             .to_model_dataset()
-            .split(self.hp.val_ratio, self.hp.test_ratio);
+            .split(record.val_ratio, record.test_ratio);
         completed(split.summary().as_str());
 
         let archive = run.archive()?;
@@ -424,7 +534,7 @@ impl ResumeArgs {
         let model = archive.model_at(checkpoint_idx)?;
         loaded(&model);
 
-        if matches!(self.hp.optimizer, OptimizerType::Adam) {
+        if matches!(record.optimizer, OptimizerRecord::Adam) {
             warning(
                 "Resuming with Adam: optimizer state is not restored, \
                  its moments restart from zero for the first epochs",
@@ -440,7 +550,7 @@ impl ResumeArgs {
             .epoch_at(checkpoint_idx)
             .expect("checkpoint_idx was just validated against archive.len()");
 
-        let recorder = if self.hp.checkpoint_interval > 0 {
+        let recorder = if record.checkpoint_interval > 0 {
             let trimmed = run.trim_after(from_epoch)?;
             if trimmed > 0 {
                 warning(&format!(
@@ -454,12 +564,13 @@ impl ResumeArgs {
         };
 
         execute_training(
-            self.hp.make_hyperparams(),
+            hyperparams,
             model,
             split,
             from_epoch,
             model_save_path,
             recorder,
+            overrides,
         )
     }
 }
@@ -475,9 +586,10 @@ fn execute_training(
     epoch_start: usize,
     model_save_path: PathBuf,
     recorder: Option<CheckpointRecorder>,
+    overrides: Vec<FieldOverride>,
 ) -> Result<(), Box<dyn Error>> {
     let callbacks = Callbacks::empty()
-        .with(ConsoleMonitor::new())
+        .with(ConsoleMonitor::new(overrides))
         .with(ModelSaver::new(model_save_path))
         .with_opt(recorder);
 
@@ -513,10 +625,12 @@ fn divergence_error(divergence: FatalDivergence) -> Box<dyn Error> {
 fn create_checkpoint_recorder(
     run_dir: &Path,
     dataset_name: &str,
+    hyperparams: &HyperParamsRecord,
     overwrite: bool,
 ) -> IoResult<CheckpointRecorder> {
     let meta = TrainingMeta {
         dataset: dataset_name.to_string(),
+        hyperparams: hyperparams.clone(),
     };
     TrainingRun::create(run_dir, &meta, overwrite)
         .map(|run| run.recorder())

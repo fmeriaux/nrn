@@ -274,6 +274,163 @@ fn model_exists(dir: &Path, ds_name: &str) -> bool {
 }
 
 #[test]
+fn start_prints_recap_without_overrides() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    nrn(
+        dir,
+        &[
+            "synth",
+            "--seed",
+            "1",
+            "--distribution",
+            "ring",
+            "--clusters",
+            "2",
+            "--samples",
+            "20",
+        ],
+    )
+    .success();
+
+    let ds_name = "ring-c2-f2-n20-seed1";
+
+    let out = Command::cargo_bin("nrn")
+        .unwrap()
+        .current_dir(dir)
+        .args([
+            "train",
+            "start",
+            ds_name,
+            "--epochs",
+            "2",
+            "--checkpoint-interval",
+            "1",
+            "--no-clip",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("TRAINING HYPERPARAMETERS"),
+        "expected hyperparameters recap in stdout: {stdout}"
+    );
+    assert!(
+        !stdout.contains("was"),
+        "a fresh run must not show any override marker: {stdout}"
+    );
+}
+
+#[test]
+fn resume_with_lr_override_shows_marker_on_optimizer_line() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    nrn(
+        dir,
+        &[
+            "synth",
+            "--seed",
+            "2",
+            "--distribution",
+            "ring",
+            "--clusters",
+            "2",
+            "--samples",
+            "20",
+        ],
+    )
+    .success();
+
+    let ds_name = "ring-c2-f2-n20-seed2";
+
+    nrn(
+        dir,
+        &[
+            "train",
+            "start",
+            ds_name,
+            "--epochs",
+            "2",
+            "--checkpoint-interval",
+            "1",
+            "--no-clip",
+            "--lr",
+            "0.001",
+        ],
+    )
+    .success();
+
+    let run_arg = format!("training-model-{ds_name}");
+
+    let out = Command::cargo_bin("nrn")
+        .unwrap()
+        .current_dir(dir)
+        .args(["train", "resume", &run_arg, "--epochs", "3", "--lr", "0.01"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let optimizer_line = stdout
+        .lines()
+        .find(|line| line.contains("Optimizer"))
+        .unwrap_or_default();
+    assert!(
+        optimizer_line.contains("was") && optimizer_line.contains("0.001"),
+        "expected the Optimizer recap line to mark the previous lr: {optimizer_line}"
+    );
+}
+
+#[test]
+fn resume_rejects_val_ratio_override() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    nrn(
+        dir,
+        &[
+            "synth",
+            "--seed",
+            "3",
+            "--distribution",
+            "ring",
+            "--clusters",
+            "2",
+            "--samples",
+            "20",
+        ],
+    )
+    .success();
+
+    let ds_name = "ring-c2-f2-n20-seed3";
+
+    nrn(
+        dir,
+        &[
+            "train",
+            "start",
+            ds_name,
+            "--epochs",
+            "2",
+            "--checkpoint-interval",
+            "1",
+            "--no-clip",
+        ],
+    )
+    .success();
+
+    let run_arg = format!("training-model-{ds_name}");
+
+    nrn(dir, &["train", "resume", &run_arg, "--val-ratio", "0.2"])
+        .failure()
+        .stderr(contains("unexpected argument"));
+}
+
+#[test]
 fn divergence_with_early_stopping_recovers_best_model() {
     // lr=5.0 + no-clip causes divergence at epoch 2-3 for any He-initialized model.
     // With --early-stopping + restore_best_model (default), the best model seen before
