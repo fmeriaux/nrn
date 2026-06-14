@@ -157,9 +157,11 @@ impl Optimizer for Adam {
         self.time_step = state
             .metadata
             .get("time_step")
-            .ok_or(OptimizerStateError::MissingTimeStep)?
+            .ok_or_else(|| OptimizerStateError::MissingMetadata("time_step".to_string()))?
             .parse()
-            .map_err(|_| OptimizerStateError::InvalidTimeStep)?;
+            .map_err(|_| OptimizerStateError::InvalidMetadata {
+                key: "time_step".to_string(),
+            })?;
 
         let mut partials: HashMap<usize, PartialAdamState> = HashMap::new();
 

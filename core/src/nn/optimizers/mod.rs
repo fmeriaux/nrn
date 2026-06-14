@@ -32,10 +32,10 @@ pub struct OptimizerState {
 /// or malformed for the optimizer being restored.
 #[derive(Debug)]
 pub enum OptimizerStateError {
-    /// The state is missing its `time_step` metadata entry.
-    MissingTimeStep,
-    /// The `time_step` metadata entry could not be parsed as an integer.
-    InvalidTimeStep,
+    /// A required metadata entry was missing from the state.
+    MissingMetadata(String),
+    /// A metadata entry could not be parsed into the expected type.
+    InvalidMetadata { key: String },
     /// A tensor was present but did not have the expected rank.
     WrongRank { tensor: String, expected: usize },
     /// A required tensor was missing from the state.
@@ -45,11 +45,11 @@ pub enum OptimizerStateError {
 impl fmt::Display for OptimizerStateError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            OptimizerStateError::MissingTimeStep => {
-                write!(f, "optimizer state is missing `time_step`")
+            OptimizerStateError::MissingMetadata(key) => {
+                write!(f, "optimizer state is missing `{key}`")
             }
-            OptimizerStateError::InvalidTimeStep => {
-                write!(f, "optimizer state has an invalid `time_step`")
+            OptimizerStateError::InvalidMetadata { key } => {
+                write!(f, "optimizer state has an invalid `{key}`")
             }
             OptimizerStateError::WrongRank { tensor, expected } => {
                 write!(f, "tensor `{tensor}` is not rank {expected}")
