@@ -4,9 +4,8 @@ use nrn::io::hyperparams::{
 };
 use nrn::training::{
     EarlyStoppingConfig, EarlyStoppingConfigError, GradientClipping, GradientClippingError,
-    HyperParameters, LearningRate, LossConfig, OptimizerConfig, SchedulerConfig,
+    HyperParameters, HyperParametersError, LossConfig, OptimizerConfig, SchedulerConfig,
 };
-use std::error::Error;
 
 // ─── Value enums ─────────────────────────────────────────────────────────────
 
@@ -157,17 +156,19 @@ impl TrainArgs {
 }
 
 impl TryFrom<&TrainArgs> for HyperParameters {
-    type Error = Box<dyn Error>;
+    type Error = HyperParametersError;
 
     /// Assembles the CLI arguments into a validated domain spec, surfacing any
     /// invalid value (non-positive learning rate, bad clipping bounds,
-    /// cross-field invariant violations) as an error.
+    /// cross-field invariant violations) as a single [`HyperParametersError`].
+    /// The caller-specific clipping and early-stopping components are built from
+    /// the arg shapes here, their errors folding into the same type via `?`.
     fn try_from(args: &TrainArgs) -> Result<Self, Self::Error> {
-        Ok(HyperParameters::new(
+        HyperParameters::from_values(
             args.epochs,
             args.checkpoint_interval,
             args.batch_size,
-            LearningRate::new(args.lr)?,
+            args.lr,
             args.optimizer.into(),
             SchedulerConfig::from(args),
             GradientClipping::try_from(args)?,
@@ -175,7 +176,7 @@ impl TryFrom<&TrainArgs> for HyperParameters {
             args.early_stopping()?,
             args.val_ratio,
             args.test_ratio,
-        )?)
+        )
     }
 }
 

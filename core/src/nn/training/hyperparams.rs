@@ -1,9 +1,9 @@
 use super::callbacks::Callbacks;
-use super::early_stopping::EarlyStoppingConfig;
+use super::early_stopping::{EarlyStoppingConfig, EarlyStoppingConfigError};
 use super::trainer::Trainer;
 use crate::data::ModelSplit;
-use crate::gradients::GradientClipping;
-use crate::learning_rate::LearningRate;
+use crate::gradients::{GradientClipping, GradientClippingError};
+use crate::learning_rate::{LearningRate, LearningRateError};
 use crate::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use crate::model::NeuralNetwork;
 use crate::optimizers::{Adam, Optimizer, StochasticGradientDescent};
@@ -129,8 +129,12 @@ pub struct HyperParameters {
     test_ratio: f32,
 }
 
-/// Returned by [`HyperParameters::new`] when an invariant is violated, either a
-/// cross-field one or an invalid schedule parameter.
+/// The single error type for constructing a [`HyperParameters`] spec, whether
+/// from already-validated components ([`HyperParameters::new`]) or from raw
+/// values ([`HyperParameters::from_values`]). It aggregates both the cross-field
+/// invariants and every component-level validation failure (learning rate,
+/// clipping, schedule, early stopping), so callers that assemble a spec from raw
+/// inputs need a single error rather than their own union.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HyperParametersError {
     /// `epochs` was zero.
@@ -143,6 +147,12 @@ pub enum HyperParametersError {
     InvalidTestRatio(f32),
     /// `val_ratio + test_ratio` was not less than `1.0`.
     SplitRatiosTooLarge { val_ratio: f32, test_ratio: f32 },
+    /// The learning rate was negative or non-finite.
+    LearningRate(LearningRateError),
+    /// The gradient-clipping bounds were invalid.
+    Clipping(GradientClippingError),
+    /// The early-stopping parameters were invalid.
+    EarlyStopping(EarlyStoppingConfigError),
     /// The cosine schedule parameters were invalid.
     Cosine(CosineAnnealingError),
     /// The step-decay schedule parameters were invalid.
@@ -171,6 +181,9 @@ impl fmt::Display for HyperParametersError {
                 f,
                 "the sum of validation and test ratios must be less than 1.0, got val={val_ratio}, test={test_ratio}"
             ),
+            HyperParametersError::LearningRate(e) => write!(f, "{e}"),
+            HyperParametersError::Clipping(e) => write!(f, "{e}"),
+            HyperParametersError::EarlyStopping(e) => write!(f, "{e}"),
             HyperParametersError::Cosine(e) => write!(f, "{e}"),
             HyperParametersError::Step(e) => write!(f, "{e}"),
         }
@@ -178,6 +191,24 @@ impl fmt::Display for HyperParametersError {
 }
 
 impl std::error::Error for HyperParametersError {}
+
+impl From<LearningRateError> for HyperParametersError {
+    fn from(e: LearningRateError) -> Self {
+        HyperParametersError::LearningRate(e)
+    }
+}
+
+impl From<GradientClippingError> for HyperParametersError {
+    fn from(e: GradientClippingError) -> Self {
+        HyperParametersError::Clipping(e)
+    }
+}
+
+impl From<EarlyStoppingConfigError> for HyperParametersError {
+    fn from(e: EarlyStoppingConfigError) -> Self {
+        HyperParametersError::EarlyStopping(e)
+    }
+}
 
 impl From<CosineAnnealingError> for HyperParametersError {
     fn from(e: CosineAnnealingError) -> Self {
@@ -249,6 +280,47 @@ impl HyperParameters {
             val_ratio,
             test_ratio,
         })
+    }
+
+    /// Creates a fully validated specification from a raw learning rate.
+    ///
+    /// Convenience constructor for callers that hold an unvalidated `f32` learning
+    /// rate (the CLI, a persisted record): it builds the [`LearningRate`] and
+    /// delegates to [`new`](HyperParameters::new), folding the learning-rate
+    /// validation into the same [`HyperParametersError`]. The `clipping` and
+    /// `early_stopping` components are taken already built, since their raw form
+    /// is caller-specific; their construction errors convert into
+    /// [`HyperParametersError`] via `?` at the call site.
+    /// # Errors
+    /// Returns [`HyperParametersError`] if any invariant is violated, including a
+    /// negative or non-finite `lr`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_values(
+        epochs: usize,
+        checkpoint_interval: usize,
+        batch_size: Option<usize>,
+        lr: f32,
+        optimizer: OptimizerConfig,
+        scheduler: SchedulerConfig,
+        clipping: GradientClipping,
+        loss: LossConfig,
+        early_stopping: Option<EarlyStoppingConfig>,
+        val_ratio: f32,
+        test_ratio: f32,
+    ) -> Result<Self, HyperParametersError> {
+        HyperParameters::new(
+            epochs,
+            checkpoint_interval,
+            batch_size,
+            LearningRate::new(lr)?,
+            optimizer,
+            scheduler,
+            clipping,
+            loss,
+            early_stopping,
+            val_ratio,
+            test_ratio,
+        )
     }
 
     pub fn epochs(&self) -> usize {

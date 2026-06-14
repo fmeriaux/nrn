@@ -229,7 +229,6 @@ mod tests {
     use super::*;
     use crate::activations::SIGMOID;
     use crate::data::ModelDataset;
-    use crate::learning_rate::LearningRate;
     use crate::model::NeuronLayer;
     use crate::optimizers::Optimizer;
     use crate::schedulers::Scheduler;
@@ -272,11 +271,11 @@ mod tests {
         lr: f32,
         early_stopping: Option<EarlyStoppingConfig>,
     ) -> HyperParameters {
-        HyperParameters::new(
+        HyperParameters::from_values(
             epochs,
             checkpoint_interval,
             None,
-            LearningRate::new(lr).unwrap(),
+            lr,
             OptimizerConfig::Adam,
             SchedulerConfig::Constant,
             GradientClipping::None,

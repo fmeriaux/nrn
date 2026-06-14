@@ -1,11 +1,9 @@
 use crate::gradients::{GradientClipping, GradientClippingError};
-use crate::learning_rate::{LearningRate, LearningRateError};
 use crate::training::{
     EarlyStoppingConfig, EarlyStoppingConfigError, HyperParameters, HyperParametersError,
     LossConfig, OptimizerConfig, SchedulerConfig,
 };
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "type", content = "params")]
@@ -204,53 +202,6 @@ pub struct HyperParametersRecord {
     pub loss: LossRecord,
 }
 
-/// Returned by [`HyperParameters::try_from`] when a record describes an invalid
-/// hyperparameter spec (e.g. a hand-edited `meta.json`).
-#[derive(Debug)]
-pub enum HyperParametersRecordError {
-    LearningRate(LearningRateError),
-    Clipping(GradientClippingError),
-    EarlyStopping(EarlyStoppingConfigError),
-    HyperParameters(HyperParametersError),
-}
-
-impl fmt::Display for HyperParametersRecordError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            HyperParametersRecordError::LearningRate(e) => write!(f, "{e}"),
-            HyperParametersRecordError::Clipping(e) => write!(f, "{e}"),
-            HyperParametersRecordError::EarlyStopping(e) => write!(f, "{e}"),
-            HyperParametersRecordError::HyperParameters(e) => write!(f, "{e}"),
-        }
-    }
-}
-
-impl std::error::Error for HyperParametersRecordError {}
-
-impl From<LearningRateError> for HyperParametersRecordError {
-    fn from(e: LearningRateError) -> Self {
-        HyperParametersRecordError::LearningRate(e)
-    }
-}
-
-impl From<GradientClippingError> for HyperParametersRecordError {
-    fn from(e: GradientClippingError) -> Self {
-        HyperParametersRecordError::Clipping(e)
-    }
-}
-
-impl From<EarlyStoppingConfigError> for HyperParametersRecordError {
-    fn from(e: EarlyStoppingConfigError) -> Self {
-        HyperParametersRecordError::EarlyStopping(e)
-    }
-}
-
-impl From<HyperParametersError> for HyperParametersRecordError {
-    fn from(e: HyperParametersError) -> Self {
-        HyperParametersRecordError::HyperParameters(e)
-    }
-}
-
 impl From<&HyperParameters> for HyperParametersRecord {
     fn from(hyperparameters: &HyperParameters) -> Self {
         HyperParametersRecord {
@@ -270,13 +221,15 @@ impl From<&HyperParameters> for HyperParametersRecord {
 }
 
 impl TryFrom<HyperParametersRecord> for HyperParameters {
-    type Error = HyperParametersRecordError;
+    type Error = HyperParametersError;
 
-    /// Validates a record back into the domain spec. Each component is rebuilt
-    /// through its own (fallible) conversion, so an invalid record yields a
-    /// [`HyperParametersRecordError`] instead of a panic.
+    /// Validates a record back into the domain spec. The caller-specific
+    /// components (clipping, early stopping) are rebuilt through their own
+    /// fallible conversions, whose errors fold into [`HyperParametersError`] via
+    /// `?`; the rest is delegated to [`HyperParameters::from_values`]. So an
+    /// invalid record (e.g. a hand-edited `meta.json`) yields a single typed
+    /// error instead of a panic.
     fn try_from(record: HyperParametersRecord) -> Result<Self, Self::Error> {
-        let lr = LearningRate::new(record.lr)?;
         let clipping = GradientClipping::try_from(&record.clipping)?;
         let early_stopping = record
             .early_stopping
@@ -284,11 +237,11 @@ impl TryFrom<HyperParametersRecord> for HyperParameters {
             .map(EarlyStoppingConfig::try_from)
             .transpose()?;
 
-        Ok(HyperParameters::new(
+        HyperParameters::from_values(
             record.epochs,
             record.checkpoint_interval,
             record.batch_size,
-            lr,
+            record.lr,
             (&record.optimizer).into(),
             (&record.scheduler).into(),
             clipping,
@@ -296,7 +249,7 @@ impl TryFrom<HyperParametersRecord> for HyperParameters {
             early_stopping,
             record.val_ratio,
             record.test_ratio,
-        )?)
+        )
     }
 }
 
@@ -474,7 +427,7 @@ mod tests {
 
         assert!(matches!(
             HyperParameters::try_from(record),
-            Err(HyperParametersRecordError::LearningRate(_))
+            Err(HyperParametersError::LearningRate(_))
         ));
     }
 
@@ -485,7 +438,7 @@ mod tests {
 
         assert!(matches!(
             HyperParameters::try_from(record),
-            Err(HyperParametersRecordError::Clipping(_))
+            Err(HyperParametersError::Clipping(_))
         ));
     }
 
@@ -499,7 +452,7 @@ mod tests {
 
         assert!(matches!(
             HyperParameters::try_from(record),
-            Err(HyperParametersRecordError::EarlyStopping(_))
+            Err(HyperParametersError::EarlyStopping(_))
         ));
     }
 
@@ -511,7 +464,7 @@ mod tests {
 
         assert!(matches!(
             HyperParameters::try_from(record),
-            Err(HyperParametersRecordError::HyperParameters(_))
+            Err(HyperParametersError::SplitRatiosTooLarge { .. })
         ));
     }
 
@@ -529,7 +482,7 @@ mod tests {
 
         assert!(matches!(
             HyperParameters::try_from(record),
-            Err(HyperParametersRecordError::HyperParameters(_))
+            Err(HyperParametersError::Cosine(_))
         ));
     }
 }

@@ -3,8 +3,7 @@ use nrn::activations::SIGMOID;
 use nrn::data::{ModelDataset, ModelSplit};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::training::{
-    Callbacks, GradientClipping, HyperParameters, LearningRate, LossConfig, OptimizerConfig,
-    SchedulerConfig,
+    Callbacks, GradientClipping, HyperParameters, LossConfig, OptimizerConfig, SchedulerConfig,
 };
 
 #[test]
@@ -17,11 +16,11 @@ fn xor_converges_to_low_loss() {
 
     let specs = NeuronLayerSpec::network_for(vec![8], &*SIGMOID, 2);
 
-    let report = HyperParameters::new(
+    let report = HyperParameters::from_values(
         10_000,
         0,
         None,
-        LearningRate::new(0.1).unwrap(),
+        0.1,
         OptimizerConfig::Adam,
         SchedulerConfig::Constant,
         GradientClipping::None,
@@ -60,11 +59,11 @@ fn xor_converges_with_mini_batch() {
 
     let specs = NeuronLayerSpec::network_for(vec![8], &*SIGMOID, 2);
 
-    let report = HyperParameters::new(
+    let report = HyperParameters::from_values(
         8_000,
         0,
         Some(2),
-        LearningRate::new(0.01).unwrap(),
+        0.01,
         OptimizerConfig::Adam,
         SchedulerConfig::Constant,
         GradientClipping::None,
@@ -107,11 +106,11 @@ fn three_class_converges_to_low_loss() {
     // (He init sets biases to zero, so relu([0,0]) = 0 and its gradient is dead at epoch 0).
     let specs = NeuronLayerSpec::network_for(vec![8], &*SIGMOID, 3);
 
-    let report = HyperParameters::new(
+    let report = HyperParameters::from_values(
         5_000,
         0,
         None,
-        LearningRate::new(0.05).unwrap(),
+        0.05,
         OptimizerConfig::Adam,
         SchedulerConfig::Constant,
         GradientClipping::None,
