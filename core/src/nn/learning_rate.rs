@@ -37,3 +37,12 @@ impl LearningRate {
         self.0
     }
 }
+
+impl TryFrom<f32> for LearningRate {
+    type Error = LearningRateError;
+
+    /// Validates a raw value into a [`LearningRate`], mirroring [`LearningRate::new`].
+    fn try_from(value: f32) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
