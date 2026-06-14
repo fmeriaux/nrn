@@ -257,17 +257,16 @@ mod tests {
     use crate::io::hyperparams::HyperParamsRecord;
     use crate::io::run::{TrainingMeta, TrainingRun};
     use crate::model::NeuronLayerSpec;
-    use crate::optimizers::Adam;
+    use crate::optimizers::{Adam, StochasticGradientDescent};
     use crate::schedulers::ConstantScheduler;
-    use crate::training::LearningRate;
     use ndarray::Array2;
 
     fn sample_optimizer() -> Adam {
-        Adam::with_defaults(LearningRate::new(0.01).unwrap())
+        Adam::with_defaults(0.01.try_into().unwrap())
     }
 
     fn sample_scheduler() -> ConstantScheduler {
-        ConstantScheduler::from_value(0.01).unwrap()
+        ConstantScheduler::new(0.01.try_into().unwrap())
     }
 
     fn temp_dir(tag: &str) -> PathBuf {
@@ -637,8 +636,7 @@ mod tests {
         let dir = temp_dir("optimizer_sgd");
         let recorder = create_run(&dir, "ds", false).unwrap();
 
-        let optimizer =
-            crate::optimizers::StochasticGradientDescent::new(LearningRate::new(0.01).unwrap());
+        let optimizer = StochasticGradientDescent::new(0.01.try_into().unwrap());
         recorder
             .write(
                 &sample_model(),

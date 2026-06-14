@@ -1,4 +1,4 @@
-use crate::learning_rate::{LearningRate, LearningRateError};
+use crate::learning_rate::LearningRate;
 use crate::nn::schedulers::Scheduler;
 
 /// A learning rate scheduler that always returns the same learning rate.
@@ -30,13 +30,6 @@ impl ConstantScheduler {
     pub fn new(learning_rate: LearningRate) -> Self {
         Self { learning_rate }
     }
-
-    /// Creates a new `ConstantScheduler` from a raw learning rate value.
-    /// # Errors
-    /// Returns [`LearningRateError`] when `learning_rate` is negative or non-finite.
-    pub fn from_value(learning_rate: f32) -> Result<Self, LearningRateError> {
-        Ok(Self::new(LearningRate::new(learning_rate)?))
-    }
 }
 
 impl Scheduler for ConstantScheduler {
@@ -55,13 +48,13 @@ mod tests {
 
     #[test]
     fn name_is_constant() {
-        let s = ConstantScheduler::from_value(0.003).unwrap();
+        let s = ConstantScheduler::new(0.003.try_into().unwrap());
         assert_eq!(s.name(), "Constant");
     }
 
     #[test]
     fn always_returns_the_same_rate() {
-        let mut s = ConstantScheduler::from_value(0.003).unwrap();
+        let mut s = ConstantScheduler::new(0.003.try_into().unwrap());
         for _ in 0..5 {
             assert!((s.step().value() - 0.003).abs() < 1e-9);
         }

@@ -180,14 +180,14 @@ impl HyperParamsRecord {
         };
 
         let scheduler: Box<dyn Scheduler> = match &self.scheduler {
-            SchedulerRecord::Constant => Box::new(ConstantScheduler::from_value(self.lr)?),
+            SchedulerRecord::Constant => Box::new(ConstantScheduler::new(lr)),
             SchedulerRecord::Cosine {
                 lr_min,
                 steps,
                 warm_restarts,
                 cycle_multiplier,
             } => {
-                let cosine = CosineAnnealing::from_values(*lr_min, self.lr, *steps)?;
+                let cosine = CosineAnnealing::new((*lr_min).try_into()?, lr, *steps)?;
                 if *warm_restarts {
                     Box::new(cosine.with_restarts(true, *cycle_multiplier)?)
                 } else {
@@ -197,7 +197,7 @@ impl HyperParamsRecord {
             SchedulerRecord::Step {
                 decay_factor,
                 steps,
-            } => Box::new(StepDecay::from_values(self.lr, *steps, *decay_factor)?),
+            } => Box::new(StepDecay::new(lr, *steps, *decay_factor)?),
         };
 
         let clipping = GradientClipping::try_from(&self.clipping)?;

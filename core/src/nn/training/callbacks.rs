@@ -127,7 +127,7 @@ mod tests {
     use crate::model::NeuronLayerSpec;
     use crate::optimizers::Adam;
     use crate::schedulers::ConstantScheduler;
-    use crate::training::{GradientClipping, LearningRate};
+    use crate::training::GradientClipping;
     use std::cell::RefCell;
     use std::io::Error;
     use std::rc::Rc;
@@ -142,8 +142,8 @@ mod tests {
             1,
             None,
             CROSS_ENTROPY_LOSS.clone(),
-            Box::new(Adam::with_defaults(LearningRate::new(0.01).unwrap())),
-            Box::new(ConstantScheduler::from_value(0.01).unwrap()),
+            Box::new(Adam::with_defaults(0.01.try_into().unwrap())),
+            Box::new(ConstantScheduler::new(0.01.try_into().unwrap())),
             GradientClipping::None,
             None,
             0.1,
@@ -176,8 +176,8 @@ mod tests {
         let mut callback = DefaultCallback;
         let config = sample_config();
         let model = sample_model();
-        let optimizer = Adam::with_defaults(LearningRate::new(0.01).unwrap());
-        let scheduler = ConstantScheduler::from_value(0.01).unwrap();
+        let optimizer = Adam::with_defaults(0.01.try_into().unwrap());
+        let scheduler = ConstantScheduler::new(0.01.try_into().unwrap());
 
         assert!(callback.on_train_start(&config).is_ok());
         assert!(callback.on_epoch_end(0).is_ok());

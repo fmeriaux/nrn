@@ -5,7 +5,7 @@ use nrn::loss_functions::CROSS_ENTROPY_LOSS;
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::Adam;
 use nrn::schedulers::ConstantScheduler;
-use nrn::training::{Callbacks, GradientClipping, HyperParams, LearningRate, TrainingLoop};
+use nrn::training::{Callbacks, GradientClipping, HyperParams, TrainingLoop};
 
 #[test]
 fn xor_converges_to_low_loss() {
@@ -30,8 +30,8 @@ fn xor_converges_to_low_loss() {
             0,
             None,
             CROSS_ENTROPY_LOSS.clone(),
-            Box::new(Adam::with_defaults(LearningRate::new(0.1).unwrap())),
-            Box::new(ConstantScheduler::from_value(0.1).unwrap()),
+            Box::new(Adam::with_defaults(0.1.try_into().unwrap())),
+            Box::new(ConstantScheduler::new(0.1.try_into().unwrap())),
             GradientClipping::None,
             None,
             0.1,
@@ -72,8 +72,8 @@ fn xor_converges_with_mini_batch() {
             0,
             Some(2),
             CROSS_ENTROPY_LOSS.clone(),
-            Box::new(Adam::with_defaults(LearningRate::new(0.01).unwrap())),
-            Box::new(ConstantScheduler::from_value(0.01).unwrap()),
+            Box::new(Adam::with_defaults(0.01.try_into().unwrap())),
+            Box::new(ConstantScheduler::new(0.01.try_into().unwrap())),
             GradientClipping::None,
             None,
             0.1,
@@ -118,8 +118,8 @@ fn three_class_converges_to_low_loss() {
             0,
             None,
             CROSS_ENTROPY_LOSS.clone(),
-            Box::new(Adam::with_defaults(LearningRate::new(0.05).unwrap())),
-            Box::new(ConstantScheduler::from_value(0.05).unwrap()),
+            Box::new(Adam::with_defaults(0.05.try_into().unwrap())),
+            Box::new(ConstantScheduler::new(0.05.try_into().unwrap())),
             GradientClipping::None,
             None,
             0.1,

@@ -18,7 +18,7 @@ use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::Adam;
 use nrn::schedulers::ConstantScheduler;
-use nrn::training::{GradientClipping, LearningRate, TrainingCallback};
+use nrn::training::{GradientClipping, TrainingCallback};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -80,8 +80,8 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let mut model = NeuralNetwork::initialization(2, &specs);
 
     let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
-    let mut optimizer = Adam::with_defaults(LearningRate::new(0.05).unwrap());
-    let mut scheduler = ConstantScheduler::from_value(0.05).unwrap();
+    let mut optimizer = Adam::with_defaults(0.05.try_into().unwrap());
+    let mut scheduler = ConstantScheduler::new(0.05.try_into().unwrap());
     let clipping = GradientClipping::None;
 
     let run_dir = dir.join("training");

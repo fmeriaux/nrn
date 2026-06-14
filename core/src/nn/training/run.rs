@@ -195,7 +195,7 @@ mod tests {
     use crate::model::NeuronLayer;
     use crate::optimizers::{Adam, Optimizer};
     use crate::schedulers::{ConstantScheduler, Scheduler};
-    use crate::training::{GradientClipping, LearningRate};
+    use crate::training::GradientClipping;
     use ndarray::array;
     use std::cell::RefCell;
     use std::io::Error;
@@ -239,8 +239,8 @@ mod tests {
             checkpoint_interval,
             None,
             CROSS_ENTROPY_LOSS.clone(),
-            Box::new(Adam::with_defaults(LearningRate::new(lr).unwrap())),
-            Box::new(ConstantScheduler::from_value(lr).unwrap()),
+            Box::new(Adam::with_defaults(lr.try_into().unwrap())),
+            Box::new(ConstantScheduler::new(lr.try_into().unwrap())),
             GradientClipping::None,
             early_stopping,
             0.1,
