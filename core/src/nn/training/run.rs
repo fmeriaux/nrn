@@ -241,7 +241,7 @@ mod tests {
             None,
             CROSS_ENTROPY_LOSS.clone(),
             Box::new(Adam::with_defaults(LearningRate::new(lr).unwrap())),
-            Box::new(ConstantScheduler::new(LearningRate::new(lr).unwrap())),
+            Box::new(ConstantScheduler::from_value(lr).unwrap()),
             GradientClipping::None,
             early_stopping,
             0.1,

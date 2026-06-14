@@ -8,11 +8,12 @@ use clap::*;
 use model_saver::ModelSaver;
 use monitor::ConsoleMonitor;
 use nrn::data::ModelSplit;
+use nrn::io::checkpoint::CheckpointRecorder;
 use nrn::io::hyperparams::{
     ClippingRecord, EarlyStoppingRecord, HyperParamsRecord, LossRecord, OptimizerRecord,
     SchedulerRecord,
 };
-use nrn::io::run::{CheckpointRecorder, TrainingMeta, TrainingRun};
+use nrn::io::run::{TrainingMeta, TrainingRun};
 use nrn::model::NeuralNetwork;
 use nrn::schedulers::SchedulerState;
 use nrn::training::{Callbacks, FatalDivergence, HyperParams, TrainingLoop};

@@ -143,7 +143,7 @@ mod tests {
             None,
             CROSS_ENTROPY_LOSS.clone(),
             Box::new(Adam::with_defaults(LearningRate::new(0.01).unwrap())),
-            Box::new(ConstantScheduler::new(LearningRate::new(0.01).unwrap())),
+            Box::new(ConstantScheduler::from_value(0.01).unwrap()),
             GradientClipping::None,
             None,
             0.1,
@@ -177,7 +177,7 @@ mod tests {
         let config = sample_config();
         let model = sample_model();
         let optimizer = Adam::with_defaults(LearningRate::new(0.01).unwrap());
-        let scheduler = ConstantScheduler::new(LearningRate::new(0.01).unwrap());
+        let scheduler = ConstantScheduler::from_value(0.01).unwrap();
 
         assert!(callback.on_train_start(&config).is_ok());
         assert!(callback.on_epoch_end(0).is_ok());

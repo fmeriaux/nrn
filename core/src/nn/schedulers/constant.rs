@@ -55,13 +55,13 @@ mod tests {
 
     #[test]
     fn name_is_constant() {
-        let s = ConstantScheduler::new(LearningRate::new(0.003).unwrap());
+        let s = ConstantScheduler::from_value(0.003).unwrap();
         assert_eq!(s.name(), "Constant");
     }
 
     #[test]
     fn always_returns_the_same_rate() {
-        let mut s = ConstantScheduler::new(LearningRate::new(0.003).unwrap());
+        let mut s = ConstantScheduler::from_value(0.003).unwrap();
         for _ in 0..5 {
             assert!((s.step().value() - 0.003).abs() < 1e-9);
         }

@@ -227,7 +227,10 @@ impl HyperParamsRecord {
 
         Ok(hyperparams)
     }
+}
 
+#[cfg(test)]
+impl HyperParamsRecord {
     /// A representative, valid record used as a fixture in tests.
     pub fn sample() -> Self {
         HyperParamsRecord {

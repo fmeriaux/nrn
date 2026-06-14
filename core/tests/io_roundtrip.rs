@@ -7,9 +7,12 @@ use nrn::activations::RELU;
 use nrn::data::Dataset;
 use nrn::data::scalers::{MinMaxScaler, Scaler, ScalerMethod};
 use nrn::evaluation::{Evaluation, EvaluationSet};
+use nrn::io::checkpoint::CheckpointArchive;
 use nrn::io::data::{load_inputs, save_inputs};
-use nrn::io::hyperparams::HyperParamsRecord;
-use nrn::io::run::{CheckpointArchive, TrainingMeta, TrainingRun};
+use nrn::io::hyperparams::{
+    ClippingRecord, HyperParamsRecord, LossRecord, OptimizerRecord, SchedulerRecord,
+};
+use nrn::io::run::{TrainingMeta, TrainingRun};
 use nrn::io::scalers::ScalerRecord;
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
@@ -23,6 +26,22 @@ fn temp_dir() -> PathBuf {
     let dir = PathBuf::from(format!("target/nrn_it_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
+}
+
+fn sample_hyperparams() -> HyperParamsRecord {
+    HyperParamsRecord {
+        epochs: 10,
+        checkpoint_interval: 5,
+        batch_size: Some(32),
+        lr: 0.05,
+        optimizer: OptimizerRecord::Adam,
+        scheduler: SchedulerRecord::Constant,
+        clipping: ClippingRecord::None,
+        early_stopping: None,
+        val_ratio: 0.1,
+        test_ratio: 0.1,
+        loss: LossRecord::CrossEntropy,
+    }
 }
 
 #[test]
@@ -62,7 +81,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
 
     let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
     let mut optimizer = Adam::with_defaults(LearningRate::new(0.05).unwrap());
-    let mut scheduler = ConstantScheduler::new(LearningRate::new(0.05).unwrap());
+    let mut scheduler = ConstantScheduler::from_value(0.05).unwrap();
     let clipping = GradientClipping::None;
 
     let run_dir = dir.join("training");
@@ -70,7 +89,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
         &run_dir,
         &TrainingMeta {
             dataset: "test_dataset".to_string(),
-            hyperparams: HyperParamsRecord::sample(),
+            hyperparams: sample_hyperparams(),
         },
         false,
     )

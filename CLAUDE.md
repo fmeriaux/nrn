@@ -113,10 +113,14 @@ checkpoint evaluation series are tensors too. Scalers are JSON. `io/tensors.rs` 
 adapter and (de)serialization helpers; the `io` module does the activation-name → `Arc<dyn Activation>`
 round-trip via `ActivationProvider::get_by_name`.
 
-- **`io/run.rs`** — `CheckpointRecorder` (a `TrainingCallback`) writes one
-  `checkpoint-{epoch:06}/model.safetensors` + `evaluations.json` per checkpoint interval, with run-level
-  `TrainingMeta`. `CheckpointRecorder::resume(dir, from_epoch)` reopens a directory and trims checkpoints
-  after `from_epoch`. `CheckpointArchive` reads back: `model_at(i)`, `epoch_at(i)`, `evaluation_history()`.
+- **`io/run.rs`** — `TrainingRun`, the handle to a run directory: `create`/`open` (writing/loading
+  run-level `TrainingMeta` in `meta.json`), `recorder()`, `trim_after(from_epoch)` (rewinds the
+  trajectory by removing later checkpoints), and `archive()`.
+- **`io/checkpoint.rs`** — the `checkpoint-{epoch:06}/` format and its reader/writer. `CheckpointRecorder`
+  (a `TrainingCallback`, obtained via `TrainingRun::recorder`) writes `model.safetensors` +
+  `evaluations.json` (+ `optimizer.safetensors` when the optimizer/scheduler carry state) per checkpoint.
+  `CheckpointArchive` reads back: `model_at(i)`, `optimizer_at(i)`, `epoch_at(i)`, `evaluation_history()`.
+  Model weights round-trip through `NeuralNetwork::save`/`load` (`io/model.rs`).
 
 ### CLI (`cli/src/`)
 

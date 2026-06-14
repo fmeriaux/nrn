@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 impl NeuralNetwork {
     /// Appends this network's tensors and metadata to the provided collections.
-    pub(crate) fn collect_tensors(
+    fn collect_tensors(
         &self,
         entries: &mut Vec<(String, F32Tensor)>,
         metadata: &mut HashMap<String, String>,
@@ -27,10 +27,7 @@ impl NeuralNetwork {
     }
 
     /// Rebuilds a network from a deserialized safetensors buffer and its metadata map.
-    pub(crate) fn from_tensors(
-        st: &SafeTensors,
-        metadata: &HashMap<String, String>,
-    ) -> Result<Self> {
+    fn from_tensors(st: &SafeTensors, metadata: &HashMap<String, String>) -> Result<Self> {
         let n_layers: usize = tensors::meta(metadata, "n_layers")?
             .parse()
             .map_err(|e| Error::new(InvalidData, format!("invalid layer count: {e}")))?;
