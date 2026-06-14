@@ -11,14 +11,21 @@ use std::sync::Arc;
 /// [`crate::training::TrainingLoop`] and passed by reference to
 /// [`crate::training::TrainingCallback::on_train_start`].
 pub struct HyperParams {
+    /// Number of epochs to train; must be at least `1`.
     epochs: usize,
     /// Interval (in epochs) between scheduled evaluations/checkpoints; `0` disables them.
     checkpoint_interval: usize,
+    /// Mini-batch size; `None` runs full-batch gradient descent each epoch.
     batch_size: Option<usize>,
+    /// Loss function minimized during training.
     loss: Arc<dyn LossFunction>,
+    /// Parameter-update rule (e.g. SGD, Adam); carries its own per-run state.
     optimizer: Box<dyn Optimizer>,
+    /// Learning-rate schedule, stepped once per epoch.
     scheduler: Box<dyn Scheduler>,
+    /// Gradient-clipping strategy applied before each parameter update.
     clipping: GradientClipping,
+    /// Early-stopping policy; `None` always trains for the full `epochs` count.
     early_stopping: Option<EarlyStoppingConfig>,
     /// Fraction of the dataset held out for validation. Part of the run's
     /// identity (the resulting split), not consumed by [`crate::training::TrainingLoop`].
@@ -153,22 +160,38 @@ impl HyperParams {
         self.optimizer.as_ref()
     }
 
-    pub fn optimizer_mut(&mut self) -> &mut Box<dyn Optimizer> {
-        &mut self.optimizer
+    pub fn optimizer_mut(&mut self) -> &mut dyn Optimizer {
+        self.optimizer.as_mut()
     }
 
     pub fn scheduler(&self) -> &dyn Scheduler {
         self.scheduler.as_ref()
     }
 
-    pub fn scheduler_mut(&mut self) -> &mut Box<dyn Scheduler> {
-        &mut self.scheduler
+    pub fn scheduler_mut(&mut self) -> &mut dyn Scheduler {
+        self.scheduler.as_mut()
     }
 
-    /// Borrows the optimizer and scheduler mutably at once, for a single
-    /// [`crate::model::NeuralNetwork::train`] step.
-    pub fn optimizer_and_scheduler_mut(&mut self) -> (&mut dyn Optimizer, &mut dyn Scheduler) {
-        (self.optimizer.as_mut(), self.scheduler.as_mut())
+    /// Lends every per-epoch input of [`crate::model::NeuralNetwork::train`] as
+    /// one combined borrow, so the caller can take the immutable (loss, clipping)
+    /// and mutable (optimizer, scheduler) borrows together rather than cloning to
+    /// release them.
+    pub fn train_inputs(
+        &mut self,
+    ) -> (
+        &Arc<dyn LossFunction>,
+        &mut dyn Optimizer,
+        &mut dyn Scheduler,
+        &GradientClipping,
+        Option<usize>,
+    ) {
+        (
+            &self.loss,
+            self.optimizer.as_mut(),
+            self.scheduler.as_mut(),
+            &self.clipping,
+            self.batch_size,
+        )
     }
 
     /// Builds the runtime [`EarlyStopping`] tracker from this spec's config,

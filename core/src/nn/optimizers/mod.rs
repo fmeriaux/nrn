@@ -21,8 +21,8 @@ use std::fmt;
 
 /// Optimizer-agnostic snapshot of internal state (e.g. Adam's moment
 /// estimates), shaped like a model: named tensors of arbitrary rank plus
-/// scalar metadata. Encoding to/from safetensors lives in `io::optimizer`;
-/// this type stays free of serde/safetensors.
+/// scalar metadata. Serialization lives behind the `io` feature; this type
+/// stays free of serde/safetensors.
 pub struct OptimizerState {
     pub tensors: Vec<(String, ArrayD<f32>)>,
     pub metadata: HashMap<String, String>,

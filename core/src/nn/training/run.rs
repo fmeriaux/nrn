@@ -95,16 +95,14 @@ impl TrainingLoop {
         let mut final_evaluation = None;
 
         for epoch in (self.epoch_start + 1)..=(self.epoch_start + self.hyperparams.epochs()) {
-            let loss = self.hyperparams.loss().clone();
-            let clipping = *self.hyperparams.clipping();
-            let batch_size = self.hyperparams.batch_size();
-            let (optimizer, scheduler) = self.hyperparams.optimizer_and_scheduler_mut();
+            let (loss, optimizer, scheduler, clipping, batch_size) =
+                self.hyperparams.train_inputs();
             self.model.train(
                 &self.split.train,
-                &loss,
+                loss,
                 optimizer,
                 scheduler,
-                &clipping,
+                clipping,
                 batch_size,
             );
 
@@ -128,11 +126,12 @@ impl TrainingLoop {
                 && let Some(validation) = &self.split.validation
                 && es.check(validation, &self.model, &evaluator)
             {
-                let restored = es.best_model.is_some();
+                outcome = TrainingOutcome::EarlyStopped {
+                    restored: es.best_model.is_some(),
+                };
                 if let Some(best) = es.best_model.take() {
                     self.model = best;
                 }
-                outcome = TrainingOutcome::EarlyStopped { restored };
                 break;
             }
 

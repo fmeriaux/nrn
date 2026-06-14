@@ -90,10 +90,7 @@ impl EarlyStopping {
         model: &NeuralNetwork,
         evaluator: &Evaluator,
     ) -> bool {
-        let predictions = model.predict(validation.inputs.view());
-        let loss = evaluator
-            .eval_predictions(predictions.view(), validation.targets.view())
-            .loss;
+        let loss = evaluator.eval_dataset(model, validation).loss;
 
         self.observe(loss, model)
     }
