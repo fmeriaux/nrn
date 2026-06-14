@@ -32,8 +32,8 @@ pub struct CosineAnnealing {
     steps_multiplier: usize,
 }
 
-/// Returned by [`CosineAnnealing::new`] / [`CosineAnnealing::from_values`] /
-/// [`CosineAnnealing::with_restarts`] when the given parameters are invalid.
+/// Returned by [`CosineAnnealing::new`] / [`CosineAnnealing::from_values`] when
+/// the given parameters are invalid.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CosineAnnealingError {
     /// `max` was not strictly greater than `min`.
@@ -75,12 +75,19 @@ impl From<LearningRateError> for CosineAnnealingError {
 impl CosineAnnealing {
     /// Creates a new [`CosineAnnealing`] scheduler.
     ///
+    /// With `warm_restarts`, the schedule resets to `max` and multiplies its
+    /// period by `cycle_multiplier` after each cycle; otherwise it stays at `min`
+    /// once the cycle completes. `cycle_multiplier` is unused without restarts but
+    /// must still be at least `1`.
     /// # Errors
-    /// Returns [`CosineAnnealingError`] if `max` is not greater than `min` or if `steps` is zero.
+    /// Returns [`CosineAnnealingError`] if `max` is not greater than `min`, `steps`
+    /// is zero, or `cycle_multiplier` is less than `1`.
     pub fn new(
         min: LearningRate,
         max: LearningRate,
         steps: usize,
+        warm_restarts: bool,
+        cycle_multiplier: usize,
     ) -> Result<Self, CosineAnnealingError> {
         if max.value() <= min.value() {
             return Err(CosineAnnealingError::MaxNotGreaterThanMin {
@@ -91,44 +98,38 @@ impl CosineAnnealing {
         if steps == 0 {
             return Err(CosineAnnealingError::ZeroSteps);
         }
+        if cycle_multiplier < 1 {
+            return Err(CosineAnnealingError::ZeroStepsMultiplier);
+        }
 
         Ok(Self {
             min,
             max,
             current_step: 0,
             steps,
-            restarts: false,
-            steps_multiplier: 1,
+            restarts: warm_restarts,
+            steps_multiplier: cycle_multiplier,
         })
     }
 
     /// Creates a new [`CosineAnnealing`] scheduler from raw learning rate bounds.
     /// # Errors
     /// Returns [`CosineAnnealingError`] if `min` or `max` are invalid, `max` is not
-    /// greater than `min`, or `steps` is zero.
-    pub fn from_values(min: f32, max: f32, steps: usize) -> Result<Self, CosineAnnealingError> {
-        Self::new(LearningRate::new(min)?, LearningRate::new(max)?, steps)
-    }
-
-    /// Enables or disables warm restarts and sets the steps multiplier.
-    /// When restarts are enabled, the scheduler will reset the current step to zero
-    /// and multiply the total steps by `steps_multiplier` after each cycle.
-    /// # Arguments
-    /// * `restarts` - Whether to enable warm restarts.
-    /// * `steps_multiplier` - The factor by which to multiply the total steps after each restart. Must be at least 1.
-    /// # Errors
-    /// Returns [`CosineAnnealingError::ZeroStepsMultiplier`] if `steps_multiplier` is less than 1.
-    pub fn with_restarts(
-        mut self,
-        restarts: bool,
-        steps_multiplier: usize,
+    /// greater than `min`, `steps` is zero, or `cycle_multiplier` is less than `1`.
+    pub fn from_values(
+        min: f32,
+        max: f32,
+        steps: usize,
+        warm_restarts: bool,
+        cycle_multiplier: usize,
     ) -> Result<Self, CosineAnnealingError> {
-        if steps_multiplier < 1 {
-            return Err(CosineAnnealingError::ZeroStepsMultiplier);
-        }
-        self.restarts = restarts;
-        self.steps_multiplier = steps_multiplier;
-        Ok(self)
+        Self::new(
+            LearningRate::new(min)?,
+            LearningRate::new(max)?,
+            steps,
+            warm_restarts,
+            cycle_multiplier,
+        )
     }
 
     /// Computes the current learning rate based on the cosine annealing formula.
@@ -179,14 +180,14 @@ mod tests {
 
     #[test]
     fn name_is_cosine_annealing() {
-        let s = CosineAnnealing::from_values(0.001, 0.1, 10).unwrap();
+        let s = CosineAnnealing::from_values(0.001, 0.1, 10, false, 1).unwrap();
         assert_eq!(s.name(), "Cosine Annealing");
     }
 
     #[test]
     fn starts_at_max_and_ends_at_min() {
         let (min, max, steps) = (0.001, 0.1, 10);
-        let mut s = CosineAnnealing::from_values(min, max, steps).unwrap();
+        let mut s = CosineAnnealing::from_values(min, max, steps, false, 1).unwrap();
         // First step (cos(0) = 1) yields the maximum.
         assert!((s.step().value() - max).abs() < 1e-6);
         // Exhaust the remaining steps of the cycle.
@@ -200,7 +201,7 @@ mod tests {
     #[test]
     fn midpoint_is_average_of_min_and_max() {
         let (min, max, steps) = (0.0, 1.0, 4);
-        let mut s = CosineAnnealing::from_values(min, max, steps).unwrap();
+        let mut s = CosineAnnealing::from_values(min, max, steps, false, 1).unwrap();
         s.step(); // step 0
         s.step(); // step 1
         // step 2 of 4: cos(π/2) = 0 → lr = (min + max) / 2.
@@ -210,10 +211,7 @@ mod tests {
     #[test]
     fn warm_restart_resets_to_max_and_grows_period() {
         let (min, max, steps) = (0.0, 1.0, 2);
-        let mut s = CosineAnnealing::from_values(min, max, steps)
-            .unwrap()
-            .with_restarts(true, 2)
-            .unwrap();
+        let mut s = CosineAnnealing::from_values(min, max, steps, true, 2).unwrap();
         let first = s.step().value(); // step 0 → max
         s.step(); // step 1 → triggers restart, period grows to 4
         let after_restart = s.step().value(); // step 0 of new cycle → max again
@@ -227,7 +225,9 @@ mod tests {
             CosineAnnealing::new(
                 LearningRate::new(0.1).unwrap(),
                 LearningRate::new(0.1).unwrap(),
-                10
+                10,
+                false,
+                1
             )
             .unwrap_err(),
             CosineAnnealingError::MaxNotGreaterThanMin { min: 0.1, max: 0.1 }
@@ -240,7 +240,9 @@ mod tests {
             CosineAnnealing::new(
                 LearningRate::new(0.0).unwrap(),
                 LearningRate::new(0.1).unwrap(),
-                0
+                0,
+                false,
+                1
             )
             .unwrap_err(),
             CosineAnnealingError::ZeroSteps
@@ -248,15 +250,16 @@ mod tests {
     }
 
     #[test]
-    fn rejects_zero_steps_multiplier() {
-        let s = CosineAnnealing::new(
-            LearningRate::new(0.0).unwrap(),
-            LearningRate::new(0.1).unwrap(),
-            10,
-        )
-        .unwrap();
+    fn rejects_zero_cycle_multiplier() {
         assert_eq!(
-            s.with_restarts(true, 0).unwrap_err(),
+            CosineAnnealing::new(
+                LearningRate::new(0.0).unwrap(),
+                LearningRate::new(0.1).unwrap(),
+                10,
+                true,
+                0
+            )
+            .unwrap_err(),
             CosineAnnealingError::ZeroStepsMultiplier
         );
     }

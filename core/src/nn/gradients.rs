@@ -6,7 +6,7 @@ use std::fmt;
 /// while ensuring numerical stability during calculations.
 const EPSILON: f32 = 1e-6;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GradientClipping {
     /// No gradient clipping is applied.
     None,

@@ -1,11 +1,11 @@
 use ndarray::array;
 use nrn::activations::SIGMOID;
 use nrn::data::{ModelDataset, ModelSplit};
-use nrn::loss_functions::CROSS_ENTROPY_LOSS;
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
-use nrn::optimizers::Adam;
-use nrn::schedulers::ConstantScheduler;
-use nrn::training::{Callbacks, GradientClipping, HyperParams, TrainingLoop};
+use nrn::training::{
+    Callbacks, GradientClipping, HyperParameters, LearningRate, LossConfig, OptimizerConfig,
+    SchedulerConfig,
+};
 
 #[test]
 fn xor_converges_to_low_loss() {
@@ -17,30 +17,31 @@ fn xor_converges_to_low_loss() {
 
     let specs = NeuronLayerSpec::network_for(vec![8], &*SIGMOID, 2);
 
-    let report = TrainingLoop {
-        model: NeuralNetwork::initialization(2, &specs),
-        callbacks: Callbacks::new(vec![]),
-        split: ModelSplit {
+    let report = HyperParameters::new(
+        10_000,
+        0,
+        None,
+        LearningRate::new(0.1).unwrap(),
+        OptimizerConfig::Adam,
+        SchedulerConfig::Constant,
+        GradientClipping::None,
+        LossConfig::CrossEntropy,
+        None,
+        0.1,
+        0.1,
+    )
+    .unwrap()
+    .build(
+        NeuralNetwork::initialization(2, &specs),
+        ModelSplit {
             train: xor_dataset(),
             validation: None,
             test: xor_dataset(),
         },
-        hyperparams: HyperParams::new(
-            10_000,
-            0,
-            None,
-            CROSS_ENTROPY_LOSS.clone(),
-            Box::new(Adam::with_defaults(0.1.try_into().unwrap())),
-            Box::new(ConstantScheduler::new(0.1.try_into().unwrap())),
-            GradientClipping::None,
-            None,
-            0.1,
-            0.1,
-        )
-        .unwrap(),
-        epoch_start: 0,
-    }
-    .run()
+        Callbacks::new(vec![]),
+        0,
+    )
+    .train()
     .unwrap();
 
     let loss = report.final_evaluation.unwrap().train.loss;
@@ -59,30 +60,31 @@ fn xor_converges_with_mini_batch() {
 
     let specs = NeuronLayerSpec::network_for(vec![8], &*SIGMOID, 2);
 
-    let report = TrainingLoop {
-        model: NeuralNetwork::initialization(2, &specs),
-        callbacks: Callbacks::new(vec![]),
-        split: ModelSplit {
+    let report = HyperParameters::new(
+        8_000,
+        0,
+        Some(2),
+        LearningRate::new(0.01).unwrap(),
+        OptimizerConfig::Adam,
+        SchedulerConfig::Constant,
+        GradientClipping::None,
+        LossConfig::CrossEntropy,
+        None,
+        0.1,
+        0.1,
+    )
+    .unwrap()
+    .build(
+        NeuralNetwork::initialization(2, &specs),
+        ModelSplit {
             train: xor_dataset(),
             validation: None,
             test: xor_dataset(),
         },
-        hyperparams: HyperParams::new(
-            8_000,
-            0,
-            Some(2),
-            CROSS_ENTROPY_LOSS.clone(),
-            Box::new(Adam::with_defaults(0.01.try_into().unwrap())),
-            Box::new(ConstantScheduler::new(0.01.try_into().unwrap())),
-            GradientClipping::None,
-            None,
-            0.1,
-            0.1,
-        )
-        .unwrap(),
-        epoch_start: 0,
-    }
-    .run()
+        Callbacks::new(vec![]),
+        0,
+    )
+    .train()
     .unwrap();
 
     let loss = report.final_evaluation.unwrap().train.loss;
@@ -105,30 +107,31 @@ fn three_class_converges_to_low_loss() {
     // (He init sets biases to zero, so relu([0,0]) = 0 and its gradient is dead at epoch 0).
     let specs = NeuronLayerSpec::network_for(vec![8], &*SIGMOID, 3);
 
-    let report = TrainingLoop {
-        model: NeuralNetwork::initialization(2, &specs),
-        callbacks: Callbacks::new(vec![]),
-        split: ModelSplit {
+    let report = HyperParameters::new(
+        5_000,
+        0,
+        None,
+        LearningRate::new(0.05).unwrap(),
+        OptimizerConfig::Adam,
+        SchedulerConfig::Constant,
+        GradientClipping::None,
+        LossConfig::CrossEntropy,
+        None,
+        0.1,
+        0.1,
+    )
+    .unwrap()
+    .build(
+        NeuralNetwork::initialization(2, &specs),
+        ModelSplit {
             train: three_class_dataset(),
             validation: None,
             test: three_class_dataset(),
         },
-        hyperparams: HyperParams::new(
-            5_000,
-            0,
-            None,
-            CROSS_ENTROPY_LOSS.clone(),
-            Box::new(Adam::with_defaults(0.05.try_into().unwrap())),
-            Box::new(ConstantScheduler::new(0.05.try_into().unwrap())),
-            GradientClipping::None,
-            None,
-            0.1,
-            0.1,
-        )
-        .unwrap(),
-        epoch_start: 0,
-    }
-    .run()
+        Callbacks::new(vec![]),
+        0,
+    )
+    .train()
     .unwrap();
 
     let loss = report.final_evaluation.unwrap().train.loss;

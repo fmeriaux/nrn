@@ -10,7 +10,7 @@ use nrn::evaluation::{Evaluation, EvaluationSet};
 use nrn::io::checkpoint::CheckpointArchive;
 use nrn::io::data::{load_inputs, save_inputs};
 use nrn::io::hyperparams::{
-    ClippingRecord, HyperParamsRecord, LossRecord, OptimizerRecord, SchedulerRecord,
+    ClippingRecord, HyperParametersRecord, LossRecord, OptimizerRecord, SchedulerRecord,
 };
 use nrn::io::run::{TrainingMeta, TrainingRun};
 use nrn::io::scalers::ScalerRecord;
@@ -28,8 +28,8 @@ fn temp_dir() -> PathBuf {
     dir
 }
 
-fn sample_hyperparams() -> HyperParamsRecord {
-    HyperParamsRecord {
+fn sample_hyperparams() -> HyperParametersRecord {
+    HyperParametersRecord {
         epochs: 10,
         checkpoint_interval: 5,
         batch_size: Some(32),

@@ -3,9 +3,8 @@ use crate::console::{Summary, completed, styled_bar, trace, warning};
 use console::style;
 use indicatif::ProgressBar;
 use nrn::evaluation::EvaluationSet;
-use nrn::io::hyperparams::HyperParamsRecord;
 use nrn::model::NeuralNetwork;
-use nrn::training::{HyperParams, TrainingCallback, TrainingOutcome};
+use nrn::training::{HyperParameters, TrainingCallback, TrainingOutcome};
 use std::io::Result;
 
 /// Reports the training run lifecycle on the console: a progress bar tracks
@@ -14,12 +13,12 @@ use std::io::Result;
 /// its redraws, and cleared before the final summary.
 pub struct ConsoleMonitor {
     bar: ProgressBar,
-    current: HyperParamsRecord,
-    previous: Option<HyperParamsRecord>,
+    current: HyperParameters,
+    previous: Option<HyperParameters>,
 }
 
 impl ConsoleMonitor {
-    pub fn new(current: HyperParamsRecord, previous: Option<HyperParamsRecord>) -> Self {
+    pub fn new(current: HyperParameters, previous: Option<HyperParameters>) -> Self {
         Self {
             bar: styled_bar(),
             current,
@@ -29,8 +28,8 @@ impl ConsoleMonitor {
 }
 
 impl TrainingCallback for ConsoleMonitor {
-    fn on_train_start(&mut self, hyperparams: &HyperParams) -> Result<()> {
-        self.bar.set_length(hyperparams.epochs() as u64);
+    fn on_train_start(&mut self) -> Result<()> {
+        self.bar.set_length(self.current.epochs() as u64);
         self.bar.set_message("Training");
 
         self.bar.suspend(|| {

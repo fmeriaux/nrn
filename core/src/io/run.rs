@@ -1,5 +1,5 @@
 use crate::io::checkpoint::{CheckpointArchive, CheckpointRecorder, scan_checkpoints};
-use crate::io::hyperparams::HyperParamsRecord;
+use crate::io::hyperparams::HyperParametersRecord;
 use crate::io::json;
 use crate::io::path::PathExt;
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TrainingMeta {
     pub dataset: String,
-    pub hyperparams: HyperParamsRecord,
+    pub hyperparams: HyperParametersRecord,
 }
 
 impl TrainingMeta {
@@ -125,7 +125,7 @@ mod tests {
     fn meta(dataset: &str) -> TrainingMeta {
         TrainingMeta {
             dataset: dataset.to_string(),
-            hyperparams: HyperParamsRecord::sample(),
+            hyperparams: HyperParametersRecord::sample(),
         }
     }
 

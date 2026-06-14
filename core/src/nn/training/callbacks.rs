@@ -1,4 +1,3 @@
-use super::hyperparams::HyperParams;
 use super::outcome::TrainingOutcome;
 use crate::evaluation::EvaluationSet;
 use crate::model::NeuralNetwork;
@@ -13,8 +12,9 @@ use std::io::Result;
 /// at epoch 0, at each multiple of `checkpoint_interval`, and at the final epoch, then
 /// dispatches it via [`on_checkpoint`](TrainingCallback::on_checkpoint).
 pub trait TrainingCallback {
-    /// Called once before training begins, with the run's hyperparameters.
-    fn on_train_start(&mut self, _hyperparams: &HyperParams) -> Result<()> {
+    /// Called once before training begins. Callbacks that need the run's
+    /// configuration hold their own [`crate::training::HyperParameters`].
+    fn on_train_start(&mut self) -> Result<()> {
         Ok(())
     }
 
@@ -82,10 +82,8 @@ impl Callbacks {
 }
 
 impl TrainingCallback for Callbacks {
-    fn on_train_start(&mut self, hyperparams: &HyperParams) -> Result<()> {
-        self.0
-            .iter_mut()
-            .try_for_each(|cb| cb.on_train_start(hyperparams))
+    fn on_train_start(&mut self) -> Result<()> {
+        self.0.iter_mut().try_for_each(|cb| cb.on_train_start())
     }
 
     fn on_epoch_end(&mut self, epoch: usize) -> Result<()> {
@@ -123,11 +121,9 @@ mod tests {
     use super::*;
     use crate::activations::RELU;
     use crate::evaluation::Evaluation;
-    use crate::loss_functions::CROSS_ENTROPY_LOSS;
     use crate::model::NeuronLayerSpec;
     use crate::optimizers::Adam;
     use crate::schedulers::ConstantScheduler;
-    use crate::training::GradientClipping;
     use std::cell::RefCell;
     use std::io::Error;
     use std::rc::Rc;
@@ -135,22 +131,6 @@ mod tests {
     struct DefaultCallback;
 
     impl TrainingCallback for DefaultCallback {}
-
-    fn sample_config() -> HyperParams {
-        HyperParams::new(
-            1,
-            1,
-            None,
-            CROSS_ENTROPY_LOSS.clone(),
-            Box::new(Adam::with_defaults(0.01.try_into().unwrap())),
-            Box::new(ConstantScheduler::new(0.01.try_into().unwrap())),
-            GradientClipping::None,
-            None,
-            0.1,
-            0.1,
-        )
-        .unwrap()
-    }
 
     fn sample_model() -> NeuralNetwork {
         let specs = NeuronLayerSpec::network_for(vec![3], &*RELU, 2);
@@ -174,12 +154,11 @@ mod tests {
     #[test]
     fn default_callback_methods_are_noop() {
         let mut callback = DefaultCallback;
-        let config = sample_config();
         let model = sample_model();
         let optimizer = Adam::with_defaults(0.01.try_into().unwrap());
         let scheduler = ConstantScheduler::new(0.01.try_into().unwrap());
 
-        assert!(callback.on_train_start(&config).is_ok());
+        assert!(callback.on_train_start().is_ok());
         assert!(callback.on_epoch_end(0).is_ok());
         assert!(
             callback

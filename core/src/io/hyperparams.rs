@@ -1,12 +1,8 @@
 use crate::gradients::{GradientClipping, GradientClippingError};
 use crate::learning_rate::{LearningRate, LearningRateError};
-use crate::loss_functions::CROSS_ENTROPY_LOSS;
-use crate::optimizers::{Adam, Optimizer, StochasticGradientDescent};
-use crate::schedulers::{
-    ConstantScheduler, CosineAnnealing, CosineAnnealingError, Scheduler, StepDecay, StepDecayError,
-};
 use crate::training::{
-    EarlyStoppingConfig, EarlyStoppingConfigError, HyperParams, HyperParamsError,
+    EarlyStoppingConfig, EarlyStoppingConfigError, HyperParameters, HyperParametersError,
+    LossConfig, OptimizerConfig, SchedulerConfig,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -16,6 +12,24 @@ use std::fmt;
 pub enum OptimizerRecord {
     Sgd,
     Adam,
+}
+
+impl From<&OptimizerConfig> for OptimizerRecord {
+    fn from(config: &OptimizerConfig) -> Self {
+        match config {
+            OptimizerConfig::Sgd => OptimizerRecord::Sgd,
+            OptimizerConfig::Adam => OptimizerRecord::Adam,
+        }
+    }
+}
+
+impl From<&OptimizerRecord> for OptimizerConfig {
+    fn from(record: &OptimizerRecord) -> Self {
+        match record {
+            OptimizerRecord::Sgd => OptimizerConfig::Sgd,
+            OptimizerRecord::Adam => OptimizerConfig::Adam,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -32,6 +46,58 @@ pub enum SchedulerRecord {
         decay_factor: f32,
         steps: usize,
     },
+}
+
+impl From<&SchedulerConfig> for SchedulerRecord {
+    fn from(config: &SchedulerConfig) -> Self {
+        match config {
+            SchedulerConfig::Constant => SchedulerRecord::Constant,
+            SchedulerConfig::Cosine {
+                lr_min,
+                steps,
+                warm_restarts,
+                cycle_multiplier,
+            } => SchedulerRecord::Cosine {
+                lr_min: *lr_min,
+                steps: *steps,
+                warm_restarts: *warm_restarts,
+                cycle_multiplier: *cycle_multiplier,
+            },
+            SchedulerConfig::Step {
+                decay_factor,
+                steps,
+            } => SchedulerRecord::Step {
+                decay_factor: *decay_factor,
+                steps: *steps,
+            },
+        }
+    }
+}
+
+impl From<&SchedulerRecord> for SchedulerConfig {
+    fn from(record: &SchedulerRecord) -> Self {
+        match record {
+            SchedulerRecord::Constant => SchedulerConfig::Constant,
+            SchedulerRecord::Cosine {
+                lr_min,
+                steps,
+                warm_restarts,
+                cycle_multiplier,
+            } => SchedulerConfig::Cosine {
+                lr_min: *lr_min,
+                steps: *steps,
+                warm_restarts: *warm_restarts,
+                cycle_multiplier: *cycle_multiplier,
+            },
+            SchedulerRecord::Step {
+                decay_factor,
+                steps,
+            } => SchedulerConfig::Step {
+                decay_factor: *decay_factor,
+                steps: *steps,
+            },
+        }
+    }
 }
 
 /// Mirrors [`GradientClipping`] for serialization.
@@ -75,18 +141,56 @@ pub enum LossRecord {
     CrossEntropy,
 }
 
+impl From<&LossConfig> for LossRecord {
+    fn from(config: &LossConfig) -> Self {
+        match config {
+            LossConfig::CrossEntropy => LossRecord::CrossEntropy,
+        }
+    }
+}
+
+impl From<&LossRecord> for LossConfig {
+    fn from(record: &LossRecord) -> Self {
+        match record {
+            LossRecord::CrossEntropy => LossConfig::CrossEntropy,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct EarlyStoppingRecord {
     pub patience: usize,
     pub restore_best_model: bool,
 }
 
-/// Serializable mirror of [`HyperParams`], persisted in [`crate::io::run::TrainingMeta`].
+impl From<&EarlyStoppingConfig> for EarlyStoppingRecord {
+    fn from(config: &EarlyStoppingConfig) -> Self {
+        EarlyStoppingRecord {
+            patience: config.patience(),
+            restore_best_model: config.restore_best_model(),
+        }
+    }
+}
+
+impl TryFrom<&EarlyStoppingRecord> for EarlyStoppingConfig {
+    type Error = EarlyStoppingConfigError;
+
+    fn try_from(record: &EarlyStoppingRecord) -> Result<Self, Self::Error> {
+        EarlyStoppingConfig::new(record.patience, record.restore_best_model)
+    }
+}
+
+/// Serializable mirror of [`HyperParameters`], persisted in
+/// [`crate::io::run::TrainingMeta`].
 ///
 /// `layers` is intentionally omitted: the model architecture is reconstructed from
 /// `model.safetensors` by [`crate::io::run::CheckpointArchive::model_at`].
+///
+/// Conversions are lossless both ways: [`From<&HyperParameters>`](HyperParametersRecord)
+/// projects the domain spec onto this record, and [`TryFrom<HyperParametersRecord>`]
+/// validates a record back into [`HyperParameters`].
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct HyperParamsRecord {
+pub struct HyperParametersRecord {
     pub epochs: usize,
     pub checkpoint_interval: usize,
     pub batch_size: Option<usize>,
@@ -100,140 +204,107 @@ pub struct HyperParamsRecord {
     pub loss: LossRecord,
 }
 
-/// Returned by [`HyperParamsRecord::into_hyperparams`] when the record describes an
-/// invalid hyperparameter spec.
+/// Returned by [`HyperParameters::try_from`] when a record describes an invalid
+/// hyperparameter spec (e.g. a hand-edited `meta.json`).
 #[derive(Debug)]
-pub enum HyperParamsRecordError {
+pub enum HyperParametersRecordError {
     LearningRate(LearningRateError),
-    StepDecay(StepDecayError),
-    CosineAnnealing(CosineAnnealingError),
     Clipping(GradientClippingError),
     EarlyStopping(EarlyStoppingConfigError),
-    Validation(HyperParamsError),
+    HyperParameters(HyperParametersError),
 }
 
-impl fmt::Display for HyperParamsRecordError {
+impl fmt::Display for HyperParametersRecordError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            HyperParamsRecordError::LearningRate(e) => write!(f, "{e}"),
-            HyperParamsRecordError::StepDecay(e) => write!(f, "{e}"),
-            HyperParamsRecordError::CosineAnnealing(e) => write!(f, "{e}"),
-            HyperParamsRecordError::Clipping(e) => write!(f, "{e}"),
-            HyperParamsRecordError::EarlyStopping(e) => write!(f, "{e}"),
-            HyperParamsRecordError::Validation(e) => write!(f, "{e}"),
+            HyperParametersRecordError::LearningRate(e) => write!(f, "{e}"),
+            HyperParametersRecordError::Clipping(e) => write!(f, "{e}"),
+            HyperParametersRecordError::EarlyStopping(e) => write!(f, "{e}"),
+            HyperParametersRecordError::HyperParameters(e) => write!(f, "{e}"),
         }
     }
 }
 
-impl std::error::Error for HyperParamsRecordError {}
+impl std::error::Error for HyperParametersRecordError {}
 
-impl From<LearningRateError> for HyperParamsRecordError {
+impl From<LearningRateError> for HyperParametersRecordError {
     fn from(e: LearningRateError) -> Self {
-        HyperParamsRecordError::LearningRate(e)
+        HyperParametersRecordError::LearningRate(e)
     }
 }
 
-impl From<StepDecayError> for HyperParamsRecordError {
-    fn from(e: StepDecayError) -> Self {
-        HyperParamsRecordError::StepDecay(e)
-    }
-}
-
-impl From<CosineAnnealingError> for HyperParamsRecordError {
-    fn from(e: CosineAnnealingError) -> Self {
-        HyperParamsRecordError::CosineAnnealing(e)
-    }
-}
-
-impl From<GradientClippingError> for HyperParamsRecordError {
+impl From<GradientClippingError> for HyperParametersRecordError {
     fn from(e: GradientClippingError) -> Self {
-        HyperParamsRecordError::Clipping(e)
+        HyperParametersRecordError::Clipping(e)
     }
 }
 
-impl From<EarlyStoppingConfigError> for HyperParamsRecordError {
+impl From<EarlyStoppingConfigError> for HyperParametersRecordError {
     fn from(e: EarlyStoppingConfigError) -> Self {
-        HyperParamsRecordError::EarlyStopping(e)
+        HyperParametersRecordError::EarlyStopping(e)
     }
 }
 
-impl From<HyperParamsError> for HyperParamsRecordError {
-    fn from(e: HyperParamsError) -> Self {
-        HyperParamsRecordError::Validation(e)
+impl From<HyperParametersError> for HyperParametersRecordError {
+    fn from(e: HyperParametersError) -> Self {
+        HyperParametersRecordError::HyperParameters(e)
     }
 }
 
-impl HyperParamsRecord {
-    /// Reconstructs the domain [`HyperParams`] spec from this record.
-    ///
-    /// Every component is rebuilt through its fallible constructor, so an invalid
-    /// record (e.g. hand-edited `meta.json`) yields an [`HyperParamsRecordError`]
-    /// instead of a panic.
-    /// # Errors
-    /// Returns [`HyperParamsRecordError`] if any component or the resulting spec is invalid.
-    pub fn into_hyperparams(&self) -> Result<HyperParams, HyperParamsRecordError> {
-        let lr = LearningRate::new(self.lr)?;
+impl From<&HyperParameters> for HyperParametersRecord {
+    fn from(hyperparameters: &HyperParameters) -> Self {
+        HyperParametersRecord {
+            epochs: hyperparameters.epochs(),
+            checkpoint_interval: hyperparameters.checkpoint_interval(),
+            batch_size: hyperparameters.batch_size(),
+            lr: hyperparameters.lr().value(),
+            optimizer: hyperparameters.optimizer().into(),
+            scheduler: hyperparameters.scheduler().into(),
+            clipping: hyperparameters.clipping().into(),
+            early_stopping: hyperparameters.early_stopping().map(Into::into),
+            val_ratio: hyperparameters.val_ratio(),
+            test_ratio: hyperparameters.test_ratio(),
+            loss: hyperparameters.loss().into(),
+        }
+    }
+}
 
-        let optimizer: Box<dyn Optimizer> = match self.optimizer {
-            OptimizerRecord::Sgd => Box::new(StochasticGradientDescent::new(lr)),
-            OptimizerRecord::Adam => Box::new(Adam::with_defaults(lr)),
-        };
+impl TryFrom<HyperParametersRecord> for HyperParameters {
+    type Error = HyperParametersRecordError;
 
-        let scheduler: Box<dyn Scheduler> = match &self.scheduler {
-            SchedulerRecord::Constant => Box::new(ConstantScheduler::new(lr)),
-            SchedulerRecord::Cosine {
-                lr_min,
-                steps,
-                warm_restarts,
-                cycle_multiplier,
-            } => {
-                let cosine = CosineAnnealing::new((*lr_min).try_into()?, lr, *steps)?;
-                if *warm_restarts {
-                    Box::new(cosine.with_restarts(true, *cycle_multiplier)?)
-                } else {
-                    Box::new(cosine)
-                }
-            }
-            SchedulerRecord::Step {
-                decay_factor,
-                steps,
-            } => Box::new(StepDecay::new(lr, *steps, *decay_factor)?),
-        };
-
-        let clipping = GradientClipping::try_from(&self.clipping)?;
-
-        let early_stopping = self
+    /// Validates a record back into the domain spec. Each component is rebuilt
+    /// through its own (fallible) conversion, so an invalid record yields a
+    /// [`HyperParametersRecordError`] instead of a panic.
+    fn try_from(record: HyperParametersRecord) -> Result<Self, Self::Error> {
+        let lr = LearningRate::new(record.lr)?;
+        let clipping = GradientClipping::try_from(&record.clipping)?;
+        let early_stopping = record
             .early_stopping
             .as_ref()
-            .map(|record| EarlyStoppingConfig::new(record.patience, record.restore_best_model))
+            .map(EarlyStoppingConfig::try_from)
             .transpose()?;
 
-        let loss = match self.loss {
-            LossRecord::CrossEntropy => CROSS_ENTROPY_LOSS.clone(),
-        };
-
-        let hyperparams = HyperParams::new(
-            self.epochs,
-            self.checkpoint_interval,
-            self.batch_size,
-            loss,
-            optimizer,
-            scheduler,
+        Ok(HyperParameters::new(
+            record.epochs,
+            record.checkpoint_interval,
+            record.batch_size,
+            lr,
+            (&record.optimizer).into(),
+            (&record.scheduler).into(),
             clipping,
+            (&record.loss).into(),
             early_stopping,
-            self.val_ratio,
-            self.test_ratio,
-        )?;
-
-        Ok(hyperparams)
+            record.val_ratio,
+            record.test_ratio,
+        )?)
     }
 }
 
 #[cfg(test)]
-impl HyperParamsRecord {
+impl HyperParametersRecord {
     /// A representative, valid record used as a fixture in tests.
     pub fn sample() -> Self {
-        HyperParamsRecord {
+        HyperParametersRecord {
             epochs: 10,
             checkpoint_interval: 5,
             batch_size: Some(32),
@@ -255,8 +326,6 @@ impl HyperParamsRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activations::SIGMOID;
-    use crate::model::{NeuralNetwork, NeuronLayerSpec};
 
     #[test]
     fn optimizer_record_roundtrips_through_json() {
@@ -327,39 +396,44 @@ mod tests {
     }
 
     #[test]
-    fn hyperparams_record_roundtrips_through_json() {
-        let record = HyperParamsRecord::sample();
+    fn hyperparameters_record_roundtrips_through_json() {
+        let record = HyperParametersRecord::sample();
         let json = serde_json::to_string(&record).unwrap();
         assert_eq!(
-            serde_json::from_str::<HyperParamsRecord>(&json).unwrap(),
+            serde_json::from_str::<HyperParametersRecord>(&json).unwrap(),
             record
         );
     }
 
     #[test]
-    fn into_hyperparams_reconstructs_the_spec() {
-        let record = HyperParamsRecord::sample();
-        let hyperparams = record.into_hyperparams().unwrap();
-
-        assert_eq!(hyperparams.epochs(), 10);
-        assert_eq!(hyperparams.checkpoint_interval(), 5);
-        assert_eq!(hyperparams.batch_size(), Some(32));
-        assert_eq!(hyperparams.optimizer().name(), "Adam");
-        assert_eq!(hyperparams.scheduler().name(), "Constant");
-        assert!(matches!(
-            hyperparams.clipping(),
-            GradientClipping::Norm { max_norm } if *max_norm == 1.0
-        ));
-        let specs = NeuronLayerSpec::network_for(vec![2], &*SIGMOID, 2);
-        let model = NeuralNetwork::initialization(2, &specs);
-        assert!(hyperparams.build_early_stopping(&model).is_some());
-        assert_eq!(hyperparams.val_ratio(), 0.1);
-        assert_eq!(hyperparams.test_ratio(), 0.1);
+    fn record_roundtrips_through_the_domain_spec() {
+        let record = HyperParametersRecord::sample();
+        let hyperparameters = HyperParameters::try_from(record.clone()).unwrap();
+        assert_eq!(HyperParametersRecord::from(&hyperparameters), record);
     }
 
     #[test]
-    fn into_hyperparams_builds_cosine_with_warm_restarts() {
-        let mut record = HyperParamsRecord::sample();
+    fn try_from_reconstructs_the_spec() {
+        let record = HyperParametersRecord::sample();
+        let hyperparameters = HyperParameters::try_from(record).unwrap();
+
+        assert_eq!(hyperparameters.epochs(), 10);
+        assert_eq!(hyperparameters.checkpoint_interval(), 5);
+        assert_eq!(hyperparameters.batch_size(), Some(32));
+        assert_eq!(*hyperparameters.optimizer(), OptimizerConfig::Adam);
+        assert_eq!(*hyperparameters.scheduler(), SchedulerConfig::Constant);
+        assert!(matches!(
+            hyperparameters.clipping(),
+            GradientClipping::Norm { max_norm } if *max_norm == 1.0
+        ));
+        assert!(hyperparameters.early_stopping().is_some());
+        assert_eq!(hyperparameters.val_ratio(), 0.1);
+        assert_eq!(hyperparameters.test_ratio(), 0.1);
+    }
+
+    #[test]
+    fn try_from_builds_cosine_with_warm_restarts() {
+        let mut record = HyperParametersRecord::sample();
         record.scheduler = SchedulerRecord::Cosine {
             lr_min: 0.0001,
             steps: 100,
@@ -367,67 +441,95 @@ mod tests {
             cycle_multiplier: 2,
         };
 
-        let hyperparams = record.into_hyperparams().unwrap();
-        assert_eq!(hyperparams.scheduler().name(), "Cosine Annealing");
+        let hyperparameters = HyperParameters::try_from(record).unwrap();
+        assert!(matches!(
+            hyperparameters.scheduler(),
+            SchedulerConfig::Cosine {
+                warm_restarts: true,
+                cycle_multiplier: 2,
+                ..
+            }
+        ));
     }
 
     #[test]
-    fn into_hyperparams_builds_step_decay() {
-        let mut record = HyperParamsRecord::sample();
+    fn try_from_builds_step_decay() {
+        let mut record = HyperParametersRecord::sample();
         record.scheduler = SchedulerRecord::Step {
             decay_factor: 0.5,
             steps: 10,
         };
 
-        let hyperparams = record.into_hyperparams().unwrap();
-        assert_eq!(hyperparams.scheduler().name(), "Step Decay");
+        let hyperparameters = HyperParameters::try_from(record).unwrap();
+        assert!(matches!(
+            hyperparameters.scheduler(),
+            SchedulerConfig::Step { steps: 10, .. }
+        ));
     }
 
     #[test]
-    fn into_hyperparams_rejects_invalid_learning_rate() {
-        let mut record = HyperParamsRecord::sample();
+    fn try_from_rejects_invalid_learning_rate() {
+        let mut record = HyperParametersRecord::sample();
         record.lr = -1.0;
 
         assert!(matches!(
-            record.into_hyperparams(),
-            Err(HyperParamsRecordError::LearningRate(_))
+            HyperParameters::try_from(record),
+            Err(HyperParametersRecordError::LearningRate(_))
         ));
     }
 
     #[test]
-    fn into_hyperparams_rejects_invalid_clipping() {
-        let mut record = HyperParamsRecord::sample();
+    fn try_from_rejects_invalid_clipping() {
+        let mut record = HyperParametersRecord::sample();
         record.clipping = ClippingRecord::Norm { max_norm: -1.0 };
 
         assert!(matches!(
-            record.into_hyperparams(),
-            Err(HyperParamsRecordError::Clipping(_))
+            HyperParameters::try_from(record),
+            Err(HyperParametersRecordError::Clipping(_))
         ));
     }
 
     #[test]
-    fn into_hyperparams_rejects_zero_early_stopping_patience() {
-        let mut record = HyperParamsRecord::sample();
+    fn try_from_rejects_zero_early_stopping_patience() {
+        let mut record = HyperParametersRecord::sample();
         record.early_stopping = Some(EarlyStoppingRecord {
             patience: 0,
             restore_best_model: true,
         });
 
         assert!(matches!(
-            record.into_hyperparams(),
-            Err(HyperParamsRecordError::EarlyStopping(_))
+            HyperParameters::try_from(record),
+            Err(HyperParametersRecordError::EarlyStopping(_))
         ));
     }
 
     #[test]
-    fn into_hyperparams_rejects_invalid_split_ratios() {
-        let mut record = HyperParamsRecord::sample();
+    fn try_from_rejects_invalid_split_ratios() {
+        let mut record = HyperParametersRecord::sample();
         record.val_ratio = 0.6;
         record.test_ratio = 0.6;
 
         assert!(matches!(
-            record.into_hyperparams(),
-            Err(HyperParamsRecordError::Validation(_))
+            HyperParameters::try_from(record),
+            Err(HyperParametersRecordError::HyperParameters(_))
+        ));
+    }
+
+    #[test]
+    fn try_from_rejects_invalid_cosine_bounds() {
+        let mut record = HyperParametersRecord::sample();
+        // lr_min >= lr (max) is rejected by the cosine schedule.
+        record.lr = 0.001;
+        record.scheduler = SchedulerRecord::Cosine {
+            lr_min: 0.01,
+            steps: 100,
+            warm_restarts: false,
+            cycle_multiplier: 1,
+        };
+
+        assert!(matches!(
+            HyperParameters::try_from(record),
+            Err(HyperParametersRecordError::HyperParameters(_))
         ));
     }
 }

@@ -3,9 +3,9 @@ use crate::data::ModelDataset;
 use crate::model::NeuralNetwork;
 use std::fmt;
 
-/// Declarative early-stopping settings, part of a [`crate::training::HyperParams`] spec.
+/// Declarative early-stopping settings, part of a [`crate::training::HyperParameters`] spec.
 /// Constructs the runtime [`EarlyStopping`] via [`EarlyStopping::new`].
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct EarlyStoppingConfig {
     /// The number of consecutive epochs without improvement after which training will be stopped.
     patience: usize,

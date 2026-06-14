@@ -1,8 +1,8 @@
 use crate::console::TRACE_ICON;
 use console::style;
-use nrn::io::hyperparams::{
-    ClippingRecord, EarlyStoppingRecord, HyperParamsRecord, LossRecord, OptimizerRecord,
-    SchedulerRecord,
+use nrn::training::{
+    EarlyStoppingConfig, GradientClipping, HyperParameters, LossConfig, OptimizerConfig,
+    SchedulerConfig,
 };
 
 /// Recap row labels, in display order. [`print_recap`] iterates over these to
@@ -22,7 +22,7 @@ const FIELDS: &[&str] = &[
 /// Prints the `TRAINING HYPERPARAMETERS` recap: one bullet-leader line per
 /// field of `current`. If `previous` is given and a field differs from its
 /// value in `previous`, the line is annotated `▲ was <previous value>`.
-pub fn print_recap(current: &HyperParamsRecord, previous: Option<&HyperParamsRecord>) {
+pub fn print_recap(current: &HyperParameters, previous: Option<&HyperParameters>) {
     let label_width = FIELDS.iter().map(|f| f.len()).max().unwrap_or(0);
 
     println!(
@@ -33,66 +33,70 @@ pub fn print_recap(current: &HyperParamsRecord, previous: Option<&HyperParamsRec
 
     print_row(
         "Epochs",
-        &current.epochs.to_string(),
+        &current.epochs().to_string(),
         label_width,
         previous
-            .filter(|p| p.epochs != current.epochs)
-            .map(|p| p.epochs.to_string()),
+            .filter(|p| p.epochs() != current.epochs())
+            .map(|p| p.epochs().to_string()),
     );
-    print_row("Loss", &loss_value(&current.loss), label_width, None);
+    print_row("Loss", &loss_value(current.loss()), label_width, None);
     print_row(
         "Optimizer",
         &optimizer_value(current),
         label_width,
         previous
-            .filter(|p| p.optimizer != current.optimizer || p.lr != current.lr)
+            .filter(|p| p.optimizer() != current.optimizer() || p.lr() != current.lr())
             .map(optimizer_value),
     );
     print_row(
         "Scheduler",
-        &scheduler_value(&current.scheduler),
+        &scheduler_value(current.scheduler()),
         label_width,
         previous
-            .filter(|p| p.scheduler != current.scheduler)
-            .map(|p| scheduler_value(&p.scheduler)),
+            .filter(|p| p.scheduler() != current.scheduler())
+            .map(|p| scheduler_value(p.scheduler())),
     );
     print_row(
         "Clipping",
-        &clipping_value(&current.clipping),
+        &clipping_value(current.clipping()),
         label_width,
         previous
-            .filter(|p| p.clipping != current.clipping)
-            .map(|p| clipping_value(&p.clipping)),
+            .filter(|p| p.clipping() != current.clipping())
+            .map(|p| clipping_value(p.clipping())),
     );
     print_row(
         "Batches",
-        &batches_value(current.batch_size),
+        &batches_value(current.batch_size()),
         label_width,
         previous
-            .filter(|p| p.batch_size != current.batch_size)
-            .map(|p| batches_value(p.batch_size)),
+            .filter(|p| p.batch_size() != current.batch_size())
+            .map(|p| batches_value(p.batch_size())),
     );
     print_row(
         "Split",
-        &format!("val {} · test {}", current.val_ratio, current.test_ratio),
+        &format!(
+            "val {} · test {}",
+            current.val_ratio(),
+            current.test_ratio()
+        ),
         label_width,
         None,
     );
     print_row(
         "Checkpoints",
-        &checkpoints_value(current.checkpoint_interval),
+        &checkpoints_value(current.checkpoint_interval()),
         label_width,
         previous
-            .filter(|p| p.checkpoint_interval != current.checkpoint_interval)
-            .map(|p| checkpoints_value(p.checkpoint_interval)),
+            .filter(|p| p.checkpoint_interval() != current.checkpoint_interval())
+            .map(|p| checkpoints_value(p.checkpoint_interval())),
     );
     print_row(
         "Early stopping",
-        &early_stopping_value(&current.early_stopping),
+        &early_stopping_value(current.early_stopping()),
         label_width,
         previous
-            .filter(|p| p.early_stopping != current.early_stopping)
-            .map(|p| early_stopping_value(&p.early_stopping)),
+            .filter(|p| p.early_stopping() != current.early_stopping())
+            .map(|p| early_stopping_value(p.early_stopping())),
     );
 }
 
@@ -112,33 +116,33 @@ fn print_row(field: &'static str, value: &str, label_width: usize, was: Option<S
     println!("{line}");
 }
 
-pub(crate) fn loss_value(loss: &LossRecord) -> String {
+pub(crate) fn loss_value(loss: &LossConfig) -> String {
     match loss {
-        LossRecord::CrossEntropy => "Cross-Entropy".to_string(),
+        LossConfig::CrossEntropy => "Cross-Entropy".to_string(),
     }
 }
 
-pub(crate) fn optimizer_value(record: &HyperParamsRecord) -> String {
-    let name = match record.optimizer {
-        OptimizerRecord::Sgd => "Stochastic Gradient Descent (SGD)",
-        OptimizerRecord::Adam => "Adam",
+pub(crate) fn optimizer_value(hyperparameters: &HyperParameters) -> String {
+    let name = match hyperparameters.optimizer() {
+        OptimizerConfig::Sgd => "Stochastic Gradient Descent (SGD)",
+        OptimizerConfig::Adam => "Adam",
     };
-    format!("{name} · lr {}", record.lr)
+    format!("{name} · lr {}", hyperparameters.lr().value())
 }
 
-pub(crate) fn scheduler_value(scheduler: &SchedulerRecord) -> String {
+pub(crate) fn scheduler_value(scheduler: &SchedulerConfig) -> String {
     match scheduler {
-        SchedulerRecord::Constant => "constant".to_string(),
-        SchedulerRecord::Cosine { .. } => "cosine annealing".to_string(),
-        SchedulerRecord::Step { .. } => "step decay".to_string(),
+        SchedulerConfig::Constant => "constant".to_string(),
+        SchedulerConfig::Cosine { .. } => "cosine annealing".to_string(),
+        SchedulerConfig::Step { .. } => "step decay".to_string(),
     }
 }
 
-pub(crate) fn clipping_value(clipping: &ClippingRecord) -> String {
+pub(crate) fn clipping_value(clipping: &GradientClipping) -> String {
     match clipping {
-        ClippingRecord::None => "none".to_string(),
-        ClippingRecord::Norm { max_norm } => format!("norm · max {max_norm}"),
-        ClippingRecord::Value { min, max } => format!("value · min {min} · max {max}"),
+        GradientClipping::None => "none".to_string(),
+        GradientClipping::Norm { max_norm } => format!("norm · max {max_norm}"),
+        GradientClipping::Value { min, max } => format!("value · min {min} · max {max}"),
     }
 }
 
@@ -157,12 +161,12 @@ pub(crate) fn checkpoints_value(checkpoint_interval: usize) -> String {
     }
 }
 
-pub(crate) fn early_stopping_value(early_stopping: &Option<EarlyStoppingRecord>) -> String {
+pub(crate) fn early_stopping_value(early_stopping: Option<&EarlyStoppingConfig>) -> String {
     match early_stopping {
-        Some(record) if record.restore_best_model => {
-            format!("patience {} · restore best", record.patience)
+        Some(config) if config.restore_best_model() => {
+            format!("patience {} · restore best", config.patience())
         }
-        Some(record) => format!("patience {}", record.patience),
+        Some(config) => format!("patience {}", config.patience()),
         None => "disabled".to_string(),
     }
 }

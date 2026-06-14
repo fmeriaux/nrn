@@ -256,7 +256,7 @@ impl CheckpointArchive {
 mod tests {
     use super::*;
     use crate::activations::RELU;
-    use crate::io::hyperparams::HyperParamsRecord;
+    use crate::io::hyperparams::HyperParametersRecord;
     use crate::io::run::{TrainingMeta, TrainingRun};
     use crate::model::NeuronLayerSpec;
     use crate::optimizers::{Adam, StochasticGradientDescent};
@@ -294,7 +294,7 @@ mod tests {
             path,
             &TrainingMeta {
                 dataset: dataset.to_string(),
-                hyperparams: HyperParamsRecord::sample(),
+                hyperparams: HyperParametersRecord::sample(),
             },
             overwrite,
         )?
