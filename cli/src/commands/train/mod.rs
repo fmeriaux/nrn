@@ -15,7 +15,6 @@ use nrn::io::hyperparams::{
 };
 use nrn::io::run::{TrainingMeta, TrainingRun};
 use nrn::model::NeuralNetwork;
-use nrn::schedulers::SchedulerState;
 use nrn::training::{Callbacks, FatalDivergence, HyperParams, TrainingLoop};
 use std::error::Error;
 use std::fmt::Display;
@@ -486,16 +485,14 @@ impl ResumeArgs {
             .epoch_at(checkpoint_idx)
             .expect("checkpoint_idx was just validated against archive.len()");
 
+        if let Some(state) = archive.scheduler_at(checkpoint_idx)? {
+            hyperparams.scheduler_mut().restore(&state);
+            completed(&format!(
+                "Restored {} scheduler state from checkpoint at epoch {from_epoch}",
+                hyperparams.scheduler().name()
+            ));
+        }
         if let Some(state) = archive.optimizer_at(checkpoint_idx)? {
-            if let Some(current_step) = state
-                .metadata
-                .get("scheduler.current_step")
-                .and_then(|s| s.parse().ok())
-            {
-                hyperparams
-                    .scheduler_mut()
-                    .restore(&SchedulerState { current_step });
-            }
             hyperparams.optimizer_mut().restore(&state)?;
             completed(&format!(
                 "Restored {} optimizer state from checkpoint at epoch {from_epoch}",

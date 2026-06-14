@@ -11,4 +11,5 @@ pub mod path;
 pub mod png;
 pub mod run;
 pub mod scalers;
+pub mod scheduler;
 pub mod tensors;

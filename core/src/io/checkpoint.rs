@@ -3,12 +3,12 @@ use crate::evaluation_history::{EpochEvaluation, EvaluationHistory};
 use crate::io::json;
 use crate::io::optimizer as optimizer_io;
 use crate::io::path::PathExt;
+use crate::io::scheduler as scheduler_io;
 use crate::model::NeuralNetwork;
 use crate::optimizers::{Optimizer, OptimizerState};
-use crate::schedulers::Scheduler;
+use crate::schedulers::{Scheduler, SchedulerState};
 use crate::training::TrainingCallback;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fs;
 use std::io::ErrorKind::InvalidData;
 use std::io::{Error, Result};
@@ -98,7 +98,8 @@ pub(super) fn scan_checkpoints(dir: &Path) -> Result<Vec<CheckpointRef>> {
 ///
 /// Each call to [`write`](CheckpointRecorder::write) creates a subdirectory
 /// `checkpoint-{epoch:06}/` containing `model.safetensors`, `evaluations.json`,
-/// and (if the optimizer or scheduler have internal state) `optimizer.safetensors`.
+/// and — when the optimizer or scheduler carry internal state — `optimizer.safetensors`
+/// and/or `scheduler.json` respectively.
 /// Implements [`TrainingCallback`]: [`on_checkpoint`](TrainingCallback::on_checkpoint)
 /// writes a checkpoint. Obtained via [`TrainingRun::recorder`](crate::io::run::TrainingRun::recorder).
 #[derive(Debug)]
@@ -133,18 +134,11 @@ impl CheckpointRecorder {
             checkpoint_dir.join("evaluations"),
         )?;
 
-        let mut state = optimizer.to_state().unwrap_or(OptimizerState {
-            tensors: Vec::new(),
-            metadata: HashMap::new(),
-        });
-        if let Some(scheduler_state) = scheduler.to_state() {
-            state.metadata.insert(
-                "scheduler.current_step".to_string(),
-                scheduler_state.current_step.to_string(),
-            );
-        }
-        if !state.tensors.is_empty() || !state.metadata.is_empty() {
+        if let Some(state) = optimizer.to_state() {
             optimizer_io::save(&state, checkpoint_dir.join("optimizer"))?;
+        }
+        if let Some(state) = scheduler.to_state() {
+            scheduler_io::save(&state, checkpoint_dir.join("scheduler"))?;
         }
 
         Ok(())
@@ -198,9 +192,9 @@ impl CheckpointArchive {
         self.entries.get(index).map(|s| s.epoch)
     }
 
-    /// Loads the model at position `index` from its checkpoint directory.
-    pub fn model_at(&self, index: usize) -> Result<NeuralNetwork> {
-        let entry = self.entries.get(index).ok_or_else(|| {
+    /// Returns the checkpoint entry at `index`, or an error if out of range.
+    fn entry_at(&self, index: usize) -> Result<&CheckpointRef> {
+        self.entries.get(index).ok_or_else(|| {
             Error::new(
                 InvalidData,
                 format!(
@@ -208,30 +202,38 @@ impl CheckpointArchive {
                     self.entries.len()
                 ),
             )
-        })?;
-
-        NeuralNetwork::load(entry.dir.join("model"))
+        })
     }
 
-    /// Loads the optimizer/scheduler state at position `index`, or `Ok(None)`
-    /// if the checkpoint has no `optimizer.safetensors` (stateless optimizer,
-    /// or a checkpoint written before this state was tracked).
+    /// Resolves an optional checkpoint state file. Checks that `name.ext` exists
+    /// in the checkpoint at `index` and, if so, returns the loader-ready base
+    /// path (`name`, without extension); `Ok(None)` when the file is absent.
+    fn optional_file(&self, index: usize, name: &str, ext: &str) -> Result<Option<PathBuf>> {
+        let base = self.entry_at(index)?.dir.join(name);
+        Ok(base.with_extension(ext).exists().then_some(base))
+    }
+
+    /// Loads the model at position `index` from its checkpoint directory.
+    pub fn model_at(&self, index: usize) -> Result<NeuralNetwork> {
+        NeuralNetwork::load(self.entry_at(index)?.dir.join("model"))
+    }
+
+    /// Loads the optimizer state at position `index`, or `Ok(None)` if the
+    /// checkpoint has no `optimizer.safetensors` (stateless optimizer, or a
+    /// checkpoint written before this state was tracked).
     pub fn optimizer_at(&self, index: usize) -> Result<Option<OptimizerState>> {
-        let entry = self.entries.get(index).ok_or_else(|| {
-            Error::new(
-                InvalidData,
-                format!(
-                    "checkpoint index {index} out of range (archive has {} checkpoints)",
-                    self.entries.len()
-                ),
-            )
-        })?;
+        self.optional_file(index, "optimizer", "safetensors")?
+            .map(optimizer_io::load)
+            .transpose()
+    }
 
-        if !entry.dir.join("optimizer.safetensors").exists() {
-            return Ok(None);
-        }
-
-        optimizer_io::load(entry.dir.join("optimizer")).map(Some)
+    /// Loads the scheduler state at position `index`, or `Ok(None)` if the
+    /// checkpoint has no `scheduler.json` (stateless scheduler, or a checkpoint
+    /// written before this state was tracked).
+    pub fn scheduler_at(&self, index: usize) -> Result<Option<SchedulerState>> {
+        self.optional_file(index, "scheduler", "json")?
+            .map(scheduler_io::load)
+            .transpose()
     }
 
     /// Reads all `evaluations.json` files into a pure [`EvaluationHistory`].
@@ -258,7 +260,7 @@ mod tests {
     use crate::io::run::{TrainingMeta, TrainingRun};
     use crate::model::NeuronLayerSpec;
     use crate::optimizers::{Adam, StochasticGradientDescent};
-    use crate::schedulers::ConstantScheduler;
+    use crate::schedulers::{ConstantScheduler, Scheduler, StepDecay};
     use ndarray::Array2;
 
     fn sample_optimizer() -> Adam {
@@ -650,6 +652,59 @@ mod tests {
         let exists = dir.join("checkpoint-000000/optimizer.safetensors").exists();
         let archive = CheckpointArchive::load(&dir).unwrap();
         let state = archive.optimizer_at(0).unwrap();
+        cleanup(&dir);
+
+        assert!(!exists);
+        assert!(state.is_none());
+    }
+
+    #[test]
+    fn write_with_stateful_scheduler_writes_scheduler_state() {
+        let dir = temp_dir("scheduler_step");
+        let recorder = create_run(&dir, "ds", false).unwrap();
+
+        let mut scheduler = StepDecay::from_values(0.1, 2, 0.5).unwrap();
+        scheduler.step();
+        scheduler.step();
+        scheduler.step();
+
+        recorder
+            .write(
+                &sample_model(),
+                &sample_optimizer(),
+                &scheduler,
+                &make_eval(0.0, false),
+                0,
+            )
+            .unwrap();
+
+        let exists = dir.join("checkpoint-000000/scheduler.json").exists();
+        let archive = CheckpointArchive::load(&dir).unwrap();
+        let state = archive.scheduler_at(0).unwrap();
+        cleanup(&dir);
+
+        assert!(exists);
+        assert_eq!(state.unwrap().current_step, 3);
+    }
+
+    #[test]
+    fn write_with_stateless_scheduler_writes_no_scheduler_file() {
+        let dir = temp_dir("scheduler_constant");
+        let recorder = create_run(&dir, "ds", false).unwrap();
+
+        recorder
+            .write(
+                &sample_model(),
+                &sample_optimizer(),
+                &sample_scheduler(),
+                &make_eval(0.0, false),
+                0,
+            )
+            .unwrap();
+
+        let exists = dir.join("checkpoint-000000/scheduler.json").exists();
+        let archive = CheckpointArchive::load(&dir).unwrap();
+        let state = archive.scheduler_at(0).unwrap();
         cleanup(&dir);
 
         assert!(!exists);
