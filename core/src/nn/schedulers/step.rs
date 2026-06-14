@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn name_is_step_decay() {
-        let sched = StepDecay::new(LearningRate::new(0.1).unwrap(), 3, 0.5).unwrap();
+        let sched = StepDecay::from_values(0.1, 3, 0.5).unwrap();
         assert_eq!(sched.name(), "Step Decay");
     }
 
@@ -128,7 +128,7 @@ mod tests {
         // initial=0.1, steps=3, decay=0.5
         // Steps 0-2: floor(t/3)=0 → LR = 0.1 * 0.5^0 = 0.1
         // Steps 3-5: floor(t/3)=1 → LR = 0.1 * 0.5^1 = 0.05
-        let mut sched = StepDecay::new(LearningRate::new(0.1).unwrap(), 3, 0.5).unwrap();
+        let mut sched = StepDecay::from_values(0.1, 3, 0.5).unwrap();
         for _ in 0..3 {
             assert!((sched.step().value() - 0.1).abs() < 1e-6);
         }
@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn decay_never_reaches_zero() {
-        let mut sched = StepDecay::new(LearningRate::new(0.1).unwrap(), 1, 0.5).unwrap();
+        let mut sched = StepDecay::from_values(0.1, 1, 0.5).unwrap();
         for _ in 0..100 {
             assert!(sched.step().value() > 0.0);
         }

@@ -179,24 +179,14 @@ mod tests {
 
     #[test]
     fn name_is_cosine_annealing() {
-        let s = CosineAnnealing::new(
-            LearningRate::new(0.001).unwrap(),
-            LearningRate::new(0.1).unwrap(),
-            10,
-        )
-        .unwrap();
+        let s = CosineAnnealing::from_values(0.001, 0.1, 10).unwrap();
         assert_eq!(s.name(), "Cosine Annealing");
     }
 
     #[test]
     fn starts_at_max_and_ends_at_min() {
         let (min, max, steps) = (0.001, 0.1, 10);
-        let mut s = CosineAnnealing::new(
-            LearningRate::new(min).unwrap(),
-            LearningRate::new(max).unwrap(),
-            steps,
-        )
-        .unwrap();
+        let mut s = CosineAnnealing::from_values(min, max, steps).unwrap();
         // First step (cos(0) = 1) yields the maximum.
         assert!((s.step().value() - max).abs() < 1e-6);
         // Exhaust the remaining steps of the cycle.
@@ -210,12 +200,7 @@ mod tests {
     #[test]
     fn midpoint_is_average_of_min_and_max() {
         let (min, max, steps) = (0.0, 1.0, 4);
-        let mut s = CosineAnnealing::new(
-            LearningRate::new(min).unwrap(),
-            LearningRate::new(max).unwrap(),
-            steps,
-        )
-        .unwrap();
+        let mut s = CosineAnnealing::from_values(min, max, steps).unwrap();
         s.step(); // step 0
         s.step(); // step 1
         // step 2 of 4: cos(π/2) = 0 → lr = (min + max) / 2.
@@ -225,14 +210,10 @@ mod tests {
     #[test]
     fn warm_restart_resets_to_max_and_grows_period() {
         let (min, max, steps) = (0.0, 1.0, 2);
-        let mut s = CosineAnnealing::new(
-            LearningRate::new(min).unwrap(),
-            LearningRate::new(max).unwrap(),
-            steps,
-        )
-        .unwrap()
-        .with_restarts(true, 2)
-        .unwrap();
+        let mut s = CosineAnnealing::from_values(min, max, steps)
+            .unwrap()
+            .with_restarts(true, 2)
+            .unwrap();
         let first = s.step().value(); // step 0 → max
         s.step(); // step 1 → triggers restart, period grows to 4
         let after_restart = s.step().value(); // step 0 of new cycle → max again
