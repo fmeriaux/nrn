@@ -1,4 +1,4 @@
-use super::callbacks::{Callbacks, TrainerCallback};
+use super::callbacks::{CallbackError, CallbackResult, Callbacks, TrainerCallback};
 use super::early_stopping::{EarlyStopping, EarlyStoppingConfig};
 use super::evaluator::Evaluator;
 use super::outcome::TrainingOutcome;
@@ -10,7 +10,6 @@ use crate::loss_functions::LossFunction;
 use crate::model::NeuralNetwork;
 use crate::optimizers::{Optimizer, OptimizerState};
 use crate::schedulers::{Scheduler, SchedulerState};
-use std::io::{Error as IoError, Result as IoResult};
 use std::sync::Arc;
 
 /// The result of a completed [`Trainer::train`].
@@ -92,13 +91,13 @@ impl Trainer {
         epoch_start: usize,
         optimizer_state: Option<OptimizerState>,
         scheduler_state: Option<SchedulerState>,
-    ) -> IoResult<()> {
+    ) -> CallbackResult {
         self.epoch_start = epoch_start;
         if let Some(state) = &scheduler_state {
             self.scheduler.restore(state);
         }
         if let Some(state) = &optimizer_state {
-            self.optimizer.restore(state).map_err(IoError::other)?;
+            self.optimizer.restore(state)?;
         }
         self.callbacks.on_restore(
             epoch_start,
@@ -107,7 +106,7 @@ impl Trainer {
         )
     }
 
-    pub fn train(mut self) -> IoResult<TrainingReport> {
+    pub fn train(mut self) -> Result<TrainingReport, CallbackError> {
         self.callbacks.on_train_start()?;
 
         // Accuracy is strictly determined by the number of classes, itself encoded
@@ -206,7 +205,7 @@ impl Trainer {
         &mut self,
         evaluator: &Evaluator,
         epoch: usize,
-    ) -> IoResult<Option<EvaluationSet>> {
+    ) -> Result<Option<EvaluationSet>, CallbackError> {
         if !self.model.is_finite() {
             return Ok(None);
         }
@@ -243,7 +242,6 @@ mod tests {
     use crate::training::GradientClipping;
     use ndarray::array;
     use std::cell::RefCell;
-    use std::io::Error;
     use std::rc::Rc;
 
     fn sample_dataset() -> ModelDataset {
@@ -315,7 +313,7 @@ mod tests {
             epoch_start: usize,
             optimizer: Option<&dyn Optimizer>,
             scheduler: Option<&dyn Scheduler>,
-        ) -> IoResult<()> {
+        ) -> CallbackResult {
             self.0.borrow_mut().restored = Some((
                 epoch_start,
                 optimizer.map(|o| o.name().to_string()),
@@ -324,12 +322,12 @@ mod tests {
             Ok(())
         }
 
-        fn on_train_start(&mut self) -> IoResult<()> {
+        fn on_train_start(&mut self) -> CallbackResult {
             self.0.borrow_mut().train_starts += 1;
             Ok(())
         }
 
-        fn on_epoch_end(&mut self, _epoch: usize) -> IoResult<()> {
+        fn on_epoch_end(&mut self, _epoch: usize) -> CallbackResult {
             self.0.borrow_mut().epoch_ends += 1;
             Ok(())
         }
@@ -341,7 +339,7 @@ mod tests {
             _scheduler: &dyn Scheduler,
             _eval: &EvaluationSet,
             epoch: usize,
-        ) -> IoResult<()> {
+        ) -> CallbackResult {
             self.0.borrow_mut().evaluated_epochs.push(epoch);
             Ok(())
         }
@@ -352,7 +350,7 @@ mod tests {
             model: Option<&NeuralNetwork>,
             _eval: Option<&EvaluationSet>,
             _epoch: usize,
-        ) -> IoResult<()> {
+        ) -> CallbackResult {
             let mut counts = self.0.borrow_mut();
             counts.train_ends += 1;
             counts.last_outcome = Some(outcome);
@@ -373,8 +371,8 @@ mod tests {
             _scheduler: &dyn Scheduler,
             _eval: &EvaluationSet,
             _epoch: usize,
-        ) -> IoResult<()> {
-            Err(Error::other("boom"))
+        ) -> CallbackResult {
+            Err("boom".into())
         }
     }
 
@@ -389,8 +387,8 @@ mod tests {
             _model: Option<&NeuralNetwork>,
             _eval: Option<&EvaluationSet>,
             _epoch: usize,
-        ) -> IoResult<()> {
-            Err(Error::other("boom"))
+        ) -> CallbackResult {
+            Err("boom".into())
         }
     }
 
@@ -399,8 +397,8 @@ mod tests {
     struct FailingOnTrainStart;
 
     impl TrainerCallback for FailingOnTrainStart {
-        fn on_train_start(&mut self) -> IoResult<()> {
-            Err(Error::other("boom"))
+        fn on_train_start(&mut self) -> CallbackResult {
+            Err("boom".into())
         }
     }
 
@@ -409,8 +407,8 @@ mod tests {
     struct FailingOnEpochEnd;
 
     impl TrainerCallback for FailingOnEpochEnd {
-        fn on_epoch_end(&mut self, _epoch: usize) -> IoResult<()> {
-            Err(Error::other("boom"))
+        fn on_epoch_end(&mut self, _epoch: usize) -> CallbackResult {
+            Err("boom".into())
         }
     }
 
@@ -427,11 +425,11 @@ mod tests {
             _scheduler: &dyn Scheduler,
             _eval: &EvaluationSet,
             epoch: usize,
-        ) -> IoResult<()> {
+        ) -> CallbackResult {
             if epoch == 0 {
                 Ok(())
             } else {
-                Err(Error::other("boom"))
+                Err("boom".into())
             }
         }
     }
@@ -821,7 +819,7 @@ mod tests {
         );
 
         // Missing `time_step` metadata makes Adam's restore fail; the trainer
-        // surfaces it as an I/O error.
+        // surfaces it as a callback error.
         let bad_state = Some(OptimizerState {
             tensors: Vec::new(),
             metadata: HashMap::new(),

@@ -3,7 +3,12 @@ use crate::evaluation::EvaluationSet;
 use crate::model::NeuralNetwork;
 use crate::optimizers::Optimizer;
 use crate::schedulers::Scheduler;
-use std::io::Result;
+
+/// Type-erased error a [`TrainerCallback`] hook may fail with.
+pub type CallbackError = Box<dyn std::error::Error>;
+
+/// The result type of every [`TrainerCallback`] hook.
+pub type CallbackResult = Result<(), CallbackError>;
 
 /// Observes training lifecycle events.
 ///
@@ -22,18 +27,18 @@ pub trait TrainerCallback {
         _epoch_start: usize,
         _optimizer: Option<&dyn Optimizer>,
         _scheduler: Option<&dyn Scheduler>,
-    ) -> Result<()> {
+    ) -> CallbackResult {
         Ok(())
     }
 
     /// Called once before training begins. Callbacks that need the run's
     /// configuration hold their own [`crate::training::HyperParameters`].
-    fn on_train_start(&mut self) -> Result<()> {
+    fn on_train_start(&mut self) -> CallbackResult {
         Ok(())
     }
 
     /// Called after each epoch. Cheap — no evaluation has been computed.
-    fn on_epoch_end(&mut self, _epoch: usize) -> Result<()> {
+    fn on_epoch_end(&mut self, _epoch: usize) -> CallbackResult {
         Ok(())
     }
 
@@ -48,7 +53,7 @@ pub trait TrainerCallback {
         _scheduler: &dyn Scheduler,
         _eval: &EvaluationSet,
         _epoch: usize,
-    ) -> Result<()> {
+    ) -> CallbackResult {
         Ok(())
     }
 
@@ -60,7 +65,7 @@ pub trait TrainerCallback {
         _model: Option<&NeuralNetwork>,
         _eval: Option<&EvaluationSet>,
         _epoch: usize,
-    ) -> Result<()> {
+    ) -> CallbackResult {
         Ok(())
     }
 }
@@ -98,8 +103,8 @@ impl Callbacks {
     /// the first `Err`.
     fn propagate(
         &mut self,
-        mut hook: impl FnMut(&mut dyn TrainerCallback) -> Result<()>,
-    ) -> Result<()> {
+        mut hook: impl FnMut(&mut dyn TrainerCallback) -> CallbackResult,
+    ) -> CallbackResult {
         self.0.iter_mut().try_for_each(|cb| hook(cb.as_mut()))
     }
 }
@@ -110,15 +115,15 @@ impl TrainerCallback for Callbacks {
         epoch_start: usize,
         optimizer: Option<&dyn Optimizer>,
         scheduler: Option<&dyn Scheduler>,
-    ) -> Result<()> {
+    ) -> CallbackResult {
         self.propagate(|cb| cb.on_restore(epoch_start, optimizer, scheduler))
     }
 
-    fn on_train_start(&mut self) -> Result<()> {
+    fn on_train_start(&mut self) -> CallbackResult {
         self.propagate(|cb| cb.on_train_start())
     }
 
-    fn on_epoch_end(&mut self, epoch: usize) -> Result<()> {
+    fn on_epoch_end(&mut self, epoch: usize) -> CallbackResult {
         self.propagate(|cb| cb.on_epoch_end(epoch))
     }
 
@@ -129,7 +134,7 @@ impl TrainerCallback for Callbacks {
         scheduler: &dyn Scheduler,
         eval: &EvaluationSet,
         epoch: usize,
-    ) -> Result<()> {
+    ) -> CallbackResult {
         self.propagate(|cb| cb.on_checkpoint(model, optimizer, scheduler, eval, epoch))
     }
 
@@ -139,7 +144,7 @@ impl TrainerCallback for Callbacks {
         model: Option<&NeuralNetwork>,
         eval: Option<&EvaluationSet>,
         epoch: usize,
-    ) -> Result<()> {
+    ) -> CallbackResult {
         self.propagate(|cb| cb.on_train_end(outcome, model, eval, epoch))
     }
 }
@@ -153,7 +158,6 @@ mod tests {
     use crate::optimizers::Adam;
     use crate::schedulers::ConstantScheduler;
     use std::cell::RefCell;
-    use std::io::Error;
     use std::rc::Rc;
 
     struct DefaultCallback;
@@ -218,7 +222,7 @@ mod tests {
     struct CountingCallback(Rc<RefCell<Counts>>);
 
     impl TrainerCallback for CountingCallback {
-        fn on_epoch_end(&mut self, _epoch: usize) -> Result<()> {
+        fn on_epoch_end(&mut self, _epoch: usize) -> CallbackResult {
             self.0.borrow_mut().epoch_ends += 1;
             Ok(())
         }
@@ -227,8 +231,8 @@ mod tests {
     struct FailingCallback;
 
     impl TrainerCallback for FailingCallback {
-        fn on_epoch_end(&mut self, _epoch: usize) -> Result<()> {
-            Err(Error::other("boom"))
+        fn on_epoch_end(&mut self, _epoch: usize) -> CallbackResult {
+            Err("boom".into())
         }
     }
 

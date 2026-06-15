@@ -6,8 +6,7 @@ use nrn::evaluation::EvaluationSet;
 use nrn::model::NeuralNetwork;
 use nrn::optimizers::Optimizer;
 use nrn::schedulers::Scheduler;
-use nrn::training::{HyperParameters, TrainerCallback, TrainingOutcome};
-use std::io::Result;
+use nrn::training::{CallbackResult, HyperParameters, TrainerCallback, TrainingOutcome};
 
 /// Reports the training run lifecycle on the console: a progress bar tracks
 /// epochs, and the run configuration / final outcome are narrated as trace
@@ -35,7 +34,7 @@ impl TrainerCallback for ConsoleMonitor {
         epoch_start: usize,
         optimizer: Option<&dyn Optimizer>,
         scheduler: Option<&dyn Scheduler>,
-    ) -> Result<()> {
+    ) -> CallbackResult {
         if let Some(scheduler) = scheduler {
             completed(&format!(
                 "Restored {} scheduler state from checkpoint at epoch {epoch_start}",
@@ -51,7 +50,7 @@ impl TrainerCallback for ConsoleMonitor {
         Ok(())
     }
 
-    fn on_train_start(&mut self) -> Result<()> {
+    fn on_train_start(&mut self) -> CallbackResult {
         self.bar.set_length(self.current.epochs() as u64);
         self.bar.set_message("Training");
 
@@ -62,7 +61,7 @@ impl TrainerCallback for ConsoleMonitor {
         Ok(())
     }
 
-    fn on_epoch_end(&mut self, _epoch: usize) -> Result<()> {
+    fn on_epoch_end(&mut self, _epoch: usize) -> CallbackResult {
         self.bar.inc(1);
         Ok(())
     }
@@ -73,7 +72,7 @@ impl TrainerCallback for ConsoleMonitor {
         _model: Option<&NeuralNetwork>,
         eval: Option<&EvaluationSet>,
         epoch: usize,
-    ) -> Result<()> {
+    ) -> CallbackResult {
         self.bar.finish_and_clear();
 
         match outcome {

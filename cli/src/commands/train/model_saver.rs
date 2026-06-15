@@ -1,8 +1,7 @@
 use crate::console::{MODEL_ICON, saved_at};
 use nrn::evaluation::EvaluationSet;
 use nrn::model::NeuralNetwork;
-use nrn::training::{TrainerCallback, TrainingOutcome};
-use std::io::Result;
+use nrn::training::{CallbackResult, TrainerCallback, TrainingOutcome};
 use std::path::PathBuf;
 
 /// Saves the final model to disk once training ends, unless the run diverged
@@ -24,7 +23,7 @@ impl TrainerCallback for ModelSaver {
         model: Option<&NeuralNetwork>,
         _eval: Option<&EvaluationSet>,
         _epoch: usize,
-    ) -> Result<()> {
+    ) -> CallbackResult {
         if let Some(model) = model {
             let path = model.save(&self.path)?;
             saved_at(MODEL_ICON, "NEURAL NETWORK", path);

@@ -7,7 +7,7 @@ use crate::io::scheduler as scheduler_io;
 use crate::model::NeuralNetwork;
 use crate::optimizers::{Optimizer, OptimizerState};
 use crate::schedulers::{Scheduler, SchedulerState};
-use crate::training::TrainerCallback;
+use crate::training::{CallbackResult, TrainerCallback};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::ErrorKind::InvalidData;
@@ -153,8 +153,9 @@ impl TrainerCallback for CheckpointRecorder {
         scheduler: &dyn Scheduler,
         eval: &EvaluationSet,
         epoch: usize,
-    ) -> Result<()> {
+    ) -> CallbackResult {
         self.write(model, optimizer, scheduler, eval, epoch)
+            .map_err(Into::into)
     }
 }
 
