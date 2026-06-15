@@ -14,7 +14,9 @@ use nrn::io::checkpoint::CheckpointRecorder;
 use nrn::io::hyperparams::HyperParametersRecord;
 use nrn::io::run::{TrainingMeta, TrainingRun};
 use nrn::model::NeuralNetwork;
-use nrn::training::{Callbacks, FatalDivergence, HyperParameters, Trainer};
+use nrn::optimizers::OptimizerState;
+use nrn::schedulers::SchedulerState;
+use nrn::training::{Callbacks, FatalDivergence, HyperParameters};
 use std::error::Error;
 use std::io::{Error as IoError, ErrorKind, Result as IoResult};
 use std::path::{Path, PathBuf};
@@ -107,11 +109,10 @@ impl StartArgs {
             hyperparameters,
             model,
             split,
-            0,
             model_save_path,
             recorder,
             None,
-            |_| Ok(()),
+            None,
         )
     }
 }
@@ -208,54 +209,52 @@ impl ResumeArgs {
             hyperparameters,
             model,
             split,
-            from_epoch,
             model_save_path,
             recorder,
             Some(previous),
-            |trainer| {
-                if let Some(state) = scheduler_state {
-                    trainer.scheduler_mut().restore(&state);
-                    completed(&format!(
-                        "Restored {} scheduler state from checkpoint at epoch {from_epoch}",
-                        trainer.scheduler().name()
-                    ));
-                }
-                if let Some(state) = optimizer_state {
-                    trainer.optimizer_mut().restore(&state)?;
-                    completed(&format!(
-                        "Restored {} optimizer state from checkpoint at epoch {from_epoch}",
-                        trainer.optimizer().name()
-                    ));
-                }
-                Ok(())
-            },
+            Some(ResumeState {
+                epoch_start: from_epoch,
+                optimizer: optimizer_state,
+                scheduler: scheduler_state,
+            }),
         )
     }
 }
 
 // ─── Shared execution ─────────────────────────────────────────────────────────
 
-/// Builds the callbacks and the [`Trainer`], runs an optional `prepare` step
-/// (e.g. restoring optimizer/scheduler state on resume), then trains to
-/// completion, mapping a fatal divergence to a user-facing error.
-#[allow(clippy::too_many_arguments)]
+/// The checkpointed state a resumed run restores onto its [`Trainer`] before
+/// training: the epoch to resume from plus any persisted optimizer/scheduler state.
+struct ResumeState {
+    epoch_start: usize,
+    optimizer: Option<OptimizerState>,
+    scheduler: Option<SchedulerState>,
+}
+
+/// Builds the callbacks and the `Trainer`, restores checkpointed state when
+/// resuming, then trains to completion, mapping a fatal divergence to a
+/// user-facing error.
 fn execute_training(
     hyperparameters: HyperParameters,
     model: NeuralNetwork,
     split: ModelSplit,
-    epoch_start: usize,
     model_save_path: PathBuf,
     recorder: Option<CheckpointRecorder>,
     previous: Option<HyperParameters>,
-    prepare: impl FnOnce(&mut Trainer) -> Result<(), Box<dyn Error>>,
+    resume: Option<ResumeState>,
 ) -> Result<(), Box<dyn Error>> {
     let callbacks = Callbacks::empty()
         .with(ConsoleMonitor::new(hyperparameters.clone(), previous))
         .with(ModelSaver::new(model_save_path))
         .with_opt(recorder);
 
-    let mut trainer = hyperparameters.build(model, split, callbacks, epoch_start);
-    prepare(&mut trainer)?;
+    let mut trainer = hyperparameters.build(model, split, callbacks);
+
+    // Restoring fires `on_restore`, which the console monitor narrates.
+    if let Some(resume) = resume {
+        trainer.restore(resume.epoch_start, resume.optimizer, resume.scheduler)?;
+    }
+
     trainer.train()?.into_result().map_err(divergence_error)?;
 
     Ok(())

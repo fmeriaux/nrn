@@ -38,7 +38,6 @@ fn xor_converges_to_low_loss() {
             test: xor_dataset(),
         },
         Callbacks::new(vec![]),
-        0,
     )
     .train()
     .unwrap();
@@ -81,7 +80,6 @@ fn xor_converges_with_mini_batch() {
             test: xor_dataset(),
         },
         Callbacks::new(vec![]),
-        0,
     )
     .train()
     .unwrap();
@@ -128,7 +126,6 @@ fn three_class_converges_to_low_loss() {
             test: three_class_dataset(),
         },
         Callbacks::new(vec![]),
-        0,
     )
     .train()
     .unwrap();

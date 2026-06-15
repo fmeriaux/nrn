@@ -8,7 +8,7 @@ pub mod trainer;
 
 pub use crate::gradients::{GradientClipping, GradientClippingError, Gradients};
 pub use crate::learning_rate::LearningRate;
-pub use callbacks::{Callbacks, TrainingCallback};
+pub use callbacks::{Callbacks, TrainerCallback};
 pub use early_stopping::{EarlyStopping, EarlyStoppingConfig, EarlyStoppingConfigError};
 pub use evaluator::Evaluator;
 pub use hyperparams::{

@@ -177,9 +177,9 @@ mod tests {
 
     #[test]
     fn rejects_zero_patience() {
-        match EarlyStoppingConfig::new(0, false) {
-            Err(EarlyStoppingConfigError) => {}
-            Ok(_) => panic!("expected EarlyStoppingConfigError"),
-        }
+        assert_eq!(
+            EarlyStoppingConfig::new(0, false).unwrap_err(),
+            EarlyStoppingConfigError
+        );
     }
 }

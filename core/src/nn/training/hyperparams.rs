@@ -368,15 +368,12 @@ impl HyperParameters {
     }
 
     /// Instantiates the runtime [`Trainer`] from this specification, binding it
-    /// to the `model`, `split`, `callbacks`, and starting epoch. This is the one
-    /// place declarative configs become concrete optimizer/scheduler/loss objects.
-    pub fn build(
-        self,
-        model: NeuralNetwork,
-        split: ModelSplit,
-        callbacks: Callbacks,
-        epoch_start: usize,
-    ) -> Trainer {
+    /// to the `model`, `split`, and `callbacks`. This is the one place
+    /// declarative configs become concrete optimizer/scheduler/loss objects.
+    ///
+    /// The trainer starts from epoch 0; to resume a run, call
+    /// [`Trainer::restore`](crate::training::Trainer::restore) on the result.
+    pub fn build(self, model: NeuralNetwork, split: ModelSplit, callbacks: Callbacks) -> Trainer {
         let optimizer = self.optimizer.instantiate(self.lr);
         let scheduler = self
             .scheduler
@@ -396,7 +393,234 @@ impl HyperParameters {
             epochs: self.epochs,
             checkpoint_interval: self.checkpoint_interval,
             early_stopping: self.early_stopping,
-            epoch_start,
+            epoch_start: 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Builds a spec varying only the fields a validation test cares about; the
+    /// rest are fixed to valid defaults (Adam optimizer, no clipping, cross-entropy).
+    fn try_build(
+        epochs: usize,
+        batch_size: Option<usize>,
+        lr: f32,
+        scheduler: SchedulerConfig,
+        val_ratio: f32,
+        test_ratio: f32,
+    ) -> Result<HyperParameters, HyperParametersError> {
+        HyperParameters::from_values(
+            epochs,
+            1,
+            batch_size,
+            lr,
+            OptimizerConfig::Adam,
+            scheduler,
+            GradientClipping::None,
+            LossConfig::CrossEntropy,
+            None,
+            val_ratio,
+            test_ratio,
+        )
+    }
+
+    fn message(result: Result<HyperParameters, HyperParametersError>) -> String {
+        result.unwrap_err().to_string()
+    }
+
+    #[test]
+    fn rejects_zero_epochs() {
+        assert_eq!(
+            message(try_build(
+                0,
+                None,
+                0.01,
+                SchedulerConfig::Constant,
+                0.1,
+                0.1
+            )),
+            "the number of epochs must be greater than zero"
+        );
+    }
+
+    #[test]
+    fn rejects_zero_batch_size() {
+        assert_eq!(
+            message(try_build(
+                10,
+                Some(0),
+                0.01,
+                SchedulerConfig::Constant,
+                0.1,
+                0.1
+            )),
+            "the batch size must be greater than zero"
+        );
+    }
+
+    #[test]
+    fn rejects_out_of_range_val_ratio() {
+        assert_eq!(
+            message(try_build(
+                10,
+                None,
+                0.01,
+                SchedulerConfig::Constant,
+                1.0,
+                0.1
+            )),
+            "the validation ratio must be in [0.0, 1.0), got 1"
+        );
+    }
+
+    #[test]
+    fn rejects_out_of_range_test_ratio() {
+        assert_eq!(
+            message(try_build(
+                10,
+                None,
+                0.01,
+                SchedulerConfig::Constant,
+                0.1,
+                0.0
+            )),
+            "the test ratio must be in (0.0, 1.0), got 0"
+        );
+    }
+
+    #[test]
+    fn rejects_split_ratios_summing_to_one_or_more() {
+        assert_eq!(
+            message(try_build(
+                10,
+                None,
+                0.01,
+                SchedulerConfig::Constant,
+                0.6,
+                0.6
+            )),
+            "the sum of validation and test ratios must be less than 1.0, got val=0.6, test=0.6"
+        );
+    }
+
+    #[test]
+    fn rejects_negative_learning_rate() {
+        assert_eq!(
+            message(try_build(
+                10,
+                None,
+                -1.0,
+                SchedulerConfig::Constant,
+                0.1,
+                0.1
+            )),
+            "the learning rate must be a finite, non-negative value, got -1"
+        );
+    }
+
+    #[test]
+    fn rejects_cosine_max_not_greater_than_min() {
+        let scheduler = SchedulerConfig::Cosine {
+            lr_min: 0.02,
+            steps: 5,
+            warm_restarts: false,
+            cycle_multiplier: 1,
+        };
+        assert_eq!(
+            message(try_build(10, None, 0.01, scheduler, 0.1, 0.1)),
+            "the maximum learning rate must be greater than the minimum, got min=0.02, max=0.01"
+        );
+    }
+
+    #[test]
+    fn rejects_cosine_zero_steps() {
+        let scheduler = SchedulerConfig::Cosine {
+            lr_min: 0.001,
+            steps: 0,
+            warm_restarts: false,
+            cycle_multiplier: 1,
+        };
+        assert_eq!(
+            message(try_build(10, None, 0.01, scheduler, 0.1, 0.1)),
+            "the step size must be greater than zero"
+        );
+    }
+
+    #[test]
+    fn rejects_cosine_zero_cycle_multiplier() {
+        let scheduler = SchedulerConfig::Cosine {
+            lr_min: 0.001,
+            steps: 5,
+            warm_restarts: true,
+            cycle_multiplier: 0,
+        };
+        assert_eq!(
+            message(try_build(10, None, 0.01, scheduler, 0.1, 0.1)),
+            "the cycle multiplier must be at least 1"
+        );
+    }
+
+    #[test]
+    fn rejects_cosine_invalid_min_learning_rate() {
+        let scheduler = SchedulerConfig::Cosine {
+            lr_min: -1.0,
+            steps: 5,
+            warm_restarts: false,
+            cycle_multiplier: 1,
+        };
+        assert_eq!(
+            message(try_build(10, None, 0.01, scheduler, 0.1, 0.1)),
+            "the learning rate must be a finite, non-negative value, got -1"
+        );
+    }
+
+    #[test]
+    fn rejects_step_invalid_decay_factor() {
+        let scheduler = SchedulerConfig::Step {
+            decay_factor: 1.5,
+            steps: 5,
+        };
+        assert_eq!(
+            message(try_build(10, None, 0.01, scheduler, 0.1, 0.1)),
+            "the decay factor must be in (0, 1), got 1.5"
+        );
+    }
+
+    #[test]
+    fn rejects_step_zero_steps() {
+        let scheduler = SchedulerConfig::Step {
+            decay_factor: 0.5,
+            steps: 0,
+        };
+        assert_eq!(
+            message(try_build(10, None, 0.01, scheduler, 0.1, 0.1)),
+            "the step size must be greater than zero"
+        );
+    }
+
+    #[test]
+    fn clipping_error_is_wrapped_and_displayed() {
+        let range_err = GradientClipping::value(1.0, 0.0).unwrap_err();
+        assert_eq!(
+            HyperParametersError::from(range_err).to_string(),
+            "the gradient clipping range must satisfy min < max, got min=1, max=0"
+        );
+        let norm_err = GradientClipping::norm(-1.0).unwrap_err();
+        assert_eq!(
+            HyperParametersError::from(norm_err).to_string(),
+            "the gradient clipping norm must be a positive value, got -1"
+        );
+    }
+
+    #[test]
+    fn early_stopping_error_is_wrapped_and_displayed() {
+        let err = EarlyStoppingConfig::new(0, false).unwrap_err();
+        assert_eq!(
+            HyperParametersError::from(err).to_string(),
+            "early stopping patience must be greater than zero"
+        );
     }
 }

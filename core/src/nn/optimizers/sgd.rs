@@ -58,14 +58,10 @@ mod tests {
     }
 
     #[test]
-    fn name_is_sgd() {
-        let opt = StochasticGradientDescent::new(0.1.try_into().unwrap());
-        assert_eq!(opt.name(), "Stochastic Gradient Descent (SGD)");
-    }
-
-    #[test]
     fn sgd_subtracts_scaled_gradient() {
         let mut opt = StochasticGradientDescent::new(0.1.try_into().unwrap());
+        assert_eq!(opt.name(), "Stochastic Gradient Descent (SGD)");
+        assert_eq!(opt.learning_rate().value(), 0.1);
         let mut l = layer(array![[1.0, 2.0]], array![1.0]);
         let grads = Gradients {
             dw: array![[0.5, 1.0]],

@@ -10,8 +10,22 @@ use std::io::Result;
 /// All methods have default no-op implementations — implement only what you need.
 /// The training loop owns the checkpoint scheduling: it computes an [`EvaluationSet`]
 /// at epoch 0, at each multiple of `checkpoint_interval`, and at the final epoch, then
-/// dispatches it via [`on_checkpoint`](TrainingCallback::on_checkpoint).
-pub trait TrainingCallback {
+/// dispatches it via [`on_checkpoint`](TrainerCallback::on_checkpoint).
+pub trait TrainerCallback {
+    /// Called from [`Trainer::restore`](crate::training::Trainer::restore) when
+    /// resuming a run, after the trainer's epoch counter and any persisted
+    /// optimizer/scheduler state have been restored. `optimizer`/`scheduler` are
+    /// `Some` only when their state was actually restored, exposing the live
+    /// instance (e.g. for narration).
+    fn on_restore(
+        &mut self,
+        _epoch_start: usize,
+        _optimizer: Option<&dyn Optimizer>,
+        _scheduler: Option<&dyn Scheduler>,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     /// Called once before training begins. Callbacks that need the run's
     /// configuration hold their own [`crate::training::HyperParameters`].
     fn on_train_start(&mut self) -> Result<()> {
@@ -53,10 +67,10 @@ pub trait TrainingCallback {
 
 /// Sequential composite of callbacks: dispatches each hook to its children in
 /// registration order, short-circuiting at the first `Err`.
-pub struct Callbacks(Vec<Box<dyn TrainingCallback>>);
+pub struct Callbacks(Vec<Box<dyn TrainerCallback>>);
 
 impl Callbacks {
-    pub fn new(callbacks: Vec<Box<dyn TrainingCallback>>) -> Self {
+    pub fn new(callbacks: Vec<Box<dyn TrainerCallback>>) -> Self {
         Self(callbacks)
     }
 
@@ -67,27 +81,45 @@ impl Callbacks {
     }
 
     /// Appends a callback.
-    pub fn with(mut self, callback: impl TrainingCallback + 'static) -> Self {
+    pub fn with(mut self, callback: impl TrainerCallback + 'static) -> Self {
         self.0.push(Box::new(callback));
         self
     }
 
     /// Appends a callback if present, otherwise returns `self` unchanged.
-    pub fn with_opt(self, callback: Option<impl TrainingCallback + 'static>) -> Self {
+    pub fn with_opt(self, callback: Option<impl TrainerCallback + 'static>) -> Self {
         match callback {
             Some(callback) => self.with(callback),
             None => self,
         }
     }
+
+    /// Dispatches `hook` to each child in registration order, short-circuiting at
+    /// the first `Err`.
+    fn propagate(
+        &mut self,
+        mut hook: impl FnMut(&mut dyn TrainerCallback) -> Result<()>,
+    ) -> Result<()> {
+        self.0.iter_mut().try_for_each(|cb| hook(cb.as_mut()))
+    }
 }
 
-impl TrainingCallback for Callbacks {
+impl TrainerCallback for Callbacks {
+    fn on_restore(
+        &mut self,
+        epoch_start: usize,
+        optimizer: Option<&dyn Optimizer>,
+        scheduler: Option<&dyn Scheduler>,
+    ) -> Result<()> {
+        self.propagate(|cb| cb.on_restore(epoch_start, optimizer, scheduler))
+    }
+
     fn on_train_start(&mut self) -> Result<()> {
-        self.0.iter_mut().try_for_each(|cb| cb.on_train_start())
+        self.propagate(|cb| cb.on_train_start())
     }
 
     fn on_epoch_end(&mut self, epoch: usize) -> Result<()> {
-        self.0.iter_mut().try_for_each(|cb| cb.on_epoch_end(epoch))
+        self.propagate(|cb| cb.on_epoch_end(epoch))
     }
 
     fn on_checkpoint(
@@ -98,9 +130,7 @@ impl TrainingCallback for Callbacks {
         eval: &EvaluationSet,
         epoch: usize,
     ) -> Result<()> {
-        self.0
-            .iter_mut()
-            .try_for_each(|cb| cb.on_checkpoint(model, optimizer, scheduler, eval, epoch))
+        self.propagate(|cb| cb.on_checkpoint(model, optimizer, scheduler, eval, epoch))
     }
 
     fn on_train_end(
@@ -110,9 +140,7 @@ impl TrainingCallback for Callbacks {
         eval: Option<&EvaluationSet>,
         epoch: usize,
     ) -> Result<()> {
-        self.0
-            .iter_mut()
-            .try_for_each(|cb| cb.on_train_end(outcome, model, eval, epoch))
+        self.propagate(|cb| cb.on_train_end(outcome, model, eval, epoch))
     }
 }
 
@@ -130,7 +158,7 @@ mod tests {
 
     struct DefaultCallback;
 
-    impl TrainingCallback for DefaultCallback {}
+    impl TrainerCallback for DefaultCallback {}
 
     fn sample_model() -> NeuralNetwork {
         let specs = NeuronLayerSpec::network_for(vec![3], &*RELU, 2);
@@ -158,6 +186,11 @@ mod tests {
         let optimizer = Adam::with_defaults(0.01.try_into().unwrap());
         let scheduler = ConstantScheduler::new(0.01.try_into().unwrap());
 
+        assert!(
+            callback
+                .on_restore(0, Some(&optimizer), Some(&scheduler))
+                .is_ok()
+        );
         assert!(callback.on_train_start().is_ok());
         assert!(callback.on_epoch_end(0).is_ok());
         assert!(
@@ -184,7 +217,7 @@ mod tests {
 
     struct CountingCallback(Rc<RefCell<Counts>>);
 
-    impl TrainingCallback for CountingCallback {
+    impl TrainerCallback for CountingCallback {
         fn on_epoch_end(&mut self, _epoch: usize) -> Result<()> {
             self.0.borrow_mut().epoch_ends += 1;
             Ok(())
@@ -193,7 +226,7 @@ mod tests {
 
     struct FailingCallback;
 
-    impl TrainingCallback for FailingCallback {
+    impl TrainerCallback for FailingCallback {
         fn on_epoch_end(&mut self, _epoch: usize) -> Result<()> {
             Err(Error::other("boom"))
         }

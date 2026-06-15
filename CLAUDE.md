@@ -66,7 +66,7 @@ of the scikit-learn convention). `Dataset` (row-major, `(samples, features)`) co
   - `outcome.rs` — `TrainingOutcome`: `Completed` / `EarlyStopped { restored }` / `Diverged { recovered }`.
   - `early_stopping.rs` — `EarlyStopping` with optional best-model restore.
   - `evaluator.rs` — `Evaluator`, the scheduled-evaluation driver.
-  - `callbacks.rs` — `TrainingCallback` trait (`on_train_start` / `on_epoch_end` / `on_evaluate` /
+  - `callbacks.rs` — `TrainerCallback` trait (`on_train_start` / `on_epoch_end` / `on_evaluate` /
     `on_train_end`) and `Callbacks`, a sequential composite that short-circuits on the first error;
     built up via `Callbacks::empty().with(..).with_opt(..)`.
 - **`gradients.rs`** — `Gradients` and `GradientClipping` (None / L2 Norm / Value).
@@ -117,7 +117,7 @@ round-trip via `ActivationProvider::get_by_name`.
   run-level `TrainingMeta` in `meta.json`), `recorder()`, `trim_after(from_epoch)` (rewinds the
   trajectory by removing later checkpoints), and `archive()`.
 - **`io/checkpoint.rs`** — the `checkpoint-{epoch:06}/` format and its reader/writer. `CheckpointRecorder`
-  (a `TrainingCallback`, obtained via `TrainingRun::recorder`) writes `model.safetensors` +
+  (a `TrainerCallback`, obtained via `TrainingRun::recorder`) writes `model.safetensors` +
   `evaluations.json` (+ `optimizer.safetensors` when the optimizer/scheduler carry state) per checkpoint.
   `CheckpointArchive` reads back: `model_at(i)`, `optimizer_at(i)`, `epoch_at(i)`, `evaluation_history()`.
   Model weights round-trip through `NeuralNetwork::save`/`load` (`io/model.rs`).
@@ -130,6 +130,6 @@ round-trip via `ActivationProvider::get_by_name`.
   the `TrainingConfig` from CLI args, and the shared `execute_training()` assembles the callbacks
   (`Callbacks::empty().with(..).with_opt(..)`) and runs the `TrainingLoop`, reporting the
   `TrainingReport`. `train/model_saver.rs` (`ModelSaver`) and `train/monitor.rs` (`ConsoleMonitor`,
-  console narration + progress bar) are `TrainingCallback` implementations.
+  console narration + progress bar) are `TrainerCallback` implementations.
 - **`actions.rs`** — shared load/save helpers for models, datasets, and scalers.
 - **`console.rs`** — display helpers: status icons, `Summary`, formatted output used across commands.

@@ -4,7 +4,9 @@ use console::style;
 use indicatif::ProgressBar;
 use nrn::evaluation::EvaluationSet;
 use nrn::model::NeuralNetwork;
-use nrn::training::{HyperParameters, TrainingCallback, TrainingOutcome};
+use nrn::optimizers::Optimizer;
+use nrn::schedulers::Scheduler;
+use nrn::training::{HyperParameters, TrainerCallback, TrainingOutcome};
 use std::io::Result;
 
 /// Reports the training run lifecycle on the console: a progress bar tracks
@@ -27,7 +29,28 @@ impl ConsoleMonitor {
     }
 }
 
-impl TrainingCallback for ConsoleMonitor {
+impl TrainerCallback for ConsoleMonitor {
+    fn on_restore(
+        &mut self,
+        epoch_start: usize,
+        optimizer: Option<&dyn Optimizer>,
+        scheduler: Option<&dyn Scheduler>,
+    ) -> Result<()> {
+        if let Some(scheduler) = scheduler {
+            completed(&format!(
+                "Restored {} scheduler state from checkpoint at epoch {epoch_start}",
+                scheduler.name()
+            ));
+        }
+        if let Some(optimizer) = optimizer {
+            completed(&format!(
+                "Restored {} optimizer state from checkpoint at epoch {epoch_start}",
+                optimizer.name()
+            ));
+        }
+        Ok(())
+    }
+
     fn on_train_start(&mut self) -> Result<()> {
         self.bar.set_length(self.current.epochs() as u64);
         self.bar.set_message("Training");

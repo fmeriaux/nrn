@@ -179,15 +179,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn name_is_cosine_annealing() {
-        let s = CosineAnnealing::from_values(0.001, 0.1, 10, false, 1).unwrap();
-        assert_eq!(s.name(), "Cosine Annealing");
-    }
-
-    #[test]
     fn starts_at_max_and_ends_at_min() {
         let (min, max, steps) = (0.001, 0.1, 10);
         let mut s = CosineAnnealing::from_values(min, max, steps, false, 1).unwrap();
+        assert_eq!(s.name(), "Cosine Annealing");
         // First step (cos(0) = 1) yields the maximum.
         assert!((s.step().value() - max).abs() < 1e-6);
         // Exhaust the remaining steps of the cycle.
@@ -231,6 +226,17 @@ mod tests {
             )
             .unwrap_err(),
             CosineAnnealingError::MaxNotGreaterThanMin { min: 0.1, max: 0.1 }
+        );
+    }
+
+    #[test]
+    fn from_values_rejects_invalid_max_learning_rate() {
+        // A valid min but invalid max exercises the second learning-rate check.
+        assert_eq!(
+            CosineAnnealing::from_values(0.001, -1.0, 5, false, 1)
+                .unwrap_err()
+                .to_string(),
+            "the learning rate must be a finite, non-negative value, got -1"
         );
     }
 

@@ -18,7 +18,7 @@ use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::Adam;
 use nrn::schedulers::ConstantScheduler;
-use nrn::training::{GradientClipping, TrainingCallback};
+use nrn::training::{GradientClipping, TrainerCallback};
 use std::path::PathBuf;
 use std::sync::Arc;
 

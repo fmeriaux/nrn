@@ -1,4 +1,4 @@
-use super::callbacks::{Callbacks, TrainingCallback};
+use super::callbacks::{Callbacks, TrainerCallback};
 use super::early_stopping::{EarlyStopping, EarlyStoppingConfig};
 use super::evaluator::Evaluator;
 use super::outcome::TrainingOutcome;
@@ -8,9 +8,9 @@ use crate::evaluation::EvaluationSet;
 use crate::gradients::GradientClipping;
 use crate::loss_functions::LossFunction;
 use crate::model::NeuralNetwork;
-use crate::optimizers::Optimizer;
-use crate::schedulers::Scheduler;
-use std::io::Result as IoResult;
+use crate::optimizers::{Optimizer, OptimizerState};
+use crate::schedulers::{Scheduler, SchedulerState};
+use std::io::{Error as IoError, Result as IoResult};
 use std::sync::Arc;
 
 /// The result of a completed [`Trainer::train`].
@@ -79,30 +79,32 @@ pub struct Trainer {
 }
 
 impl Trainer {
-    /// Whether `epoch` should trigger an evaluation + checkpoint, given
-    /// `checkpoint_interval == 0` means "no checkpoints at all".
-    pub fn is_checkpoint(checkpoint_interval: usize, epoch: usize) -> bool {
-        checkpoint_interval != 0 && epoch.is_multiple_of(checkpoint_interval)
-    }
-
-    /// The run's optimizer, for inspecting its name/state.
-    pub fn optimizer(&self) -> &dyn Optimizer {
-        self.optimizer.as_ref()
-    }
-
-    /// The run's optimizer, for restoring checkpointed state before training.
-    pub fn optimizer_mut(&mut self) -> &mut dyn Optimizer {
-        self.optimizer.as_mut()
-    }
-
-    /// The run's scheduler, for inspecting its name/state.
-    pub fn scheduler(&self) -> &dyn Scheduler {
-        self.scheduler.as_ref()
-    }
-
-    /// The run's scheduler, for restoring checkpointed state before training.
-    pub fn scheduler_mut(&mut self) -> &mut dyn Scheduler {
-        self.scheduler.as_mut()
+    /// Restores the trainer to a checkpointed state before training: resumes the
+    /// epoch count from `epoch_start` and reinstates any persisted optimizer and
+    /// scheduler state, then notifies callbacks via
+    /// [`TrainerCallback::on_restore`]. Used when resuming a run; a fresh run
+    /// keeps the default `epoch_start` of 0 and needs no restore.
+    /// # Errors
+    /// Returns an error if the persisted optimizer state is incompatible with
+    /// this run's optimizer, or if a callback fails.
+    pub fn restore(
+        &mut self,
+        epoch_start: usize,
+        optimizer_state: Option<OptimizerState>,
+        scheduler_state: Option<SchedulerState>,
+    ) -> IoResult<()> {
+        self.epoch_start = epoch_start;
+        if let Some(state) = &scheduler_state {
+            self.scheduler.restore(state);
+        }
+        if let Some(state) = &optimizer_state {
+            self.optimizer.restore(state).map_err(IoError::other)?;
+        }
+        self.callbacks.on_restore(
+            epoch_start,
+            optimizer_state.is_some().then(|| self.optimizer.as_ref()),
+            scheduler_state.is_some().then(|| self.scheduler.as_ref()),
+        )
     }
 
     pub fn train(mut self) -> IoResult<TrainingReport> {
@@ -218,6 +220,12 @@ impl Trainer {
         )?;
         Ok(Some(eval))
     }
+
+    /// Whether `epoch` should trigger an evaluation + checkpoint, given
+    /// `checkpoint_interval == 0` means "no checkpoints at all".
+    fn is_checkpoint(checkpoint_interval: usize, epoch: usize) -> bool {
+        checkpoint_interval != 0 && epoch.is_multiple_of(checkpoint_interval)
+    }
 }
 
 #[cfg(test)]
@@ -295,11 +303,27 @@ mod tests {
         train_ends: usize,
         last_outcome: Option<TrainingOutcome>,
         last_model_was_some: Option<bool>,
+        /// `(epoch_start, optimizer_name, scheduler_name)` from the last `on_restore`.
+        restored: Option<(usize, Option<String>, Option<String>)>,
     }
 
     struct CountingCallback(Rc<RefCell<Counts>>);
 
-    impl TrainingCallback for CountingCallback {
+    impl TrainerCallback for CountingCallback {
+        fn on_restore(
+            &mut self,
+            epoch_start: usize,
+            optimizer: Option<&dyn Optimizer>,
+            scheduler: Option<&dyn Scheduler>,
+        ) -> IoResult<()> {
+            self.0.borrow_mut().restored = Some((
+                epoch_start,
+                optimizer.map(|o| o.name().to_string()),
+                scheduler.map(|s| s.name().to_string()),
+            ));
+            Ok(())
+        }
+
         fn on_train_start(&mut self) -> IoResult<()> {
             self.0.borrow_mut().train_starts += 1;
             Ok(())
@@ -341,7 +365,7 @@ mod tests {
     /// `Trainer::train` propagates errors from the orchestration loop.
     struct FailingOnEvaluate;
 
-    impl TrainingCallback for FailingOnEvaluate {
+    impl TrainerCallback for FailingOnEvaluate {
         fn on_checkpoint(
             &mut self,
             _model: &NeuralNetwork,
@@ -358,7 +382,7 @@ mod tests {
     /// `Trainer::train` propagates errors raised at the end of training.
     struct FailingOnTrainEnd;
 
-    impl TrainingCallback for FailingOnTrainEnd {
+    impl TrainerCallback for FailingOnTrainEnd {
         fn on_train_end(
             &mut self,
             _outcome: TrainingOutcome,
@@ -374,7 +398,7 @@ mod tests {
     /// `Trainer::train` propagates errors raised before the training loop.
     struct FailingOnTrainStart;
 
-    impl TrainingCallback for FailingOnTrainStart {
+    impl TrainerCallback for FailingOnTrainStart {
         fn on_train_start(&mut self) -> IoResult<()> {
             Err(Error::other("boom"))
         }
@@ -384,7 +408,7 @@ mod tests {
     /// `Trainer::train` propagates errors raised inside the training loop.
     struct FailingOnEpochEnd;
 
-    impl TrainingCallback for FailingOnEpochEnd {
+    impl TrainerCallback for FailingOnEpochEnd {
         fn on_epoch_end(&mut self, _epoch: usize) -> IoResult<()> {
             Err(Error::other("boom"))
         }
@@ -395,7 +419,7 @@ mod tests {
     /// evaluation rather than from the epoch-0 pre-evaluation.
     struct FailingOnEvaluateAfterFirst;
 
-    impl TrainingCallback for FailingOnEvaluateAfterFirst {
+    impl TrainerCallback for FailingOnEvaluateAfterFirst {
         fn on_checkpoint(
             &mut self,
             _model: &NeuralNetwork,
@@ -421,7 +445,6 @@ mod tests {
             sample_model(),
             sample_split(with_validation),
             Callbacks::new(vec![Box::new(CountingCallback(counts))]),
-            0,
         )
     }
 
@@ -430,13 +453,12 @@ mod tests {
     fn failing_trainer(
         epochs: usize,
         checkpoint_interval: usize,
-        callback: impl TrainingCallback + 'static,
+        callback: impl TrainerCallback + 'static,
     ) -> Trainer {
         sample_hyperparameters(epochs, checkpoint_interval, 0.01, None).build(
             sample_model(),
             sample_split(false),
             Callbacks::new(vec![Box::new(callback)]),
-            0,
         )
     }
 
@@ -648,5 +670,163 @@ mod tests {
             counts.borrow().last_outcome,
             Some(TrainingOutcome::EarlyStopped { restored: false })
         );
+    }
+
+    #[test]
+    fn restore_reinstates_state_and_resumes_from_epoch_start() {
+        use crate::gradients::Gradients;
+        use crate::optimizers::Adam;
+        use crate::schedulers::CosineAnnealing;
+
+        // Stateful optimizer/scheduler snapshots, as a checkpoint would hold them.
+        let mut adam = Adam::with_defaults(0.01.try_into().unwrap());
+        adam.update(
+            0,
+            &mut sample_model().layers.swap_remove(0),
+            &Gradients {
+                dw: array![[0.1, 0.1]],
+                db: array![0.1],
+            },
+        );
+        adam.step();
+        let optimizer_state = adam.to_state();
+
+        let mut cosine = CosineAnnealing::from_values(0.001, 0.01, 5, false, 1).unwrap();
+        cosine.step();
+        let scheduler_state = cosine.to_state();
+
+        let hyperparameters = HyperParameters::from_values(
+            3,
+            1,
+            None,
+            0.01,
+            OptimizerConfig::Adam,
+            SchedulerConfig::Cosine {
+                lr_min: 0.001,
+                steps: 5,
+                warm_restarts: false,
+                cycle_multiplier: 1,
+            },
+            GradientClipping::None,
+            LossConfig::CrossEntropy,
+            None,
+            0.1,
+            0.1,
+        )
+        .unwrap();
+
+        let counts = Rc::new(RefCell::new(Counts::default()));
+        let mut trainer = hyperparameters.build(
+            sample_model(),
+            sample_split(false),
+            Callbacks::new(vec![Box::new(CountingCallback(counts.clone()))]),
+        );
+
+        trainer
+            .restore(10, optimizer_state, scheduler_state)
+            .unwrap();
+        let report = trainer.train().unwrap();
+
+        // Resumed counting from epoch 10, then trained 3 more epochs.
+        assert_eq!(report.final_epoch, 13);
+        assert_eq!(
+            counts.borrow().restored,
+            Some((
+                10,
+                Some("Adam".to_string()),
+                Some("Cosine Annealing".to_string())
+            ))
+        );
+    }
+
+    #[test]
+    fn restore_accepts_states_for_stateless_optimizer_and_scheduler() {
+        use crate::optimizers::OptimizerState;
+        use std::collections::HashMap;
+
+        let hyperparameters = HyperParameters::from_values(
+            2,
+            0,
+            None,
+            0.01,
+            OptimizerConfig::Sgd,
+            SchedulerConfig::Constant,
+            GradientClipping::None,
+            LossConfig::CrossEntropy,
+            None,
+            0.1,
+            0.1,
+        )
+        .unwrap();
+
+        let mut trainer =
+            hyperparameters.build(sample_model(), sample_split(false), Callbacks::empty());
+
+        // Stateless SGD / constant scheduler ignore the provided state (default no-ops).
+        let optimizer_state = Some(OptimizerState {
+            tensors: Vec::new(),
+            metadata: HashMap::new(),
+        });
+        let scheduler_state = Some(SchedulerState { current_step: 7 });
+
+        trainer
+            .restore(5, optimizer_state, scheduler_state)
+            .unwrap();
+
+        assert_eq!(trainer.train().unwrap().final_epoch, 7);
+    }
+
+    #[test]
+    fn restore_without_optimizer_state_only_resumes_scheduler() {
+        let hyperparameters = HyperParameters::from_values(
+            1,
+            0,
+            None,
+            0.01,
+            OptimizerConfig::Adam,
+            SchedulerConfig::Cosine {
+                lr_min: 0.001,
+                steps: 5,
+                warm_restarts: false,
+                cycle_multiplier: 1,
+            },
+            GradientClipping::None,
+            LossConfig::CrossEntropy,
+            None,
+            0.1,
+            0.1,
+        )
+        .unwrap();
+
+        let mut trainer =
+            hyperparameters.build(sample_model(), sample_split(false), Callbacks::empty());
+
+        trainer
+            .restore(4, None, Some(SchedulerState { current_step: 2 }))
+            .unwrap();
+
+        assert_eq!(trainer.train().unwrap().final_epoch, 5);
+    }
+
+    #[test]
+    fn restore_surfaces_optimizer_state_errors() {
+        use crate::optimizers::OptimizerState;
+        use std::collections::HashMap;
+
+        // Adam optimizer (from `sample_hyperparameters`).
+        let mut trainer = sample_hyperparameters(1, 0, 0.01, None).build(
+            sample_model(),
+            sample_split(false),
+            Callbacks::empty(),
+        );
+
+        // Missing `time_step` metadata makes Adam's restore fail; the trainer
+        // surfaces it as an I/O error.
+        let bad_state = Some(OptimizerState {
+            tensors: Vec::new(),
+            metadata: HashMap::new(),
+        });
+
+        assert!(trainer.restore(1, bad_state, None).is_err());
     }
 }

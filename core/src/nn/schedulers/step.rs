@@ -118,17 +118,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn name_is_step_decay() {
-        let sched = StepDecay::from_values(0.1, 3, 0.5).unwrap();
-        assert_eq!(sched.name(), "Step Decay");
-    }
-
-    #[test]
     fn lr_stays_constant_within_each_period() {
         // initial=0.1, steps=3, decay=0.5
         // Steps 0-2: floor(t/3)=0 → LR = 0.1 * 0.5^0 = 0.1
         // Steps 3-5: floor(t/3)=1 → LR = 0.1 * 0.5^1 = 0.05
         let mut sched = StepDecay::from_values(0.1, 3, 0.5).unwrap();
+        assert_eq!(sched.name(), "Step Decay");
         for _ in 0..3 {
             assert!((sched.step().value() - 0.1).abs() < 1e-6);
         }
@@ -150,6 +145,31 @@ mod tests {
         assert_eq!(
             StepDecay::new(LearningRate::new(0.1).unwrap(), 0, 0.5).unwrap_err(),
             StepDecayError::ZeroSteps
+        );
+    }
+
+    #[test]
+    fn to_state_restore_roundtrip_resumes_the_schedule() {
+        let mut sched = StepDecay::from_values(0.1, 3, 0.5).unwrap();
+        for _ in 0..4 {
+            sched.step();
+        }
+        let state = sched.to_state().unwrap();
+
+        let mut restored = StepDecay::from_values(0.1, 3, 0.5).unwrap();
+        restored.restore(&state);
+
+        // Both are now at step 4 (second plateau), so the next step matches.
+        assert_eq!(restored.step().value(), sched.step().value());
+    }
+
+    #[test]
+    fn from_values_wraps_invalid_initial_learning_rate() {
+        assert_eq!(
+            StepDecay::from_values(-1.0, 3, 0.5)
+                .unwrap_err()
+                .to_string(),
+            "the learning rate must be a finite, non-negative value, got -1"
         );
     }
 

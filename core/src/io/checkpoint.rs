@@ -7,7 +7,7 @@ use crate::io::scheduler as scheduler_io;
 use crate::model::NeuralNetwork;
 use crate::optimizers::{Optimizer, OptimizerState};
 use crate::schedulers::{Scheduler, SchedulerState};
-use crate::training::TrainingCallback;
+use crate::training::TrainerCallback;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::ErrorKind::InvalidData;
@@ -100,7 +100,7 @@ pub(super) fn scan_checkpoints(dir: &Path) -> Result<Vec<CheckpointRef>> {
 /// `checkpoint-{epoch:06}/` containing `model.safetensors`, `evaluations.json`,
 /// and — when the optimizer or scheduler carry internal state — `optimizer.safetensors`
 /// and/or `scheduler.json` respectively.
-/// Implements [`TrainingCallback`]: [`on_checkpoint`](TrainingCallback::on_checkpoint)
+/// Implements [`TrainerCallback`]: [`on_checkpoint`](TrainerCallback::on_checkpoint)
 /// writes a checkpoint. Obtained via [`TrainingRun::recorder`](crate::io::run::TrainingRun::recorder).
 #[derive(Debug)]
 pub struct CheckpointRecorder {
@@ -145,7 +145,7 @@ impl CheckpointRecorder {
     }
 }
 
-impl TrainingCallback for CheckpointRecorder {
+impl TrainerCallback for CheckpointRecorder {
     fn on_checkpoint(
         &mut self,
         model: &NeuralNetwork,

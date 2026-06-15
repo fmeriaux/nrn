@@ -1,7 +1,7 @@
 use crate::console::{MODEL_ICON, saved_at};
 use nrn::evaluation::EvaluationSet;
 use nrn::model::NeuralNetwork;
-use nrn::training::{TrainingCallback, TrainingOutcome};
+use nrn::training::{TrainerCallback, TrainingOutcome};
 use std::io::Result;
 use std::path::PathBuf;
 
@@ -17,7 +17,7 @@ impl ModelSaver {
     }
 }
 
-impl TrainingCallback for ModelSaver {
+impl TrainerCallback for ModelSaver {
     fn on_train_end(
         &mut self,
         _outcome: TrainingOutcome,
