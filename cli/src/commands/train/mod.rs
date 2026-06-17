@@ -1,7 +1,6 @@
 mod args;
 mod model_saver;
 mod monitor;
-mod recap;
 
 use crate::actions::*;
 use crate::console::{RUN_ICON, Summary, completed, loaded, recording_at, warning};

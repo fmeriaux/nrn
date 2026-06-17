@@ -5,7 +5,6 @@ use nrn::data::{Dataset, ModelSplit};
 use nrn::evaluation::{Evaluation, EvaluationSet};
 use nrn::io::checkpoint::CheckpointArchive;
 use nrn::model::NeuralNetwork;
-use nrn::training::GradientClipping;
 use pathdiff::diff_paths;
 use std::borrow::Cow;
 use std::env;
@@ -73,12 +72,6 @@ impl Summary for NeuralNetwork {
     }
 }
 
-impl Summary for f32 {
-    fn summary(&self) -> String {
-        format!("{}", self)
-    }
-}
-
 impl<T: Summary> Summary for Option<T> {
     fn summary(&self) -> String {
         match self {
@@ -119,31 +112,6 @@ impl Summary for CheckpointArchive {
             style(self.epoch_at(0).unwrap_or(0)).yellow(),
             style(self.epoch_at(self.len().saturating_sub(1)).unwrap_or(0)).yellow(),
         )
-    }
-}
-
-impl Summary for GradientClipping {
-    fn summary(&self) -> String {
-        match self {
-            GradientClipping::None => {
-                format!("{}", style("No Clipping").bold().blue())
-            }
-            GradientClipping::Norm { max_norm } => {
-                format!(
-                    "{} (max {})",
-                    style("Clipping by Norm").bold().blue(),
-                    style(max_norm).yellow()
-                )
-            }
-            GradientClipping::Value { min, max } => {
-                format!(
-                    "{} (min {}, max {})",
-                    style("Clipping by Value").bold().blue(),
-                    style(min).yellow(),
-                    style(max).yellow()
-                )
-            }
-        }
     }
 }
 
