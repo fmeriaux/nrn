@@ -82,6 +82,7 @@ pub(crate) fn initialize_model_with(
     dataset: &Dataset,
     layers: Option<Vec<usize>>,
     auto_layers: bool,
+    seed: u64,
 ) -> NeuralNetwork {
     let layer_specs = if auto_layers {
         NeuronLayerSpec::infer_from(
@@ -93,7 +94,7 @@ pub(crate) fn initialize_model_with(
     } else {
         NeuronLayerSpec::network_for(layers.unwrap_or_default(), &*RELU, dataset.n_classes())
     };
-    let model = NeuralNetwork::initialization(dataset.n_features(), &layer_specs);
+    let model = NeuralNetwork::initialization(dataset.n_features(), &layer_specs, seed);
     initialized(&model);
     model
 }

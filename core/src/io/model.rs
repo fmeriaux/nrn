@@ -100,7 +100,7 @@ mod tests {
     #[test]
     fn save_load_roundtrip_predictions_are_identical() {
         let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 2);
-        let model = NeuralNetwork::initialization(3, &specs);
+        let model = NeuralNetwork::initialization(3, &specs, 0);
 
         let inputs = Array2::from_shape_fn((3, 5), |(i, j)| (i * 5 + j) as f32 * 0.1);
         let predictions_before = model.predict(inputs.view());

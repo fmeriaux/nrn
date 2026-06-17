@@ -1,3 +1,4 @@
+use super::backprop::MiniBatch;
 use super::callbacks::{CallbackError, CallbackResult, Callbacks, TrainerCallback};
 use super::early_stopping::{EarlyStopping, EarlyStoppingConfig};
 use super::evaluator::Evaluator;
@@ -75,6 +76,7 @@ pub struct Trainer {
     pub(super) checkpoint_interval: usize,
     pub(super) early_stopping: Option<EarlyStoppingConfig>,
     pub(super) epoch_start: usize,
+    pub(super) seed: u64,
 }
 
 impl Trainer {
@@ -139,7 +141,8 @@ impl Trainer {
                 self.optimizer.as_mut(),
                 self.scheduler.as_mut(),
                 &self.clipping,
-                self.batch_size,
+                self.batch_size
+                    .map(|size| MiniBatch::new(size, self.seed, epoch)),
             );
 
             final_epoch = epoch;
@@ -288,6 +291,7 @@ mod tests {
             early_stopping,
             val_ratio,
             0.1,
+            0,
         )
         .unwrap()
     }
@@ -691,6 +695,7 @@ mod tests {
             None,
             0.1,
             0.1,
+            0,
         )
         .unwrap();
 
@@ -735,6 +740,7 @@ mod tests {
             None,
             0.1,
             0.1,
+            0,
         )
         .unwrap();
 
@@ -774,6 +780,7 @@ mod tests {
             None,
             0.1,
             0.1,
+            0,
         )
         .unwrap();
 

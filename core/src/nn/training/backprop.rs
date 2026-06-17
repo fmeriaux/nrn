@@ -5,8 +5,35 @@ use crate::model::{NeuralNetwork, last_activation};
 use crate::optimizers::Optimizer;
 use crate::schedulers::Scheduler;
 use ndarray::{Array2, ArrayView2, Axis};
-use ndarray_rand::rand;
+use ndarray_rand::rand::SeedableRng;
+use ndarray_rand::rand::rngs::StdRng;
 use std::sync::Arc;
+
+/// 2⁶⁴⁄φ rounded to an odd integer — the golden-ratio (splitmix64) multiplier. Mixed
+/// with the epoch number, it scatters consecutive epochs across the whole seed space,
+/// so each epoch's mini-batch shuffle differs from its neighbours'.
+const GOLDEN_RATIO: u64 = 0x9E37_79B9_7F4A_7C15;
+
+/// Mini-batch SGD configuration for a single epoch. Bundling the batch `size` with the
+/// `rng` that shuffles it makes the two inseparable: passing `None` to
+/// [`NeuralNetwork::train`] is full-batch (no size, no shuffle), while `Some` always
+/// carries both. This rules out the illegal "size without a generator" (or vice versa)
+/// states a pair of separate parameters would allow. Built via [`MiniBatch::new`].
+pub struct MiniBatch {
+    size: usize,
+    rng: StdRng,
+}
+
+impl MiniBatch {
+    /// Builds the mini-batch config for one epoch: batches of `size`, shuffled by a
+    /// generator seeded from a mix of the run's `seed` and the `epoch`. Deriving it
+    /// from `(seed, epoch)` keeps the shuffle a pure function of the two — reproducible
+    /// and resume-safe, with no RNG state to persist across a checkpoint.
+    pub fn new(size: usize, seed: u64, epoch: usize) -> Self {
+        let rng = StdRng::seed_from_u64(seed ^ (epoch as u64).wrapping_mul(GOLDEN_RATIO));
+        Self { size, rng }
+    }
+}
 
 impl NeuralNetwork {
     /// Trains the network for one epoch using the provided dataset.
@@ -18,8 +45,8 @@ impl NeuralNetwork {
     /// - `optimizer`: The optimizer to use for updating the weights and biases.
     /// - `scheduler`: The learning rate scheduler, stepped once per epoch.
     /// - `clipping`: The gradient clipping strategy to apply during training.
-    /// - `batch_size`: If `Some(n)`, performs mini-batch SGD with batches of size `n`, shuffling
-    ///   the dataset each epoch. If `None`, performs full-batch gradient descent.
+    /// - `mini_batch`: `Some(MiniBatch)` performs mini-batch SGD, shuffling the dataset
+    ///   each epoch; `None` performs full-batch gradient descent.
     pub fn train(
         &mut self,
         dataset: &ModelDataset,
@@ -27,7 +54,7 @@ impl NeuralNetwork {
         optimizer: &mut dyn Optimizer,
         scheduler: &mut dyn Scheduler,
         clipping: &GradientClipping,
-        batch_size: Option<usize>,
+        mini_batch: Option<MiniBatch>,
     ) {
         let n_samples = dataset.inputs.ncols();
         assert_eq!(
@@ -40,7 +67,7 @@ impl NeuralNetwork {
         let lr = scheduler.step();
         optimizer.set_learning_rate(lr);
 
-        match batch_size {
+        match mini_batch {
             None => {
                 let activations = self.forward(dataset.inputs.view());
                 self.update_parameters(
@@ -51,8 +78,8 @@ impl NeuralNetwork {
                     clipping,
                 );
             }
-            Some(size) => {
-                for batch in dataset.batches(size, &mut rand::rng()) {
+            Some(MiniBatch { size, mut rng }) => {
+                for batch in dataset.batches(size, &mut rng) {
                     let activations = self.forward(batch.inputs.view());
                     self.update_parameters(
                         &activations,
@@ -163,7 +190,7 @@ mod tests {
         // Network: 2 inputs -> 2 hidden (sigmoid) -> 1 output (sigmoid, binary)
         // Using sigmoid everywhere to avoid relu's non-differentiable point at 0
         let specs = NeuronLayerSpec::network_for(vec![2], &*SIGMOID, 2);
-        let mut model = NeuralNetwork::initialization(2, &specs);
+        let mut model = NeuralNetwork::initialization(2, &specs, 0);
 
         // Fixed weights for reproducibility
         model.layers[0].weights = array![[0.1, -0.2], [0.3, 0.1]];
@@ -238,7 +265,7 @@ mod tests {
         // differences. The hidden-layer chain rule is covered by the sigmoid test.
         // A single output layer keeps gradients large (O(0.1)) and well within f32 precision.
         let specs = NeuronLayerSpec::network_for(vec![], &*SIGMOID, 3);
-        let mut model = NeuralNetwork::initialization(2, &specs);
+        let mut model = NeuralNetwork::initialization(2, &specs, 0);
 
         model.layers[0].weights = array![[0.5, -0.3], [0.2, 0.8], [-0.4, 0.1]];
         model.layers[0].biases = Array1::from_vec(vec![0.1, -0.2, 0.1]);

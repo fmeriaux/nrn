@@ -170,7 +170,7 @@ mod tests {
 
     fn sample_model() -> NeuralNetwork {
         let specs = NeuronLayerSpec::network_for(vec![3], &*RELU, 2);
-        NeuralNetwork::initialization(2, &specs)
+        NeuralNetwork::initialization(2, &specs, 0)
     }
 
     fn sample_split() -> ModelSplit {

@@ -200,6 +200,7 @@ pub struct HyperParametersRecord {
     pub val_ratio: f32,
     pub test_ratio: f32,
     pub loss: LossRecord,
+    pub seed: u64,
 }
 
 impl From<&HyperParameters> for HyperParametersRecord {
@@ -216,6 +217,7 @@ impl From<&HyperParameters> for HyperParametersRecord {
             val_ratio: hyperparameters.val_ratio(),
             test_ratio: hyperparameters.test_ratio(),
             loss: hyperparameters.loss().into(),
+            seed: hyperparameters.seed(),
         }
     }
 }
@@ -249,6 +251,7 @@ impl TryFrom<HyperParametersRecord> for HyperParameters {
             early_stopping,
             record.val_ratio,
             record.test_ratio,
+            record.seed,
         )
     }
 }
@@ -272,6 +275,7 @@ impl HyperParametersRecord {
             val_ratio: 0.1,
             test_ratio: 0.1,
             loss: LossRecord::CrossEntropy,
+            seed: 42,
         }
     }
 }

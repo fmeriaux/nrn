@@ -120,6 +120,7 @@ type Row = (&'static str, fn(&HyperParameters) -> String);
 /// Recap rows in display order. [`print_recap`] iterates over these to align
 /// the leader dots and to diff each field against `previous`.
 const ROWS: &[Row] = &[
+    ("Seed", |h| h.seed().to_string()),
     ("Epochs", |h| h.epochs().to_string()),
     ("Loss", |h| loss_value(h.loss())),
     ("Optimizer", optimizer_value),

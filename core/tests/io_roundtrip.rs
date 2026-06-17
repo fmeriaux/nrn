@@ -41,6 +41,7 @@ fn sample_hyperparams() -> HyperParametersRecord {
         val_ratio: 0.1,
         test_ratio: 0.1,
         loss: LossRecord::CrossEntropy,
+        seed: 0,
     }
 }
 
@@ -77,7 +78,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
     // --- Model + training run (incremental writer → directory load) --
     let model_dataset = dataset.to_model_dataset();
     let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 2);
-    let mut model = NeuralNetwork::initialization(2, &specs);
+    let mut model = NeuralNetwork::initialization(2, &specs, 0);
 
     let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
     let mut optimizer = Adam::with_defaults(0.05.try_into().unwrap());

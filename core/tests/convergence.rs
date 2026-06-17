@@ -35,10 +35,11 @@ fn xor_converges_to_low_loss() {
         None,
         0.0,
         0.5,
+        42,
     )
     .unwrap()
     .build(
-        NeuralNetwork::initialization(2, &specs),
+        NeuralNetwork::initialization(2, &specs, 42),
         xor_dataset(),
         Callbacks::new(vec![]),
     )
@@ -77,10 +78,11 @@ fn xor_converges_with_mini_batch() {
         None,
         0.0,
         0.5,
+        42,
     )
     .unwrap()
     .build(
-        NeuralNetwork::initialization(2, &specs),
+        NeuralNetwork::initialization(2, &specs, 42),
         xor_dataset(),
         Callbacks::new(vec![]),
     )
@@ -128,10 +130,11 @@ fn three_class_converges_to_low_loss() {
         None,
         0.0,
         0.5,
+        42,
     )
     .unwrap()
     .build(
-        NeuralNetwork::initialization(2, &specs),
+        NeuralNetwork::initialization(2, &specs, 42),
         three_class_dataset(),
         Callbacks::new(vec![]),
     )

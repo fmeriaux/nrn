@@ -83,7 +83,12 @@ impl StartArgs {
 
         let model = match &self.model {
             Some(path) => load_model(path)?,
-            None => initialize_model_with(&dataset, self.layers.clone(), self.auto_layers),
+            None => initialize_model_with(
+                &dataset,
+                self.layers.clone(),
+                self.auto_layers,
+                hyperparameters.seed(),
+            ),
         };
 
         let run_dir = dataset_path.with_file_name(format!("training-model-{dataset_name}"));

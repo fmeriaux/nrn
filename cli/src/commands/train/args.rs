@@ -97,6 +97,11 @@ pub struct TrainArgs {
     /// Mini-batch size (omit for full-batch)
     #[arg(long)]
     batch_size: Option<usize>,
+
+    /// Seed for weight initialization and mini-batch shuffling (omit for a random,
+    /// reported seed). Recorded so the run is reproducible and resumable.
+    #[arg(long)]
+    pub seed: Option<u64>,
 }
 
 impl From<OptimizerType> for OptimizerConfig {
@@ -176,6 +181,7 @@ impl TryFrom<&TrainArgs> for HyperParameters {
             args.early_stopping()?,
             args.val_ratio,
             args.test_ratio,
+            args.seed.unwrap_or_else(ndarray_rand::rand::random),
         )
     }
 }
