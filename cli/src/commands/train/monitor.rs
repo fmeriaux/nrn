@@ -1,6 +1,7 @@
 use crate::console::{Summary, TRACE_ICON, completed, styled_bar, trace, warning};
 use console::style;
 use indicatif::ProgressBar;
+use nrn::data::ModelSplit;
 use nrn::evaluation::EvaluationSet;
 use nrn::model::NeuralNetwork;
 use nrn::optimizers::Optimizer;
@@ -52,11 +53,12 @@ impl TrainerCallback for ConsoleMonitor {
         Ok(())
     }
 
-    fn on_train_start(&mut self) -> CallbackResult {
+    fn on_train_start(&mut self, split: &ModelSplit) -> CallbackResult {
         self.bar.set_length(self.current.epochs() as u64);
         self.bar.set_message("Training");
 
         self.bar.suspend(|| {
+            completed(&split.summary());
             print_recap(&self.current, self.previous.as_ref());
         });
 

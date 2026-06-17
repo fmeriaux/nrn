@@ -107,7 +107,7 @@ impl Trainer {
     }
 
     pub fn train(mut self) -> Result<TrainingReport, CallbackError> {
-        self.callbacks.on_train_start()?;
+        self.callbacks.on_train_start(&self.split)?;
 
         // Accuracy is strictly determined by the number of classes, itself encoded
         // in the output layer — derive it from the model rather than taking it as config.
@@ -244,18 +244,16 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
+    /// A 10-sample, 2-feature dataset — large enough that the ratio split in
+    /// [`HyperParameters::build`] yields non-degenerate train/validation/test sets
+    /// (e.g. `val_ratio = test_ratio = 0.1` gives 8/1/1).
     fn sample_dataset() -> ModelDataset {
         ModelDataset {
-            inputs: array![[0.1, 0.9, 0.2, 0.8], [0.2, 0.8, 0.3, 0.7]],
-            targets: array![[1.0, 0.0, 1.0, 0.0]],
-        }
-    }
-
-    fn sample_split(with_validation: bool) -> ModelSplit {
-        ModelSplit {
-            train: sample_dataset(),
-            validation: with_validation.then(sample_dataset),
-            test: sample_dataset(),
+            inputs: array![
+                [0.1, 0.9, 0.2, 0.8, 0.15, 0.85, 0.25, 0.75, 0.3, 0.7],
+                [0.2, 0.8, 0.3, 0.7, 0.25, 0.75, 0.35, 0.65, 0.4, 0.6]
+            ],
+            targets: array![[1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0]],
         }
     }
 
@@ -276,6 +274,7 @@ mod tests {
         checkpoint_interval: usize,
         lr: f32,
         early_stopping: Option<EarlyStoppingConfig>,
+        val_ratio: f32,
     ) -> HyperParameters {
         HyperParameters::from_values(
             epochs,
@@ -287,7 +286,7 @@ mod tests {
             GradientClipping::None,
             LossConfig::CrossEntropy,
             early_stopping,
-            0.1,
+            val_ratio,
             0.1,
         )
         .unwrap()
@@ -322,7 +321,7 @@ mod tests {
             Ok(())
         }
 
-        fn on_train_start(&mut self) -> CallbackResult {
+        fn on_train_start(&mut self, _split: &ModelSplit) -> CallbackResult {
             self.0.borrow_mut().train_starts += 1;
             Ok(())
         }
@@ -397,7 +396,7 @@ mod tests {
     struct FailingOnTrainStart;
 
     impl TrainerCallback for FailingOnTrainStart {
-        fn on_train_start(&mut self) -> CallbackResult {
+        fn on_train_start(&mut self, _split: &ModelSplit) -> CallbackResult {
             Err("boom".into())
         }
     }
@@ -434,14 +433,10 @@ mod tests {
         }
     }
 
-    fn trainer(
-        hyperparameters: HyperParameters,
-        with_validation: bool,
-        counts: Rc<RefCell<Counts>>,
-    ) -> Trainer {
+    fn trainer(hyperparameters: HyperParameters, counts: Rc<RefCell<Counts>>) -> Trainer {
         hyperparameters.build(
             sample_model(),
-            sample_split(with_validation),
+            sample_dataset(),
             Callbacks::new(vec![Box::new(CountingCallback(counts))]),
         )
     }
@@ -453,9 +448,9 @@ mod tests {
         checkpoint_interval: usize,
         callback: impl TrainerCallback + 'static,
     ) -> Trainer {
-        sample_hyperparameters(epochs, checkpoint_interval, 0.01, None).build(
+        sample_hyperparameters(epochs, checkpoint_interval, 0.01, None, 0.0).build(
             sample_model(),
-            sample_split(false),
+            sample_dataset(),
             Callbacks::new(vec![Box::new(callback)]),
         )
     }
@@ -473,11 +468,9 @@ mod tests {
     #[test]
     fn evaluation_schedule_includes_epoch_zero_multiples_and_final_epoch() {
         let counts = Rc::new(RefCell::new(Counts::default()));
-        let hyperparameters = sample_hyperparameters(7, 3, 0.01, None);
+        let hyperparameters = sample_hyperparameters(7, 3, 0.01, None, 0.0);
 
-        let report = trainer(hyperparameters, false, counts.clone())
-            .train()
-            .unwrap();
+        let report = trainer(hyperparameters, counts.clone()).train().unwrap();
 
         assert_eq!(report.final_epoch, 7);
         let counts = counts.borrow();
@@ -492,11 +485,9 @@ mod tests {
     #[test]
     fn eval_interval_zero_only_emits_the_final_evaluation() {
         let counts = Rc::new(RefCell::new(Counts::default()));
-        let hyperparameters = sample_hyperparameters(3, 0, 0.01, None);
+        let hyperparameters = sample_hyperparameters(3, 0, 0.01, None, 0.0);
 
-        let report = trainer(hyperparameters, false, counts.clone())
-            .train()
-            .unwrap();
+        let report = trainer(hyperparameters, counts.clone()).train().unwrap();
 
         assert!(report.final_evaluation.is_some());
         assert_eq!(counts.borrow().evaluated_epochs, vec![3]);
@@ -506,11 +497,9 @@ mod tests {
     fn early_stopping_halts_training_and_restores_best_model() {
         let counts = Rc::new(RefCell::new(Counts::default()));
         let early_stopping = Some(EarlyStoppingConfig::new(1, true).unwrap());
-        let hyperparameters = sample_hyperparameters(50, 1, 5.0, early_stopping);
+        let hyperparameters = sample_hyperparameters(50, 1, 5.0, early_stopping, 0.1);
 
-        let report = trainer(hyperparameters, true, counts.clone())
-            .train()
-            .unwrap();
+        let report = trainer(hyperparameters, counts.clone()).train().unwrap();
 
         assert_eq!(
             report.outcome,
@@ -526,11 +515,9 @@ mod tests {
     #[test]
     fn fatal_divergence_without_recovery_is_reported_as_data() {
         let counts = Rc::new(RefCell::new(Counts::default()));
-        let hyperparameters = sample_hyperparameters(5, 1, 1e30, None);
+        let hyperparameters = sample_hyperparameters(5, 1, 1e30, None, 0.0);
 
-        let report = trainer(hyperparameters, false, counts.clone())
-            .train()
-            .unwrap();
+        let report = trainer(hyperparameters, counts.clone()).train().unwrap();
 
         assert_eq!(
             report.outcome,
@@ -549,11 +536,9 @@ mod tests {
     fn divergence_recovers_seeded_best_model_when_restore_enabled() {
         let counts = Rc::new(RefCell::new(Counts::default()));
         let early_stopping = Some(EarlyStoppingConfig::new(10, true).unwrap());
-        let hyperparameters = sample_hyperparameters(5, 1, 1e30, early_stopping);
+        let hyperparameters = sample_hyperparameters(5, 1, 1e30, early_stopping, 0.1);
 
-        let report = trainer(hyperparameters, true, counts.clone())
-            .train()
-            .unwrap();
+        let report = trainer(hyperparameters, counts.clone()).train().unwrap();
 
         assert_eq!(
             report.outcome,
@@ -576,10 +561,8 @@ mod tests {
     #[test]
     fn final_evaluation_is_reused_when_last_epoch_is_a_checkpoint() {
         let counts = Rc::new(RefCell::new(Counts::default()));
-        let hyperparameters = sample_hyperparameters(6, 3, 0.01, None);
-        let report = trainer(hyperparameters, false, counts.clone())
-            .train()
-            .unwrap();
+        let hyperparameters = sample_hyperparameters(6, 3, 0.01, None, 0.0);
+        let report = trainer(hyperparameters, counts.clone()).train().unwrap();
 
         assert!(report.final_evaluation.is_some());
         // [0, 3, 6] and NOT [0, 3, 6, 6]: proves the final checkpoint
@@ -590,8 +573,8 @@ mod tests {
     #[test]
     fn into_result_is_ok_for_non_fatal_outcomes() {
         let counts = Rc::new(RefCell::new(Counts::default()));
-        let hyperparameters = sample_hyperparameters(7, 3, 0.01, None);
-        let report = trainer(hyperparameters, false, counts).train().unwrap();
+        let hyperparameters = sample_hyperparameters(7, 3, 0.01, None, 0.0);
+        let report = trainer(hyperparameters, counts).train().unwrap();
 
         assert_eq!(report.outcome, TrainingOutcome::Completed);
         assert!(report.into_result().is_ok());
@@ -600,8 +583,8 @@ mod tests {
     #[test]
     fn into_result_is_err_for_unrecovered_divergence() {
         let counts = Rc::new(RefCell::new(Counts::default()));
-        let hyperparameters = sample_hyperparameters(5, 1, 1e30, None);
-        let report = trainer(hyperparameters, false, counts).train().unwrap();
+        let hyperparameters = sample_hyperparameters(5, 1, 1e30, None, 0.0);
+        let report = trainer(hyperparameters, counts).train().unwrap();
 
         assert_eq!(
             report.outcome,
@@ -654,10 +637,8 @@ mod tests {
     fn early_stopping_halts_without_restoring_when_restore_disabled() {
         let counts = Rc::new(RefCell::new(Counts::default()));
         let early_stopping = Some(EarlyStoppingConfig::new(1, false).unwrap());
-        let hyperparameters = sample_hyperparameters(50, 1, 5.0, early_stopping);
-        let report = trainer(hyperparameters, true, counts.clone())
-            .train()
-            .unwrap();
+        let hyperparameters = sample_hyperparameters(50, 1, 5.0, early_stopping, 0.1);
+        let report = trainer(hyperparameters, counts.clone()).train().unwrap();
 
         assert_eq!(
             report.outcome,
@@ -716,7 +697,7 @@ mod tests {
         let counts = Rc::new(RefCell::new(Counts::default()));
         let mut trainer = hyperparameters.build(
             sample_model(),
-            sample_split(false),
+            sample_dataset(),
             Callbacks::new(vec![Box::new(CountingCallback(counts.clone()))]),
         );
 
@@ -758,7 +739,7 @@ mod tests {
         .unwrap();
 
         let mut trainer =
-            hyperparameters.build(sample_model(), sample_split(false), Callbacks::empty());
+            hyperparameters.build(sample_model(), sample_dataset(), Callbacks::empty());
 
         // Stateless SGD / constant scheduler ignore the provided state (default no-ops).
         let optimizer_state = Some(OptimizerState {
@@ -797,7 +778,7 @@ mod tests {
         .unwrap();
 
         let mut trainer =
-            hyperparameters.build(sample_model(), sample_split(false), Callbacks::empty());
+            hyperparameters.build(sample_model(), sample_dataset(), Callbacks::empty());
 
         trainer
             .restore(4, None, Some(SchedulerState { current_step: 2 }))
@@ -812,9 +793,9 @@ mod tests {
         use std::collections::HashMap;
 
         // Adam optimizer (from `sample_hyperparameters`).
-        let mut trainer = sample_hyperparameters(1, 0, 0.01, None).build(
+        let mut trainer = sample_hyperparameters(1, 0, 0.01, None, 0.0).build(
             sample_model(),
-            sample_split(false),
+            sample_dataset(),
             Callbacks::empty(),
         );
 

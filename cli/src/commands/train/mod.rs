@@ -3,12 +3,12 @@ mod model_saver;
 mod monitor;
 
 use crate::actions::*;
-use crate::console::{RUN_ICON, Summary, completed, loaded, recording_at, warning};
+use crate::console::{RUN_ICON, loaded, recording_at, warning};
 use args::{ResumeOverrides, TrainArgs};
 use clap::*;
 use model_saver::ModelSaver;
 use monitor::ConsoleMonitor;
-use nrn::data::ModelSplit;
+use nrn::data::ModelDataset;
 use nrn::io::checkpoint::CheckpointRecorder;
 use nrn::io::hyperparams::HyperParametersRecord;
 use nrn::io::run::{TrainingMeta, TrainingRun};
@@ -81,11 +81,6 @@ impl StartArgs {
 
         let hyperparameters = HyperParameters::try_from(&self.hp)?;
 
-        let split = dataset
-            .to_model_dataset()
-            .split(hyperparameters.val_ratio(), hyperparameters.test_ratio());
-        completed(split.summary().as_str());
-
         let model = match &self.model {
             Some(path) => load_model(path)?,
             None => initialize_model_with(&dataset, self.layers.clone(), self.auto_layers),
@@ -107,7 +102,7 @@ impl StartArgs {
         execute_training(
             hyperparameters,
             model,
-            split,
+            dataset.to_model_dataset(),
             model_save_path,
             recorder,
             None,
@@ -145,11 +140,6 @@ impl ResumeArgs {
         let mut record = meta.hyperparams.clone();
         self.overrides.apply(&mut record);
         let hyperparameters = HyperParameters::try_from(record)?;
-
-        let split = dataset
-            .to_model_dataset()
-            .split(hyperparameters.val_ratio(), hyperparameters.test_ratio());
-        completed(split.summary().as_str());
 
         let archive = run.archive()?;
         if archive.is_empty() {
@@ -207,7 +197,7 @@ impl ResumeArgs {
         execute_training(
             hyperparameters,
             model,
-            split,
+            dataset.to_model_dataset(),
             model_save_path,
             recorder,
             Some(previous),
@@ -236,7 +226,7 @@ struct ResumeState {
 fn execute_training(
     hyperparameters: HyperParameters,
     model: NeuralNetwork,
-    split: ModelSplit,
+    dataset: ModelDataset,
     model_save_path: PathBuf,
     recorder: Option<CheckpointRecorder>,
     previous: Option<HyperParameters>,
@@ -247,7 +237,7 @@ fn execute_training(
         .with(ModelSaver::new(model_save_path))
         .with_opt(recorder);
 
-    let mut trainer = hyperparameters.build(model, split, callbacks);
+    let mut trainer = hyperparameters.build(model, dataset, callbacks);
 
     // Restoring fires `on_restore`, which the console monitor narrates.
     if let Some(resume) = resume {

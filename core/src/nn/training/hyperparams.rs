@@ -1,7 +1,7 @@
 use super::callbacks::Callbacks;
 use super::early_stopping::{EarlyStoppingConfig, EarlyStoppingConfigError};
 use super::trainer::Trainer;
-use crate::data::ModelSplit;
+use crate::data::ModelDataset;
 use crate::gradients::{GradientClipping, GradientClippingError};
 use crate::learning_rate::{LearningRate, LearningRateError};
 use crate::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
@@ -120,12 +120,12 @@ pub struct HyperParameters {
     /// Early-stopping policy; `None` always trains for the full `epochs` count.
     early_stopping: Option<EarlyStoppingConfig>,
     /// Fraction of the dataset held out for validation. Part of the run's
-    /// identity (the resulting split), consumed when building the split rather
-    /// than by the [`Trainer`].
+    /// identity: [`build`](HyperParameters::build) applies it (with `test_ratio`)
+    /// to split the dataset.
     val_ratio: f32,
-    /// Fraction of the dataset held out for testing. Part of the run's identity
-    /// (the resulting split), consumed when building the split rather than by
-    /// the [`Trainer`].
+    /// Fraction of the dataset held out for testing. Part of the run's identity:
+    /// [`build`](HyperParameters::build) applies it (with `val_ratio`) to split
+    /// the dataset.
     test_ratio: f32,
 }
 
@@ -368,12 +368,21 @@ impl HyperParameters {
     }
 
     /// Instantiates the runtime [`Trainer`] from this specification, binding it
-    /// to the `model`, `split`, and `callbacks`. This is the one place
-    /// declarative configs become concrete optimizer/scheduler/loss objects.
+    /// to the `model` and `callbacks`. This is the one place declarative configs
+    /// become concrete objects: the optimizer/scheduler/loss are instantiated, and
+    /// `dataset` is split into train/validation/test using this spec's own
+    /// `val_ratio`/`test_ratio` (validated in [`new`](HyperParameters::new), so the
+    /// split is always well-formed).
     ///
     /// The trainer starts from epoch 0; to resume a run, call
     /// [`Trainer::restore`](crate::training::Trainer::restore) on the result.
-    pub fn build(self, model: NeuralNetwork, split: ModelSplit, callbacks: Callbacks) -> Trainer {
+    pub fn build(
+        self,
+        model: NeuralNetwork,
+        dataset: ModelDataset,
+        callbacks: Callbacks,
+    ) -> Trainer {
+        let split = dataset.split(self.val_ratio, self.test_ratio);
         let optimizer = self.optimizer.instantiate(self.lr);
         let scheduler = self
             .scheduler

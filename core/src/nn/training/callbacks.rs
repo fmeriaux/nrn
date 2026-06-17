@@ -1,4 +1,5 @@
 use super::outcome::TrainingOutcome;
+use crate::data::ModelSplit;
 use crate::evaluation::EvaluationSet;
 use crate::model::NeuralNetwork;
 use crate::optimizers::Optimizer;
@@ -31,9 +32,10 @@ pub trait TrainerCallback {
         Ok(())
     }
 
-    /// Called once before training begins. Callbacks that need the run's
-    /// configuration hold their own [`crate::training::HyperParameters`].
-    fn on_train_start(&mut self) -> CallbackResult {
+    /// Called once before training begins, with the `split` the run will train
+    /// and evaluate on. Callbacks that need the run's configuration hold their
+    /// own [`crate::training::HyperParameters`].
+    fn on_train_start(&mut self, _split: &ModelSplit) -> CallbackResult {
         Ok(())
     }
 
@@ -119,8 +121,8 @@ impl TrainerCallback for Callbacks {
         self.propagate(|cb| cb.on_restore(epoch_start, optimizer, scheduler))
     }
 
-    fn on_train_start(&mut self) -> CallbackResult {
-        self.propagate(|cb| cb.on_train_start())
+    fn on_train_start(&mut self, split: &ModelSplit) -> CallbackResult {
+        self.propagate(|cb| cb.on_train_start(split))
     }
 
     fn on_epoch_end(&mut self, epoch: usize) -> CallbackResult {
@@ -153,10 +155,12 @@ impl TrainerCallback for Callbacks {
 mod tests {
     use super::*;
     use crate::activations::RELU;
+    use crate::data::ModelDataset;
     use crate::evaluation::Evaluation;
     use crate::model::NeuronLayerSpec;
     use crate::optimizers::Adam;
     use crate::schedulers::ConstantScheduler;
+    use ndarray::array;
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -167,6 +171,18 @@ mod tests {
     fn sample_model() -> NeuralNetwork {
         let specs = NeuronLayerSpec::network_for(vec![3], &*RELU, 2);
         NeuralNetwork::initialization(2, &specs)
+    }
+
+    fn sample_split() -> ModelSplit {
+        let dataset = || ModelDataset {
+            inputs: array![[0.1, 0.9], [0.2, 0.8]],
+            targets: array![[1.0, 0.0]],
+        };
+        ModelSplit {
+            train: dataset(),
+            validation: None,
+            test: dataset(),
+        }
     }
 
     fn sample_eval() -> EvaluationSet {
@@ -195,7 +211,7 @@ mod tests {
                 .on_restore(0, Some(&optimizer), Some(&scheduler))
                 .is_ok()
         );
-        assert!(callback.on_train_start().is_ok());
+        assert!(callback.on_train_start(&sample_split()).is_ok());
         assert!(callback.on_epoch_end(0).is_ok());
         assert!(
             callback
