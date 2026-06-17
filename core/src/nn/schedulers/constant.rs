@@ -12,7 +12,7 @@ use crate::nn::schedulers::Scheduler;
 /// use nrn::schedulers::{Scheduler, ConstantScheduler};
 /// use nrn::training::LearningRate;
 ///
-/// let mut scheduler = ConstantScheduler::new(LearningRate::new(0.001));
+/// let mut scheduler = ConstantScheduler::new(LearningRate::new(0.001).unwrap());
 /// assert_eq!(scheduler.step().value(), 0.001);
 /// assert_eq!(scheduler.step().value(), 0.001); // always the same learning rate
 /// ```
@@ -48,13 +48,13 @@ mod tests {
 
     #[test]
     fn name_is_constant() {
-        let s = ConstantScheduler::new(LearningRate::new(0.003));
+        let s = ConstantScheduler::new(0.003.try_into().unwrap());
         assert_eq!(s.name(), "Constant");
     }
 
     #[test]
     fn always_returns_the_same_rate() {
-        let mut s = ConstantScheduler::new(LearningRate::new(0.003));
+        let mut s = ConstantScheduler::new(0.003.try_into().unwrap());
         for _ in 0..5 {
             assert!((s.step().value() - 0.003).abs() < 1e-9);
         }

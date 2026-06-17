@@ -7,14 +7,18 @@ use nrn::activations::RELU;
 use nrn::data::Dataset;
 use nrn::data::scalers::{MinMaxScaler, Scaler, ScalerMethod};
 use nrn::evaluation::{Evaluation, EvaluationSet};
-use nrn::io::checkpoint::{CheckpointArchive, TrainingMeta, TrainingRun};
+use nrn::io::checkpoint::CheckpointArchive;
 use nrn::io::data::{load_inputs, save_inputs};
+use nrn::io::hyperparams::{
+    ClippingRecord, HyperParametersRecord, LossRecord, OptimizerRecord, SchedulerRecord,
+};
+use nrn::io::run::{TrainingMeta, TrainingRun};
 use nrn::io::scalers::ScalerRecord;
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::Adam;
 use nrn::schedulers::ConstantScheduler;
-use nrn::training::{GradientClipping, LearningRate, TrainingCallback};
+use nrn::training::{GradientClipping, TrainerCallback};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -22,6 +26,22 @@ fn temp_dir() -> PathBuf {
     let dir = PathBuf::from(format!("target/nrn_it_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
+}
+
+fn sample_hyperparams() -> HyperParametersRecord {
+    HyperParametersRecord {
+        epochs: 10,
+        checkpoint_interval: 5,
+        batch_size: Some(32),
+        lr: 0.05,
+        optimizer: OptimizerRecord::Adam,
+        scheduler: SchedulerRecord::Constant,
+        clipping: ClippingRecord::None,
+        early_stopping: None,
+        val_ratio: 0.1,
+        test_ratio: 0.1,
+        loss: LossRecord::CrossEntropy,
+    }
 }
 
 #[test]
@@ -60,19 +80,21 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let mut model = NeuralNetwork::initialization(2, &specs);
 
     let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
-    let mut optimizer = Adam::with_defaults(LearningRate::new(0.05));
-    let mut scheduler = ConstantScheduler::new(LearningRate::new(0.05));
+    let mut optimizer = Adam::with_defaults(0.05.try_into().unwrap());
+    let mut scheduler = ConstantScheduler::new(0.05.try_into().unwrap());
     let clipping = GradientClipping::None;
 
     let run_dir = dir.join("training");
-    let mut recorder = TrainingRun::create(
+    let run = TrainingRun::create(
         &run_dir,
         &TrainingMeta {
             dataset: "test_dataset".to_string(),
+            hyperparams: sample_hyperparams(),
         },
         false,
     )
     .unwrap();
+    let mut recorder = run.recorder();
     let mut last_recorded_predictions = None;
 
     for epoch in 0..10 {
@@ -102,7 +124,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
                 },
             };
             recorder
-                .on_evaluate(&model, &evaluation, epoch * 5)
+                .on_checkpoint(&model, &optimizer, &scheduler, &evaluation, epoch * 5)
                 .unwrap();
             last_recorded_predictions = Some(predictions);
         }
@@ -125,6 +147,11 @@ fn full_pipeline_roundtrips_through_safetensors() {
         last_recorded_predictions.unwrap(),
         last_model.predict(model_dataset.inputs.view())
     );
+
+    // Adam has internal state, so each checkpoint also has an optimizer.safetensors.
+    let last_optimizer_state = archive.optimizer_at(archive.len() - 1).unwrap().unwrap();
+    assert!(!last_optimizer_state.tensors.is_empty());
+    assert!(last_optimizer_state.metadata.contains_key("time_step"));
 
     // --- Inputs (single-vector prediction file) -------------------------
     let inputs = array![0.0, 1.0];

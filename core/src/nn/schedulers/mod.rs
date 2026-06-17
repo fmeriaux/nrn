@@ -14,6 +14,13 @@ pub use step::*;
 
 use crate::learning_rate::LearningRate;
 
+/// Scheduler-agnostic snapshot of internal state (the current step count),
+/// for checkpointing and resuming. Serialization lives behind the `io`
+/// feature; this type stays free of serde/safetensors.
+pub struct SchedulerState {
+    pub current_step: usize,
+}
+
 /// Trait for learning rate scheduling strategies.
 ///
 /// Schedulers control how the learning rate evolves throughout the training process.
@@ -32,4 +39,14 @@ pub trait Scheduler {
     ///
     /// The updated learning rate.
     fn step(&mut self) -> LearningRate;
+
+    /// Returns a snapshot of this scheduler's internal state for checkpointing,
+    /// or `None` for schedulers with no state to resume (e.g. constant).
+    fn to_state(&self) -> Option<SchedulerState> {
+        None
+    }
+
+    /// Restores internal state previously returned by [`to_state`](Scheduler::to_state).
+    /// The default implementation ignores `state` (stateless schedulers).
+    fn restore(&mut self, _state: &SchedulerState) {}
 }

@@ -1,11 +1,9 @@
 use console::{Emoji, style};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
+use nrn::data::Dataset;
 use nrn::data::scalers::{Scaler, ScalerMethod};
-use nrn::data::{Dataset, ModelSplit};
-use nrn::evaluation::{Evaluation, EvaluationSet};
 use nrn::io::checkpoint::CheckpointArchive;
 use nrn::model::NeuralNetwork;
-use nrn::training::GradientClipping;
 use pathdiff::diff_paths;
 use std::borrow::Cow;
 use std::env;
@@ -41,18 +39,6 @@ impl Summary for Dataset {
     }
 }
 
-impl Summary for ModelSplit {
-    fn summary(&self) -> String {
-        format!(
-            "Split {} | Train={}, Val={}, Test={}",
-            style("DATASET").bold().blue(),
-            style(self.train_size()).yellow(),
-            style(self.validation_size()).yellow(),
-            style(self.test_size()).yellow()
-        )
-    }
-}
-
 impl Summary for ScalerMethod {
     fn summary(&self) -> String {
         format!(
@@ -73,43 +59,6 @@ impl Summary for NeuralNetwork {
     }
 }
 
-impl Summary for f32 {
-    fn summary(&self) -> String {
-        format!("{}", self)
-    }
-}
-
-impl<T: Summary> Summary for Option<T> {
-    fn summary(&self) -> String {
-        match self {
-            Some(value) => value.summary(),
-            None => "N/A".to_string(),
-        }
-    }
-}
-
-impl Summary for Evaluation {
-    fn summary(&self) -> String {
-        format!(
-            "L={:.4}, A={:.1}{}",
-            style(self.loss).yellow(),
-            style(self.accuracy).yellow(),
-            style("%").yellow()
-        )
-    }
-}
-
-impl Summary for EvaluationSet {
-    fn summary(&self) -> String {
-        format!(
-            "Train({}), Val({}), Test({})",
-            self.train.summary(),
-            self.validation.summary(),
-            self.test.summary()
-        )
-    }
-}
-
 impl Summary for CheckpointArchive {
     fn summary(&self) -> String {
         format!(
@@ -119,31 +68,6 @@ impl Summary for CheckpointArchive {
             style(self.epoch_at(0).unwrap_or(0)).yellow(),
             style(self.epoch_at(self.len().saturating_sub(1)).unwrap_or(0)).yellow(),
         )
-    }
-}
-
-impl Summary for GradientClipping {
-    fn summary(&self) -> String {
-        match self {
-            GradientClipping::None => {
-                format!("{}", style("No Clipping").bold().blue())
-            }
-            GradientClipping::Norm { max_norm } => {
-                format!(
-                    "{} (max {})",
-                    style("Clipping by Norm").bold().blue(),
-                    style(max_norm).yellow()
-                )
-            }
-            GradientClipping::Value { min, max } => {
-                format!(
-                    "{} (min {}, max {})",
-                    style("Clipping by Value").bold().blue(),
-                    style(min).yellow(),
-                    style(max).yellow()
-                )
-            }
-        }
     }
 }
 
