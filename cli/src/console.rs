@@ -1,7 +1,7 @@
 use console::{Emoji, style};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
-use nrn::data::Dataset;
 use nrn::data::scalers::{Scaler, ScalerMethod};
+use nrn::data::{Dataset, DatasetOrigin};
 use nrn::io::checkpoint::CheckpointArchive;
 use nrn::model::NeuralNetwork;
 use pathdiff::diff_paths;
@@ -29,13 +29,24 @@ pub(crate) trait Summary {
 
 impl Summary for Dataset {
     fn summary(&self) -> String {
-        format!(
+        let base = format!(
             "{} | Features: {} | Classes: {} | Samples: {}",
             style("DATASET").bold().blue(),
             style(self.n_features()).yellow(),
             style(self.n_classes()).yellow(),
             style(self.n_samples()).yellow()
-        )
+        );
+        match self.origin() {
+            Some(DatasetOrigin::Synthetic { distribution, seed }) => format!(
+                "{base} | Origin: synthetic {} (seed {})",
+                style(distribution).yellow(),
+                style(seed).yellow()
+            ),
+            Some(DatasetOrigin::Encoded { source }) => {
+                format!("{base} | Origin: encoded from {}", style(source).yellow())
+            }
+            None => base,
+        }
     }
 }
 

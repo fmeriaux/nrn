@@ -1,25 +1,235 @@
 mod ring;
+mod spiral;
 mod uniform;
 
-pub use ring::RingDataset;
-pub use uniform::UniformDataset;
-
+use crate::data::DatasetOrigin;
 use crate::data::dataset::Dataset;
 use ndarray::{Array1, Array2, ArrayViewMut1, Axis};
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand::prelude::StdRng;
-use ndarray_rand::rand::{Rng, RngCore, SeedableRng};
+use ndarray_rand::rand::{Rng, SeedableRng};
 use ndarray_rand::rand_distr::{StandardNormal, Uniform};
+use std::error::Error;
+use std::fmt;
 
-pub trait DatasetGenerator {
-    fn generate_rng(&self, rng: &mut dyn RngCore) -> Dataset;
+/// Errors returned when synthetic-generation parameters are inconsistent.
+#[derive(Debug, PartialEq)]
+pub enum SynthParamsError {
+    /// No features were requested.
+    NoFeatures,
+    /// Fewer than two clusters: a classifier needs at least two classes.
+    TooFewClusters(usize),
+    /// Not enough samples to place at least one in each cluster.
+    NotEnoughSamples { samples: usize, clusters: usize },
+    /// The feature range is empty (`min >= max`).
+    EmptyRange { min: f32, max: f32 },
+}
 
-    /// Generate a dataset using a specific seed for the random number generator.
+impl fmt::Display for SynthParamsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SynthParamsError::NoFeatures => write!(f, "at least one feature is required"),
+            SynthParamsError::TooFewClusters(n) => {
+                write!(f, "at least 2 clusters are required, but found {n}")
+            }
+            SynthParamsError::NotEnoughSamples { samples, clusters } => write!(
+                f,
+                "need at least one sample per cluster: {samples} samples for {clusters} clusters"
+            ),
+            SynthParamsError::EmptyRange { min, max } => {
+                write!(
+                    f,
+                    "feature range is empty: min {min} must be less than max {max}"
+                )
+            }
+        }
+    }
+}
+
+impl Error for SynthParamsError {}
+
+/// Shared, validated configuration common to every synthetic generator: how many
+/// samples and features to produce, how many clusters (classes) to split them
+/// into, and the per-feature value range the points live in.
+///
+/// Built exclusively through [`SynthParams::new`] (fields are private) so an
+/// inconsistent configuration cannot be represented. Requiring `n_clusters >= 2`
+/// guarantees the generated dataset always has enough classes to load and train.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SynthParams {
+    n_samples: usize,
+    n_features: usize,
+    n_clusters: usize,
+    feature_min: f32,
+    feature_max: f32,
+}
+
+impl SynthParams {
+    /// Builds a validated parameter set.
+    ///
+    /// # Errors
+    /// - [`SynthParamsError::NoFeatures`] when `n_features == 0`.
+    /// - [`SynthParamsError::TooFewClusters`] when `n_clusters < 2`.
+    /// - [`SynthParamsError::NotEnoughSamples`] when `n_samples < n_clusters`.
+    /// - [`SynthParamsError::EmptyRange`] when `feature_min >= feature_max`.
+    pub fn new(
+        n_samples: usize,
+        n_features: usize,
+        n_clusters: usize,
+        feature_min: f32,
+        feature_max: f32,
+    ) -> Result<Self, SynthParamsError> {
+        if n_features == 0 {
+            return Err(SynthParamsError::NoFeatures);
+        }
+        if n_clusters < 2 {
+            return Err(SynthParamsError::TooFewClusters(n_clusters));
+        }
+        if n_samples < n_clusters {
+            return Err(SynthParamsError::NotEnoughSamples {
+                samples: n_samples,
+                clusters: n_clusters,
+            });
+        }
+        if feature_min >= feature_max {
+            return Err(SynthParamsError::EmptyRange {
+                min: feature_min,
+                max: feature_max,
+            });
+        }
+
+        Ok(Self {
+            n_samples,
+            n_features,
+            n_clusters,
+            feature_min,
+            feature_max,
+        })
+    }
+
+    /// Number of samples placed in each cluster (the total is truncated to a
+    /// multiple of `n_clusters`).
+    fn samples_per_cluster(&self) -> usize {
+        self.n_samples / self.n_clusters
+    }
+}
+
+/// The point-placement strategy that distinguishes one synthetic dataset from
+/// another. Doubles as the dataset's provenance "type". Each variant carries its
+/// own shape knobs, while sizing stays in the shared [`SynthParams`]. Default
+/// values for these knobs are a caller policy and live with the caller.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Distribution {
+    /// Isotropic blobs: one randomly-placed spherical cluster per class.
+    Uniform,
+    /// Concentric rings sharing a common center, one ring per class. `overlap`
+    /// is the fraction by which consecutive rings overlap (negative = a gap).
+    Ring { overlap: f32 },
+    /// Interleaved spiral arms (2D only), one arm per class — the canonical
+    /// non-linearly-separable benchmark. `turns` is how many turns each arm makes
+    /// and `noise` the Gaussian jitter as a fraction of the arm's max radius.
+    Spiral { turns: f32, noise: f32 },
+}
+
+// `Display` is never derived in Rust (only `Debug` is), and `Debug` would yield
+// the capitalized variant name with its fields. We want the lowercase canonical
+// name used for filenames and provenance metadata, so it is written by hand.
+impl fmt::Display for Distribution {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Distribution::Uniform => "uniform",
+            Distribution::Ring { .. } => "ring",
+            Distribution::Spiral { .. } => "spiral",
+        };
+        write!(f, "{name}")
+    }
+}
+
+/// Errors returned when a [`Distribution`] is incompatible with its
+/// [`SynthParams`].
+#[derive(Debug, PartialEq, Eq)]
+pub enum SynthError {
+    /// A spiral was requested with a feature count other than two (carries the
+    /// count found); spirals are inherently two-dimensional.
+    SpiralRequiresTwoFeatures(usize),
+}
+
+impl fmt::Display for SynthError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SynthError::SpiralRequiresTwoFeatures(n) => {
+                write!(
+                    f,
+                    "spiral datasets require exactly two features, but found {n}"
+                )
+            }
+        }
+    }
+}
+
+impl Error for SynthError {}
+
+/// A validated synthetic dataset generator: shared [`SynthParams`] plus the
+/// chosen [`Distribution`]. The distribution selects how points are placed per
+/// cluster; label assignment and shuffling are shared across all distributions.
+///
+/// Built through [`SynthDataset::new`] (fields are private) so a distribution
+/// incompatible with the parameters cannot be represented — generation therefore
+/// never fails.
+pub struct SynthDataset {
+    params: SynthParams,
+    distribution: Distribution,
+}
+
+impl SynthDataset {
+    /// Pairs validated `params` with a `distribution`, checking their cross-field
+    /// invariants.
+    ///
+    /// # Errors
+    /// - [`SynthError::SpiralRequiresTwoFeatures`] when a spiral is requested with
+    ///   a feature count other than two.
+    pub fn new(params: SynthParams, distribution: Distribution) -> Result<Self, SynthError> {
+        if matches!(distribution, Distribution::Spiral { .. }) && params.n_features != 2 {
+            return Err(SynthError::SpiralRequiresTwoFeatures(params.n_features));
+        }
+        Ok(Self {
+            params,
+            distribution,
+        })
+    }
+
+    /// Generates a dataset using a specific seed for reproducibility, stamped with
+    /// its [`DatasetOrigin::Synthetic`] provenance. The parameters were validated
+    /// at construction, so the result is always well-formed.
     /// # Arguments
     /// - `seed`: A seed for the random number generator to ensure reproducibility.
-    fn generate(&self, seed: u64) -> Dataset {
+    pub fn generate(&self, seed: u64) -> Dataset {
         let mut rng = StdRng::seed_from_u64(seed);
-        self.generate_rng(&mut rng)
+
+        let (mut features, labels) = init_features_and_labels(
+            self.params.n_features,
+            self.params.n_clusters,
+            self.params.samples_per_cluster(),
+        );
+
+        match self.distribution {
+            Distribution::Uniform => uniform::fill(&self.params, &mut features, &mut rng),
+            Distribution::Ring { overlap } => {
+                ring::fill(&self.params, overlap, &mut features, &mut rng)
+            }
+            Distribution::Spiral { turns, noise } => {
+                spiral::fill(&self.params, turns, noise, &mut features, &mut rng)
+            }
+        }
+
+        let origin = DatasetOrigin::Synthetic {
+            distribution: self.distribution.to_string(),
+            seed,
+        };
+
+        Dataset::new(features, labels, Some(origin))
+            .expect("synthetic parameters guarantee a valid dataset")
+            .shuffled(&mut rng)
     }
 }
 
@@ -132,74 +342,100 @@ mod tests {
     use super::*;
     use ndarray::array;
 
-    fn uniform(n_samples: usize, n_clusters: usize) -> Dataset {
-        UniformDataset {
-            n_samples,
-            n_features: 2,
-            n_clusters,
-            feature_min: 0.0,
-            feature_max: 10.0,
-        }
-        .generate(42)
+    const RING: Distribution = Distribution::Ring { overlap: -0.2 };
+    const SPIRAL: Distribution = Distribution::Spiral {
+        turns: 1.5,
+        noise: 0.03,
+    };
+
+    /// Test fixture: a valid two-feature parameter set over `[0, 10]`.
+    fn params(n_samples: usize, n_clusters: usize) -> SynthParams {
+        SynthParams::new(n_samples, 2, n_clusters, 0.0, 10.0).unwrap()
     }
 
-    fn ring(n_samples: usize, n_clusters: usize) -> Dataset {
-        RingDataset {
-            n_samples,
-            n_features: 2,
-            n_clusters,
-            feature_min: 0.0,
-            feature_max: 10.0,
-        }
-        .generate(42)
+    /// Generates a seeded dataset from already-validated params.
+    fn generate(distribution: Distribution, params: SynthParams) -> Dataset {
+        SynthDataset::new(params, distribution)
+            .unwrap()
+            .generate(42)
     }
 
     #[test]
-    fn uniform_labels_are_zero_indexed() {
-        let mut labels = uniform(90, 3).unique_labels();
-        labels.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        assert_eq!(labels, vec![0.0, 1.0, 2.0]);
-    }
-
-    #[test]
-    fn ring_labels_are_zero_indexed() {
-        let mut labels = ring(90, 3).unique_labels();
-        labels.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        assert_eq!(labels, vec![0.0, 1.0, 2.0]);
+    fn labels_are_zero_indexed() {
+        for distribution in [Distribution::Uniform, RING, SPIRAL] {
+            let mut labels = generate(distribution, params(90, 3)).unique_labels();
+            labels.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            assert_eq!(labels, vec![0.0, 1.0, 2.0], "{distribution}");
+        }
     }
 
     #[test]
     fn sample_count_exact_when_divisible() {
-        assert_eq!(uniform(100, 5).n_samples(), 100);
-        assert_eq!(ring(100, 5).n_samples(), 100);
+        for distribution in [Distribution::Uniform, RING, SPIRAL] {
+            assert_eq!(generate(distribution, params(100, 5)).n_samples(), 100);
+        }
     }
 
     #[test]
     fn sample_count_truncated_when_not_divisible() {
-        assert_eq!(uniform(100, 3).n_samples(), 99);
-        assert_eq!(ring(100, 3).n_samples(), 99);
-    }
-
-    #[test]
-    fn uniform_features_within_bounds() {
-        for &val in uniform(200, 2).features.iter() {
-            assert!(
-                (0.0..=10.0).contains(&val),
-                "feature {} hors de [0, 10]",
-                val
-            );
+        for distribution in [Distribution::Uniform, RING, SPIRAL] {
+            assert_eq!(generate(distribution, params(100, 3)).n_samples(), 99);
         }
     }
 
     #[test]
-    fn ring_features_within_bounds() {
-        for &val in ring(90, 3).features.iter() {
-            assert!(
-                (0.0..=10.0).contains(&val),
-                "feature {} hors de [0, 10]",
-                val
-            );
+    fn features_within_bounds() {
+        for distribution in [Distribution::Uniform, RING, SPIRAL] {
+            for &val in generate(distribution, params(200, 2)).features().iter() {
+                assert!(
+                    (0.0..=10.0).contains(&val),
+                    "{distribution}: feature {val} out of [0, 10]"
+                );
+            }
         }
+    }
+
+    #[test]
+    fn spiral_rejects_a_feature_count_other_than_two() {
+        let params = SynthParams::new(100, 3, 2, 0.0, 10.0).unwrap();
+        assert!(matches!(
+            SynthDataset::new(params, SPIRAL),
+            Err(SynthError::SpiralRequiresTwoFeatures(3))
+        ));
+    }
+
+    #[test]
+    fn new_params_validates_invariants() {
+        assert_eq!(
+            SynthParams::new(100, 0, 2, 0.0, 10.0),
+            Err(SynthParamsError::NoFeatures)
+        );
+        assert_eq!(
+            SynthParams::new(100, 2, 1, 0.0, 10.0),
+            Err(SynthParamsError::TooFewClusters(1))
+        );
+        assert_eq!(
+            SynthParams::new(2, 2, 3, 0.0, 10.0),
+            Err(SynthParamsError::NotEnoughSamples {
+                samples: 2,
+                clusters: 3
+            })
+        );
+        assert_eq!(
+            SynthParams::new(100, 2, 2, 10.0, 10.0),
+            Err(SynthParamsError::EmptyRange {
+                min: 10.0,
+                max: 10.0
+            })
+        );
+        assert!(SynthParams::new(100, 2, 2, 0.0, 10.0).is_ok());
+    }
+
+    #[test]
+    fn distribution_display_is_the_lowercase_name() {
+        assert_eq!(Distribution::Uniform.to_string(), "uniform");
+        assert_eq!(RING.to_string(), "ring");
+        assert_eq!(SPIRAL.to_string(), "spiral");
     }
 
     #[test]

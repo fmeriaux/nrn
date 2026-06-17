@@ -1,4 +1,4 @@
-use crate::data::Dataset;
+use crate::data::{Dataset, DatasetOrigin};
 use crate::io::tensors;
 use ndarray::Array1;
 use safetensors::SafeTensors;
@@ -6,6 +6,24 @@ use std::collections::HashMap;
 use std::io::ErrorKind::InvalidData;
 use std::io::{Error, Result};
 use std::path::{Path, PathBuf};
+
+fn invalid<E: std::fmt::Display>(error: E) -> Error {
+    Error::new(InvalidData, error.to_string())
+}
+
+// safetensors tensor names.
+const FEATURES: &str = "features";
+const LABELS: &str = "labels";
+
+// `__metadata__` keys carrying the dataset's origin. The wire format is an I/O
+// concern, so the keys and discriminant live here; the `DatasetOrigin` type
+// itself stays serde-free in `crate::data`.
+const ORIGIN_KIND: &str = "origin";
+const ORIGIN_DISTRIBUTION: &str = "distribution";
+const ORIGIN_SOURCE: &str = "source";
+const ORIGIN_SEED: &str = "seed";
+const KIND_SYNTHETIC: &str = "synthetic";
+const KIND_ENCODED: &str = "encoded";
 
 pub fn save_inputs<P: AsRef<Path>>(path: P, inputs: &Array1<f32>) -> Result<()> {
     let entries = vec![("inputs".to_string(), tensors::tensor(inputs))];
@@ -15,38 +33,70 @@ pub fn save_inputs<P: AsRef<Path>>(path: P, inputs: &Array1<f32>) -> Result<()> 
 
 pub fn load_inputs<P: AsRef<Path>>(path: P) -> Result<Array1<f32>> {
     let bytes = tensors::load(path)?;
-    let st =
-        SafeTensors::deserialize(&bytes).map_err(|e| Error::new(InvalidData, e.to_string()))?;
+    let st = SafeTensors::deserialize(&bytes).map_err(invalid)?;
     tensors::read_array1("inputs", &st)
 }
 
+fn origin_into_metadata(origin: &DatasetOrigin) -> HashMap<String, String> {
+    match origin {
+        DatasetOrigin::Synthetic { distribution, seed } => HashMap::from([
+            (ORIGIN_KIND.to_string(), KIND_SYNTHETIC.to_string()),
+            (ORIGIN_DISTRIBUTION.to_string(), distribution.clone()),
+            (ORIGIN_SEED.to_string(), seed.to_string()),
+        ]),
+        DatasetOrigin::Encoded { source } => HashMap::from([
+            (ORIGIN_KIND.to_string(), KIND_ENCODED.to_string()),
+            (ORIGIN_SOURCE.to_string(), source.clone()),
+        ]),
+    }
+}
+
+fn origin_from_metadata(metadata: &HashMap<String, String>) -> Option<DatasetOrigin> {
+    match metadata.get(ORIGIN_KIND)?.as_str() {
+        KIND_SYNTHETIC => Some(DatasetOrigin::Synthetic {
+            distribution: metadata.get(ORIGIN_DISTRIBUTION)?.clone(),
+            seed: metadata.get(ORIGIN_SEED)?.parse().ok()?,
+        }),
+        KIND_ENCODED => Some(DatasetOrigin::Encoded {
+            source: metadata.get(ORIGIN_SOURCE)?.clone(),
+        }),
+        _ => None,
+    }
+}
+
 impl Dataset {
-    /// Saves the dataset to a `.safetensors` file.
+    /// Saves the dataset to a `.safetensors` file, persisting its [`origin`] (when
+    /// recorded) in the `__metadata__` map.
+    ///
+    /// [`origin`]: Dataset::origin
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf> {
         let entries = vec![
-            ("features".to_string(), tensors::tensor(&self.features)),
-            ("labels".to_string(), tensors::tensor(&self.labels)),
+            (FEATURES.to_string(), tensors::tensor(self.features())),
+            (LABELS.to_string(), tensors::tensor(self.labels())),
         ];
-        tensors::save(path, entries, HashMap::new())
+        let metadata = self.origin().map(origin_into_metadata).unwrap_or_default();
+        tensors::save(path, entries, metadata)
     }
 
-    /// Loads a dataset from a `.safetensors` file.
+    /// Loads a dataset from a `.safetensors` file, restoring its origin and
+    /// validating the tensors through [`Dataset::new`], so an ill-formed file is
+    /// rejected at the I/O boundary.
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Dataset> {
         let bytes = tensors::load(path)?;
-        let st =
-            SafeTensors::deserialize(&bytes).map_err(|e| Error::new(InvalidData, e.to_string()))?;
+        let st = SafeTensors::deserialize(&bytes).map_err(invalid)?;
 
-        let features = tensors::read_array2("features", &st)?;
-        let labels = tensors::read_array1("labels", &st)?;
+        let features = tensors::read_array2(FEATURES, &st)?;
+        let labels = tensors::read_array1(LABELS, &st)?;
+        let origin = origin_from_metadata(&tensors::read_metadata(&bytes)?);
 
-        Ok(Dataset { features, labels })
+        Dataset::new(features, labels, origin).map_err(invalid)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{load_inputs, save_inputs};
-    use crate::data::Dataset;
+    use crate::data::{Dataset, DatasetOrigin};
     use ndarray::{Array2, array};
     use std::path::{Path, PathBuf};
 
@@ -60,20 +110,56 @@ mod tests {
         let _ = std::fs::remove_file(path.with_extension("safetensors"));
     }
 
-    #[test]
-    fn dataset_save_load_roundtrip() {
-        let dataset = Dataset {
-            features: Array2::from_shape_fn((3, 5), |(i, j)| (i * 5 + j) as f32 * 0.25),
-            labels: array![0.0, 1.0, 0.0, 2.0, 1.0],
-        };
+    fn dataset_with(origin: Option<DatasetOrigin>) -> Dataset {
+        Dataset::new(
+            Array2::from_shape_fn((5, 3), |(i, j)| (i * 3 + j) as f32 * 0.25),
+            array![0.0, 1.0, 0.0, 2.0, 1.0],
+            origin,
+        )
+        .unwrap()
+    }
 
+    #[test]
+    fn dataset_roundtrips_data_and_no_origin() {
+        let dataset = dataset_with(None);
         let path = temp_path("dataset");
+
         dataset.save(&path).unwrap();
         let loaded = Dataset::load(&path).unwrap();
         cleanup(&path);
 
-        assert_eq!(dataset.features, loaded.features);
-        assert_eq!(dataset.labels, loaded.labels);
+        assert_eq!(dataset.features(), loaded.features());
+        assert_eq!(dataset.labels(), loaded.labels());
+        assert_eq!(loaded.origin(), None);
+    }
+
+    #[test]
+    fn dataset_roundtrips_a_synthetic_origin() {
+        let origin = DatasetOrigin::Synthetic {
+            distribution: "spiral".to_string(),
+            seed: 42,
+        };
+        let path = temp_path("dataset_synthetic");
+
+        dataset_with(Some(origin.clone())).save(&path).unwrap();
+        let loaded = Dataset::load(&path).unwrap();
+        cleanup(&path);
+
+        assert_eq!(loaded.origin(), Some(&origin));
+    }
+
+    #[test]
+    fn dataset_roundtrips_an_encoded_origin() {
+        let origin = DatasetOrigin::Encoded {
+            source: "images/digits".to_string(),
+        };
+        let path = temp_path("dataset_encoded");
+
+        dataset_with(Some(origin.clone())).save(&path).unwrap();
+        let loaded = Dataset::load(&path).unwrap();
+        cleanup(&path);
+
+        assert_eq!(loaded.origin(), Some(&origin));
     }
 
     #[test]

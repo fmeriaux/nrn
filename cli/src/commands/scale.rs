@@ -38,7 +38,7 @@ impl ScaleArgs {
     pub fn run(self) -> Result<(), Box<dyn std::error::Error>> {
         let mut dataset = load_dataset(&self.dataset)?;
 
-        let scaler = self.scaling.fit(dataset.features.view());
+        let scaler = self.scaling.fit(dataset.features().view());
         dataset.scale_inplace(&scaler);
 
         completed(&format!(

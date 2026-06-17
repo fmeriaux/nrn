@@ -1,12 +1,12 @@
-use crate::actions::save_dataset;
+use crate::actions::{get_file_stem, save_dataset};
 use crate::console::bar;
 use crate::console::{completed, trace};
 use clap::{Args, Subcommand};
 use console::style;
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::prelude::StdRng;
-use nrn::data::Dataset;
 use nrn::data::vectorizers::{ImageEncoder, VectorEncoder};
+use nrn::data::{Dataset, DatasetOrigin};
 use nrn::io::bytes::secure_read;
 use nrn::io::classes::extract_classes;
 use nrn::io::data::save_inputs;
@@ -123,7 +123,10 @@ impl ImgDirArgs {
         }
 
         let mut rng = StdRng::seed_from_u64(self.seed);
-        let dataset = Dataset::from_vec(&mut rng, data, labels)?;
+        let origin = DatasetOrigin::Encoded {
+            source: get_file_stem(&self.input),
+        };
+        let dataset = Dataset::from_vec(&mut rng, data, labels, Some(origin))?;
 
         completed(
             style("Encoding completed")

@@ -1,10 +1,9 @@
 use crate::actions::save_dataset;
 use crate::console::{generated, warning};
 use clap::{Args, ValueEnum};
-use nrn::data::synth::{DatasetGenerator, RingDataset, UniformDataset};
+use nrn::data::synth::{Distribution, SynthDataset, SynthParams, SynthParamsError};
 use std::error::Error;
 use std::fmt;
-use std::sync::Arc;
 
 #[derive(Args, Debug)]
 pub struct SynthArgs {
@@ -36,15 +35,28 @@ pub struct SynthArgs {
     #[arg(long, default_value_t = 10.0)]
     max: f32,
 
+    /// Ring overlap fraction between consecutive rings (negative = a gap)
+    #[arg(long, default_value_t = -0.2)]
+    overlap: f32,
+
+    /// Number of turns each spiral arm makes
+    #[arg(long, default_value_t = 1.5)]
+    turns: f32,
+
+    /// Spiral jitter, as a fraction of the arm's max radius
+    #[arg(long, default_value_t = 0.03)]
+    noise: f32,
+
     /// Indicates whether to visualize the generated dataset (requires exactly two features)
     #[arg(long, default_value_t = false)]
     plot: bool,
 }
 
-#[derive(ValueEnum, Clone, Debug)]
+#[derive(ValueEnum, Clone, Copy, Debug)]
 enum DistributionOption {
     Uniform,
     Ring,
+    Spiral,
 }
 
 impl fmt::Display for DistributionOption {
@@ -52,51 +64,45 @@ impl fmt::Display for DistributionOption {
         match self {
             DistributionOption::Uniform => write!(f, "uniform"),
             DistributionOption::Ring => write!(f, "ring"),
+            DistributionOption::Spiral => write!(f, "spiral"),
         }
     }
 }
 
-impl SynthArgs {
-    /// Validate the command line arguments
-    fn validate(&self) -> Result<(), String> {
-        if self.features < 1 {
-            return Err("The number of features must be at least 1.".to_string());
+impl From<&SynthArgs> for Distribution {
+    /// Selects the core distribution, supplying each variant's shape knobs from
+    /// the relevant flags.
+    fn from(args: &SynthArgs) -> Self {
+        match args.distribution {
+            DistributionOption::Uniform => Distribution::Uniform,
+            DistributionOption::Ring => Distribution::Ring {
+                overlap: args.overlap,
+            },
+            DistributionOption::Spiral => Distribution::Spiral {
+                turns: args.turns,
+                noise: args.noise,
+            },
         }
-        if self.clusters < 1 {
-            return Err("The number of clusters must be at least 1.".to_string());
-        }
-        if self.samples < self.clusters {
-            return Err(
-                "The number of samples must be at least equal to the number of clusters."
-                    .to_string(),
-            );
-        }
-        if self.min >= self.max {
-            return Err("The minimum value must be less than the maximum value.".to_string());
-        }
-        Ok(())
     }
+}
 
+impl TryFrom<&SynthArgs> for SynthParams {
+    type Error = SynthParamsError;
+
+    fn try_from(args: &SynthArgs) -> Result<Self, Self::Error> {
+        SynthParams::new(
+            args.samples,
+            args.features,
+            args.clusters,
+            args.min,
+            args.max,
+        )
+    }
+}
+
+impl SynthArgs {
     pub fn run(&self) -> Result<(), Box<dyn Error>> {
-        self.validate()?;
-
-        // 🗂️ GENERATE THE DATASET
-        let generator: Arc<dyn DatasetGenerator> = match self.distribution {
-            DistributionOption::Uniform => Arc::new(UniformDataset {
-                n_samples: self.samples,
-                n_features: self.features,
-                n_clusters: self.clusters,
-                feature_min: self.min,
-                feature_max: self.max,
-            }),
-            DistributionOption::Ring => Arc::new(RingDataset {
-                n_samples: self.samples,
-                n_features: self.features,
-                n_clusters: self.clusters,
-                feature_min: self.min,
-                feature_max: self.max,
-            }),
-        };
+        let generator = SynthDataset::new(SynthParams::try_from(self)?, Distribution::from(self))?;
 
         let dataset = generator.generate(self.seed);
 
