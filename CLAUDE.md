@@ -56,19 +56,16 @@ of the scikit-learn convention). `Dataset` (row-major, `(samples, features)`) co
 - **`model.rs`** — `NeuralNetwork` (Vec of `NeuronLayer`) and `NeuronLayerSpec`. `forward()` returns
   all intermediate activations; `predict()` returns only the last. `NeuronLayerSpec::output_for(n_classes)`
   auto-selects sigmoid (2 classes → 1 neuron) or softmax (multi-class).
-- **`training/`** — the training stack:
-  - `backprop.rs` — `NeuralNetwork::train()`: one forward + backward + update step per epoch / mini-batch.
-  - `config.rs` — `TrainingConfig`, an owned bundle of loss, optimizer, scheduler, and clipping.
-  - `run.rs` — `TrainingLoop` orchestrates a full run (loop, scheduled evaluation, early stopping,
-    divergence handling). Pure: no I/O, side effects go through `callbacks`. Returns `TrainingReport`
-    (`outcome`, `model`, `final_evaluation`, `final_epoch`); `into_result()` maps an unrecovered
-    `Diverged` to the `FatalDivergence` error.
-  - `outcome.rs` — `TrainingOutcome`: `Completed` / `EarlyStopped { restored }` / `Diverged { recovered }`.
-  - `early_stopping.rs` — `EarlyStopping` with optional best-model restore.
-  - `evaluator.rs` — `Evaluator`, the scheduled-evaluation driver.
-  - `callbacks.rs` — `TrainerCallback` trait (`on_train_start` / `on_epoch_end` / `on_evaluate` /
-    `on_train_end`) and `Callbacks`, a sequential composite that short-circuits on the first error;
-    built up via `Callbacks::empty().with(..).with_opt(..)`.
+- **`training/`** — the training stack, built around a **declarative spec → runtime trainer** split.
+  `HyperParameters` is the single source of truth for a run: plain config, no trait objects, cross-field
+  invariants validated on construction. Its `build(model, dataset, callbacks)` is the one place
+  declarative config becomes concrete — it instantiates the optimizer/scheduler/loss, splits the
+  dataset, and returns a `Trainer`. The `Trainer` runs the loop and is **pure**: no I/O, every side
+  effect (persistence, display) goes through the `TrainerCallback` trait, composed via
+  `Callbacks::empty().with(..).with_opt(..)`. `train()` returns a `TrainingReport` whose
+  `into_result()` turns an unrecovered divergence into a `FatalDivergence`. Resuming a run = calling
+  `restore(..)` on the built trainer before `train()` (this is what reinstates optimizer/scheduler
+  state and the epoch counter).
 - **`gradients.rs`** — `Gradients` and `GradientClipping` (None / L2 Norm / Value).
 - **`learning_rate.rs`** — `LearningRate` newtype.
 - **`activations/`** — `Activation` trait registered via the `inventory` crate for lookup by name
@@ -108,28 +105,26 @@ the caller persists the bytes.
 ### I/O (`core/src/io/`, behind `io` feature)
 
 [safetensors](https://github.com/huggingface/safetensors) is the primary format for datasets, models,
-and checkpoints: `f32` tensors plus a `__metadata__` string map (activation names, intervals, counts);
-checkpoint evaluation series are tensors too. Scalers are JSON. `io/tensors.rs` holds the shared `View`
-adapter and (de)serialization helpers; the `io` module does the activation-name → `Arc<dyn Activation>`
-round-trip via `ActivationProvider::get_by_name`.
+and checkpoints (`f32` tensors plus a `__metadata__` string map); scalers and run hyperparameters are
+JSON. The guiding rule: **core runtime types stay serde-free**, so `io` owns their serializable mirrors
+— `HyperParametersRecord` for `HyperParameters`, plus the optimizer/scheduler `*State` round-trips.
+`io/tensors.rs` holds the shared `View` adapter; the activation-name → `Arc<dyn Activation>` round-trip
+goes through `ActivationProvider::get_by_name`.
 
-- **`io/run.rs`** — `TrainingRun`, the handle to a run directory: `create`/`open` (writing/loading
-  run-level `TrainingMeta` in `meta.json`), `recorder()`, `trim_after(from_epoch)` (rewinds the
-  trajectory by removing later checkpoints), and `archive()`.
-- **`io/checkpoint.rs`** — the `checkpoint-{epoch:06}/` format and its reader/writer. `CheckpointRecorder`
-  (a `TrainerCallback`, obtained via `TrainingRun::recorder`) writes `model.safetensors` +
-  `evaluations.json` (+ `optimizer.safetensors` when the optimizer/scheduler carry state) per checkpoint.
-  `CheckpointArchive` reads back: `model_at(i)`, `optimizer_at(i)`, `epoch_at(i)`, `evaluation_history()`.
-  Model weights round-trip through `NeuralNetwork::save`/`load` (`io/model.rs`).
+A run lives in a directory managed by `TrainingRun`: `create`/`open` persist run-level `TrainingMeta`
+(`meta.json`), `trim_after` rewinds the trajectory (removing later checkpoints), `archive()` reads it
+back. Each `checkpoint-{epoch:06}/` is written by a `CheckpointRecorder` (the `TrainerCallback` from
+`TrainingRun::recorder`) and read by a `CheckpointArchive` (`model_at` / `optimizer_at` / `epoch_at` /
+`evaluation_history`).
 
 ### CLI (`cli/src/`)
 
 - **`cli.rs`** — top-level `clap` command enum dispatching to subcommands.
-- **`commands/`** — one module per subcommand: `synth`, `encode`, `scale`, `predict`, `plot`, and
-  `train/` — a subcommand group (`train start` / `train resume`). `HyperParams::make_config()` builds
-  the `TrainingConfig` from CLI args, and the shared `execute_training()` assembles the callbacks
-  (`Callbacks::empty().with(..).with_opt(..)`) and runs the `TrainingLoop`, reporting the
-  `TrainingReport`. `train/model_saver.rs` (`ModelSaver`) and `train/monitor.rs` (`ConsoleMonitor`,
-  console narration + progress bar) are `TrainerCallback` implementations.
+- **`commands/`** — one module per subcommand (`synth`, `encode`, `scale`, `predict`, `plot`), plus the
+  `train/` group (`train start` / `train resume`). The CLI's job is to parse args into a core
+  `HyperParameters` spec (via `TryFrom`, in `train/args.rs`) and run it: `execute_training()` composes
+  the callbacks, calls `build(..)`, optionally `restore(..)`s for resume, then `train()`. The
+  console-facing callbacks (`ModelSaver`, `ConsoleMonitor` with its progress bar) are `TrainerCallback`
+  impls under `train/`.
 - **`actions.rs`** — shared load/save helpers for models, datasets, and scalers.
 - **`console.rs`** — display helpers: status icons, `Summary`, formatted output used across commands.
