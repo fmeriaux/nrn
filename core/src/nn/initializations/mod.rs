@@ -20,6 +20,7 @@ pub use xavier::XAVIER_UNIFORM;
 
 use ndarray::{Array1, Array2};
 use ndarray_rand::RandomExt;
+use ndarray_rand::rand::RngCore;
 use ndarray_rand::rand_distr::Uniform;
 
 pub trait Initialization: Send + Sync {
@@ -28,6 +29,8 @@ pub trait Initialization: Send + Sync {
     /// # Arguments
     ///
     /// * `shape` - A tuple `(rows, cols)` specifying the desired shape of the weight matrix.
+    /// * `rng` - The random number generator the weights are drawn from. Passing a
+    ///   seeded generator makes the initialization reproducible.
     ///
     /// # Returns
     ///
@@ -37,14 +40,15 @@ pub trait Initialization: Send + Sync {
     ///
     /// This allows layers to start training from a well-defined state,
     /// tailored to the activation function or network architecture.
-    fn apply(&self, shape: (usize, usize)) -> (Array2<f32>, Array1<f32>);
+    fn apply(&self, shape: (usize, usize), rng: &mut dyn RngCore) -> (Array2<f32>, Array1<f32>);
 }
 
 fn uniform_distribution(
     shape: (usize, usize),
     distribution: &Uniform<f32>,
+    rng: &mut dyn RngCore,
 ) -> (Array2<f32>, Array1<f32>) {
-    let weights = Array2::random(shape, distribution);
+    let weights = Array2::random_using(shape, distribution, rng);
     let biases = Array1::zeros(shape.0);
     (weights, biases)
 }

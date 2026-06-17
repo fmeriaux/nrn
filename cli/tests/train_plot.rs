@@ -59,6 +59,8 @@ fn train_creates_run_dir_and_plot_generates_png_and_gif() {
         &[
             "train",
             "start",
+            "--seed",
+            "42",
             ds_name,
             "--epochs",
             "20",
@@ -121,6 +123,8 @@ fn load_history_rejects_too_few_checkpoints() {
         &[
             "train",
             "start",
+            "--seed",
+            "42",
             ds_name,
             "--epochs",
             "2",
@@ -169,6 +173,8 @@ fn early_stopping_writes_final_checkpoint() {
         .args([
             "train",
             "start",
+            "--seed",
+            "42",
             ds_name,
             "--epochs",
             "30",
@@ -231,6 +237,8 @@ fn no_duplicate_checkpoint_when_early_stop_fires_on_interval_boundary() {
         .args([
             "train",
             "start",
+            "--seed",
+            "42",
             ds_name,
             "--epochs",
             "20",
@@ -302,6 +310,8 @@ fn start_prints_recap_without_overrides() {
         .args([
             "train",
             "start",
+            "--seed",
+            "42",
             ds_name,
             "--epochs",
             "2",
@@ -352,6 +362,8 @@ fn resume_with_lr_override_shows_marker_on_optimizer_line() {
         &[
             "train",
             "start",
+            "--seed",
+            "42",
             ds_name,
             "--epochs",
             "2",
@@ -413,6 +425,8 @@ fn resume_restores_adam_optimizer_state() {
         &[
             "train",
             "start",
+            "--seed",
+            "42",
             ds_name,
             "--epochs",
             "2",
@@ -460,6 +474,8 @@ fn resume_rejects_val_ratio_override() {
         &[
             "train",
             "start",
+            "--seed",
+            "42",
             ds_name,
             "--epochs",
             "2",
@@ -508,6 +524,8 @@ fn divergence_with_early_stopping_recovers_best_model() {
         .args([
             "train",
             "start",
+            "--seed",
+            "42",
             ds_name,
             "--epochs",
             "50",

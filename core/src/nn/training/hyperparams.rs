@@ -127,6 +127,10 @@ pub struct HyperParameters {
     /// [`build`](HyperParameters::build) applies it (with `val_ratio`) to split
     /// the dataset.
     test_ratio: f32,
+    /// Seed for the run's randomness — the mini-batch shuffle here, and (by
+    /// convention) the model's weight initialization at the call site. Part of the
+    /// run's identity so a run is always reproducible and the seed is recorded.
+    seed: u64,
 }
 
 /// The single error type for constructing a [`HyperParameters`] spec, whether
@@ -243,6 +247,7 @@ impl HyperParameters {
         early_stopping: Option<EarlyStoppingConfig>,
         val_ratio: f32,
         test_ratio: f32,
+        seed: u64,
     ) -> Result<Self, HyperParametersError> {
         if epochs < 1 {
             return Err(HyperParametersError::ZeroEpochs);
@@ -279,6 +284,7 @@ impl HyperParameters {
             early_stopping,
             val_ratio,
             test_ratio,
+            seed,
         })
     }
 
@@ -307,6 +313,7 @@ impl HyperParameters {
         early_stopping: Option<EarlyStoppingConfig>,
         val_ratio: f32,
         test_ratio: f32,
+        seed: u64,
     ) -> Result<Self, HyperParametersError> {
         HyperParameters::new(
             epochs,
@@ -320,6 +327,7 @@ impl HyperParameters {
             early_stopping,
             val_ratio,
             test_ratio,
+            seed,
         )
     }
 
@@ -367,6 +375,10 @@ impl HyperParameters {
         self.test_ratio
     }
 
+    pub fn seed(&self) -> u64 {
+        self.seed
+    }
+
     /// Instantiates the runtime [`Trainer`] from this specification, binding it
     /// to the `model` and `callbacks`. This is the one place declarative configs
     /// become concrete objects: the optimizer/scheduler/loss are instantiated, and
@@ -403,6 +415,7 @@ impl HyperParameters {
             checkpoint_interval: self.checkpoint_interval,
             early_stopping: self.early_stopping,
             epoch_start: 0,
+            seed: self.seed,
         }
     }
 }
@@ -433,6 +446,7 @@ mod tests {
             None,
             val_ratio,
             test_ratio,
+            0,
         )
     }
 

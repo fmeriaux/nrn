@@ -6,6 +6,9 @@
 
 use crate::activations::{Activation, SIGMOID, SOFTMAX};
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
+use ndarray_rand::rand::RngCore;
+use ndarray_rand::rand::SeedableRng;
+use ndarray_rand::rand::rngs::StdRng;
 use std::iter::once;
 use std::sync::Arc;
 
@@ -47,13 +50,15 @@ pub fn last_activation(activations: &[Array2<f32>]) -> Array2<f32> {
 }
 
 impl NeuronLayer {
-    /// Initializes a new `NeuronLayer` with random weights and biases.
+    /// Initializes a new `NeuronLayer` with random weights and biases drawn from `rng`.
     /// # Panics
     /// - When `neurons` or `inputs` are less than or equal to zero.
     /// # Arguments
     /// - `inputs`: The number of inputs to this layer (i.e., the number of neurons in the previous layer).
     /// - `spec`: The specifications for this layer, including the number of neurons and the activation method.
-    pub fn initialization(inputs: usize, spec: &NeuronLayerSpec) -> Self {
+    /// - `rng`: The random number generator the weights are drawn from. Passing a seeded
+    ///   generator makes the initialization reproducible.
+    pub fn initialization(inputs: usize, spec: &NeuronLayerSpec, rng: &mut dyn RngCore) -> Self {
         assert!(
             spec.neurons > 0 && inputs > 0,
             "Neurons and inputs must be greater than zero."
@@ -62,7 +67,7 @@ impl NeuronLayer {
         let (weights, biases) = spec
             .activation
             .initialization()
-            .apply((spec.neurons, inputs));
+            .apply((spec.neurons, inputs), rng);
 
         NeuronLayer {
             weights,
@@ -117,22 +122,35 @@ impl NeuronLayer {
 }
 
 impl NeuralNetwork {
-    /// Creates a new `NeuronNetwork` with the specified input size and layer specifications.
+    /// Creates a new `NeuralNetwork` with the specified input size and layer specifications.
+    ///
+    /// The weights are drawn from a generator seeded with `seed`, so initialization is
+    /// always reproducible: the same `seed` and architecture yield the same starting
+    /// weights. There is intentionally no unseeded constructor — an implicit random
+    /// initialization is exactly the source of non-reproducible (flaky) training runs.
     /// # Arguments
     /// - `inputs`: The number of inputs to the first layer of the network.
     /// - `layer_specs`: A slice of `NeuronLayerSpec` representing the specifications for each layer in the network.
-    pub fn initialization(inputs: usize, layer_specs: &[NeuronLayerSpec]) -> Self {
+    /// - `seed`: The seed for the weight-initialization generator.
+    pub fn initialization(inputs: usize, layer_specs: &[NeuronLayerSpec], seed: u64) -> Self {
         assert!(inputs > 0, "Input size must be greater than zero.");
         assert!(
             !layer_specs.is_empty(),
             "At least one layer must be specified."
         );
 
+        // A single generator threaded through every layer, so the layers draw
+        // decorrelated weights from one reproducible stream.
+        let mut rng = StdRng::seed_from_u64(seed);
         let mut layers = Vec::with_capacity(layer_specs.len());
         let mut layer_input = inputs;
 
         for layer_spec in layer_specs {
-            layers.push(NeuronLayer::initialization(layer_input, layer_spec));
+            layers.push(NeuronLayer::initialization(
+                layer_input,
+                layer_spec,
+                &mut rng,
+            ));
             layer_input = layer_spec.neurons;
         }
 
@@ -375,7 +393,7 @@ mod tests {
     fn network_reports_specs_input_size_and_summary() {
         // 3 inputs -> 4 relu -> 3 softmax
         let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 3);
-        let model = NeuralNetwork::initialization(3, &specs);
+        let model = NeuralNetwork::initialization(3, &specs, 0);
 
         assert_eq!(model.input_size(), 3);
 
@@ -392,7 +410,7 @@ mod tests {
         // Network: 3 inputs -> 4 hidden (relu) -> 3 output (softmax), 5 samples
         // Note: n_classes=2 produces 1 sigmoid neuron (binary); use 3 for multi-class
         let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 3);
-        let model = NeuralNetwork::initialization(3, &specs);
+        let model = NeuralNetwork::initialization(3, &specs, 0);
         let inputs = Array2::zeros((3, 5)); // (features, samples)
         let output = model.predict(inputs.view());
         assert_eq!(output.shape(), &[3, 5]); // (classes, samples)
@@ -426,7 +444,7 @@ mod tests {
     #[test]
     fn sigmoid_output_always_in_zero_one() {
         let specs = NeuronLayerSpec::network_for(vec![], &*SIGMOID, 2);
-        let model = NeuralNetwork::initialization(4, &specs);
+        let model = NeuralNetwork::initialization(4, &specs, 0);
         // f32 saturates to exactly 0.0 or 1.0 for large inputs, so use closed interval
         let inputs = array![
             [100.0, -100.0],
@@ -447,7 +465,7 @@ mod tests {
     #[test]
     fn predict_returns_last_forward_activation() {
         let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 2);
-        let model = NeuralNetwork::initialization(3, &specs);
+        let model = NeuralNetwork::initialization(3, &specs, 0);
         let inputs = Array2::zeros((3, 5));
 
         let activations = model.forward(inputs.view());
@@ -489,19 +507,19 @@ mod tests {
     fn n_classes_derives_from_output_layer_size() {
         // 1 sigmoid output -> binary (2 classes)
         let binary =
-            NeuralNetwork::initialization(3, &NeuronLayerSpec::network_for(vec![4], &*RELU, 2));
+            NeuralNetwork::initialization(3, &NeuronLayerSpec::network_for(vec![4], &*RELU, 2), 0);
         assert_eq!(binary.n_classes(), 2);
 
         // k softmax outputs -> k classes
         let multi =
-            NeuralNetwork::initialization(3, &NeuronLayerSpec::network_for(vec![4], &*RELU, 5));
+            NeuralNetwork::initialization(3, &NeuronLayerSpec::network_for(vec![4], &*RELU, 5), 0);
         assert_eq!(multi.n_classes(), 5);
     }
 
     #[test]
     fn predict_single_matches_predict_on_one_sample() {
         let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 2);
-        let model = NeuralNetwork::initialization(3, &specs);
+        let model = NeuralNetwork::initialization(3, &specs, 0);
 
         let sample = array![1.0, 2.0, 3.0];
         let single = model.predict_single(sample.view());

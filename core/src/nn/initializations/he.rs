@@ -1,6 +1,7 @@
 use crate::initializations::Initialization;
 use crate::initializations::uniform_distribution;
 use ndarray::{Array1, Array2};
+use ndarray_rand::rand::RngCore;
 use ndarray_rand::rand_distr::Uniform;
 use once_cell::sync::Lazy;
 use std::sync::Arc;
@@ -17,14 +18,16 @@ impl Initialization for HeUniform {
     ///
     /// # Arguments
     /// * `shape` - Tuple (fan_out, fan_in) for the weight matrix.
+    /// * `rng` - The random number generator the weights are drawn from.
     ///
     /// # Returns
     /// Tuple of (weights, biases) as ndarray arrays.
-    fn apply(&self, shape: (usize, usize)) -> (Array2<f32>, Array1<f32>) {
+    fn apply(&self, shape: (usize, usize), rng: &mut dyn RngCore) -> (Array2<f32>, Array1<f32>) {
         let limit = (6.0 / shape.1 as f32).sqrt();
         uniform_distribution(
             shape,
             &Uniform::new(-limit, limit).expect("valid He limits require fan_in > 0"),
+            rng,
         )
     }
 }
