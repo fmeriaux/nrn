@@ -1,8 +1,7 @@
 use console::{Emoji, style};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
+use nrn::data::Dataset;
 use nrn::data::scalers::{Scaler, ScalerMethod};
-use nrn::data::{Dataset, ModelSplit};
-use nrn::evaluation::{Evaluation, EvaluationSet};
 use nrn::io::checkpoint::CheckpointArchive;
 use nrn::model::NeuralNetwork;
 use pathdiff::diff_paths;
@@ -40,18 +39,6 @@ impl Summary for Dataset {
     }
 }
 
-impl Summary for ModelSplit {
-    fn summary(&self) -> String {
-        format!(
-            "Split {} | Train={}, Val={}, Test={}",
-            style("DATASET").bold().blue(),
-            style(self.train_size()).yellow(),
-            style(self.validation_size()).yellow(),
-            style(self.test_size()).yellow()
-        )
-    }
-}
-
 impl Summary for ScalerMethod {
     fn summary(&self) -> String {
         format!(
@@ -68,37 +55,6 @@ impl Summary for NeuralNetwork {
             "{} | {}",
             style("NEURAL NETWORK").bold().blue(),
             style(self.summary()).yellow(),
-        )
-    }
-}
-
-impl<T: Summary> Summary for Option<T> {
-    fn summary(&self) -> String {
-        match self {
-            Some(value) => value.summary(),
-            None => "N/A".to_string(),
-        }
-    }
-}
-
-impl Summary for Evaluation {
-    fn summary(&self) -> String {
-        format!(
-            "L={:.4}, A={:.1}{}",
-            style(self.loss).yellow(),
-            style(self.accuracy).yellow(),
-            style("%").yellow()
-        )
-    }
-}
-
-impl Summary for EvaluationSet {
-    fn summary(&self) -> String {
-        format!(
-            "Train({}), Val({}), Test({})",
-            self.train.summary(),
-            self.validation.summary(),
-            self.test.summary()
         )
     }
 }

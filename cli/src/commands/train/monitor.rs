@@ -1,8 +1,8 @@
-use crate::console::{Summary, TRACE_ICON, completed, styled_bar, trace, warning};
+use crate::console::{TRACE_ICON, completed, styled_bar, trace, warning};
 use console::style;
 use indicatif::ProgressBar;
 use nrn::data::ModelSplit;
-use nrn::evaluation::EvaluationSet;
+use nrn::evaluation::{Evaluation, EvaluationSet};
 use nrn::model::NeuralNetwork;
 use nrn::optimizers::Optimizer;
 use nrn::schedulers::Scheduler;
@@ -58,8 +58,8 @@ impl TrainerCallback for ConsoleMonitor {
         self.bar.set_message("Training");
 
         self.bar.suspend(|| {
-            completed(&split.summary());
             print_recap(&self.current, self.previous.as_ref());
+            trace(&split_summary(split));
         });
 
         Ok(())
@@ -81,9 +81,9 @@ impl TrainerCallback for ConsoleMonitor {
 
         match outcome {
             TrainingOutcome::Completed => completed(&format!(
-                "{} | {}",
+                "{} · {}",
                 style("Training completed").bright().green(),
-                eval.expect("eval is present on completion").summary()
+                eval_set_summary(eval.expect("eval is present on completion"))
             )),
             TrainingOutcome::EarlyStopped { restored } => {
                 completed(&format!(
@@ -94,7 +94,7 @@ impl TrainerCallback for ConsoleMonitor {
                     trace("Restored the best model observed during training");
                 }
                 if let Some(eval) = eval {
-                    trace(&eval.summary());
+                    trace(&eval_set_summary(eval));
                 }
             }
             TrainingOutcome::Diverged { recovered: true } => {
@@ -103,7 +103,7 @@ impl TrainerCallback for ConsoleMonitor {
                     epoch
                 ));
                 if let Some(eval) = eval {
-                    trace(&eval.summary());
+                    trace(&eval_set_summary(eval));
                 }
             }
             TrainingOutcome::Diverged { recovered: false } => {}
@@ -170,6 +170,39 @@ fn print_row(field: &str, value: &str, label_width: usize, was: Option<String>) 
     }
 
     println!("{line}");
+}
+
+/// The realized per-split sample counts, complementing the recap's `Split` ratios.
+fn split_summary(split: &ModelSplit) -> String {
+    format!(
+        "Samples · Train={} · Val={} · Test={}",
+        style(split.train_size()).yellow(),
+        style(split.validation_size()).yellow(),
+        style(split.test_size()).yellow(),
+    )
+}
+
+/// Formats an [`EvaluationSet`] as `Train(..) · Val(..) · Test(..)`, each split's
+/// loss/accuracy via [`evaluation_summary`] and `N/A` for an absent validation split.
+fn eval_set_summary(eval: &EvaluationSet) -> String {
+    format!(
+        "Train({}) · Val({}) · Test({})",
+        evaluation_summary(&eval.train),
+        eval.validation
+            .as_ref()
+            .map_or_else(|| "N/A".to_string(), evaluation_summary),
+        evaluation_summary(&eval.test),
+    )
+}
+
+/// Formats a single [`Evaluation`] as `L=<loss> · A=<accuracy>%`.
+fn evaluation_summary(eval: &Evaluation) -> String {
+    format!(
+        "L={:.4} · A={:.1}{}",
+        style(eval.loss).yellow(),
+        style(eval.accuracy).yellow(),
+        style("%").yellow(),
+    )
 }
 
 fn loss_value(loss: &LossConfig) -> String {
