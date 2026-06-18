@@ -143,6 +143,24 @@ impl Dataset {
         self.origin.as_ref()
     }
 
+    /// A deterministic identifier for this dataset, pairing its origin with its
+    /// shape (classes, features, samples). Two datasets reproduced from the same
+    /// origin share it; datasets with no recorded origin fall back to a neutral
+    /// prefix.
+    pub fn id(&self) -> String {
+        let origin = self
+            .origin
+            .as_ref()
+            .map(DatasetOrigin::label)
+            .unwrap_or_else(|| "dataset".to_string());
+        format!(
+            "{origin}-c{}-f{}-n{}",
+            self.n_classes(),
+            self.n_features(),
+            self.n_samples()
+        )
+    }
+
     /// Returns the features, with one row per sample and one column per feature.
     pub fn features(&self) -> &Array2<f32> {
         &self.features
@@ -472,6 +490,26 @@ mod tests {
         let features = Array2::zeros((4, 2));
         let labels = array![0.0f32, 1.0, 0.0, 1.0];
         assert!(Dataset::new(features, labels, None).is_ok());
+    }
+
+    #[test]
+    fn id_pairs_origin_label_with_shape() {
+        let features = Array2::zeros((4, 2));
+        let labels = array![0.0f32, 1.0, 0.0, 1.0];
+        let origin = DatasetOrigin::Synthetic {
+            distribution: "spiral".to_string(),
+            seed: 42,
+        };
+        let dataset = Dataset::new(features, labels, Some(origin)).unwrap();
+        assert_eq!(dataset.id(), "spiral-seed42-c2-f2-n4");
+    }
+
+    #[test]
+    fn id_falls_back_to_a_neutral_prefix_without_origin() {
+        let features = Array2::zeros((4, 2));
+        let labels = array![0.0f32, 1.0, 0.0, 1.0];
+        let dataset = Dataset::new(features, labels, None).unwrap();
+        assert_eq!(dataset.id(), "dataset-c2-f2-n4");
     }
 
     #[test]

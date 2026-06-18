@@ -3,7 +3,6 @@ use crate::console::{generated, warning};
 use clap::{Args, ValueEnum};
 use nrn::data::synth::{Distribution, SynthDataset, SynthParams, SynthParamsError};
 use std::error::Error;
-use std::fmt;
 
 #[derive(Args, Debug)]
 pub struct SynthArgs {
@@ -50,6 +49,10 @@ pub struct SynthArgs {
     /// Indicates whether to visualize the generated dataset (requires exactly two features)
     #[arg(long, default_value_t = false)]
     plot: bool,
+
+    /// Name to save the dataset under (defaults to the dataset's identifier)
+    #[arg(short, long)]
+    output: Option<String>,
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug)]
@@ -57,16 +60,6 @@ enum DistributionOption {
     Uniform,
     Ring,
     Spiral,
-}
-
-impl fmt::Display for DistributionOption {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            DistributionOption::Uniform => write!(f, "uniform"),
-            DistributionOption::Ring => write!(f, "ring"),
-            DistributionOption::Spiral => write!(f, "spiral"),
-        }
-    }
 }
 
 impl From<&SynthArgs> for Distribution {
@@ -117,14 +110,7 @@ impl SynthArgs {
 
         generated(&dataset);
 
-        let filename = format!(
-            "{}-c{}-f{}-n{}-seed{}",
-            self.distribution,
-            self.clusters,
-            dataset.n_features(),
-            dataset.n_samples(),
-            self.seed
-        );
+        let filename = self.output.clone().unwrap_or_else(|| dataset.id());
 
         save_dataset(dataset, "DATASET", self.plot, &filename)?;
 

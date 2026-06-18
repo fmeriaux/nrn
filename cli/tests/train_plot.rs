@@ -50,8 +50,8 @@ fn train_creates_run_dir_and_plot_generates_png_and_gif() {
     )
     .success();
 
-    // Dataset filename produced by synth: ring-c2-f2-n20-seed42
-    let ds_name = "ring-c2-f2-n20-seed42";
+    // Dataset filename produced by synth: ring-seed42-c2-f2-n20
+    let ds_name = "ring-seed42-c2-f2-n20";
 
     // Train with checkpoints every 5 epochs (20 epochs total → ≥ 5 checkpoints).
     nrn(
@@ -116,7 +116,7 @@ fn load_history_rejects_too_few_checkpoints() {
     )
     .success();
 
-    let ds_name = "ring-c2-f2-n20-seed7";
+    let ds_name = "ring-seed7-c2-f2-n20";
 
     nrn(
         dir,
@@ -162,7 +162,7 @@ fn early_stopping_writes_final_checkpoint() {
     )
     .success();
 
-    let ds_name = "ring-c2-f2-n40-seed99";
+    let ds_name = "ring-seed99-c2-f2-n40";
 
     // interval=1000 >> epochs=30: only initial + final-epoch checkpoint would be
     // written without early stopping. With patience=1 this fires quickly and
@@ -229,7 +229,7 @@ fn no_duplicate_checkpoint_when_early_stop_fires_on_interval_boundary() {
     )
     .success();
 
-    let ds_name = "ring-c2-f2-n100-seed42";
+    let ds_name = "ring-seed42-c2-f2-n100";
 
     let out = Command::cargo_bin("nrn")
         .unwrap()
@@ -302,7 +302,7 @@ fn start_prints_recap_without_overrides() {
     )
     .success();
 
-    let ds_name = "ring-c2-f2-n20-seed1";
+    let ds_name = "ring-seed1-c2-f2-n20";
 
     let out = Command::cargo_bin("nrn")
         .unwrap()
@@ -355,7 +355,7 @@ fn resume_with_lr_override_shows_marker_on_optimizer_line() {
     )
     .success();
 
-    let ds_name = "ring-c2-f2-n20-seed2";
+    let ds_name = "ring-seed2-c2-f2-n20";
 
     nrn(
         dir,
@@ -418,7 +418,7 @@ fn resume_restores_adam_optimizer_state() {
     )
     .success();
 
-    let ds_name = "ring-c2-f2-n20-seed2";
+    let ds_name = "ring-seed2-c2-f2-n20";
 
     nrn(
         dir,
@@ -467,7 +467,7 @@ fn resume_rejects_val_ratio_override() {
     )
     .success();
 
-    let ds_name = "ring-c2-f2-n20-seed3";
+    let ds_name = "ring-seed3-c2-f2-n20";
 
     nrn(
         dir,
@@ -517,7 +517,7 @@ fn divergence_with_early_stopping_recovers_best_model() {
     )
     .success();
 
-    let ds_name = "ring-c2-f2-n40-seed42";
+    let ds_name = "ring-seed42-c2-f2-n40";
     let out = Command::cargo_bin("nrn")
         .unwrap()
         .current_dir(dir)
