@@ -1,5 +1,5 @@
 use crate::actions::save_dataset;
-use crate::console::{generated, warning};
+use crate::display::{generated, warning};
 use clap::{Args, ValueEnum};
 use nrn::data::synth::{Distribution, SynthDataset, SynthParams, SynthParamsError};
 use std::error::Error;

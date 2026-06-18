@@ -1,13 +1,11 @@
 mod args;
-mod model_saver;
-mod monitor;
+mod callbacks;
 
 use crate::actions::*;
-use crate::console::{RUN_ICON, loaded, recording_at, warning};
+use crate::display::{RUN_ICON, loaded, recording_at, warning};
 use args::{ResumeOverrides, TrainArgs};
+use callbacks::{ConsoleMonitor, ModelSaver};
 use clap::*;
-use model_saver::ModelSaver;
-use monitor::ConsoleMonitor;
 use nrn::data::ModelDataset;
 use nrn::io::checkpoint::CheckpointRecorder;
 use nrn::io::hyperparams::HyperParametersRecord;

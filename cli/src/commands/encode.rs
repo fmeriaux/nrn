@@ -1,6 +1,6 @@
 use crate::actions::{get_file_stem, save_dataset};
-use crate::console::bar;
-use crate::console::{completed, trace};
+use crate::display::bar;
+use crate::display::{completed, trace};
 use clap::{Args, Subcommand};
 use console::style;
 use ndarray_rand::rand::SeedableRng;

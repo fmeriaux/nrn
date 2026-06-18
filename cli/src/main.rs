@@ -1,11 +1,11 @@
 use crate::cli::CliArgs;
-use crate::console::error;
+use crate::display::error;
 use clap::Parser;
 
 mod actions;
 mod cli;
 mod commands;
-pub mod console;
+mod display;
 
 fn main() {
     CliArgs::parse().command.run().unwrap_or_else(|e| {

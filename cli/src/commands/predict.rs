@@ -1,5 +1,5 @@
 use crate::actions::{load_model, load_scaler};
-use crate::console::error;
+use crate::display::error;
 use clap::Args;
 use console::style;
 use ndarray::Array1;

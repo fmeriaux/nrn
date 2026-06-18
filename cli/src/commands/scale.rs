@@ -1,5 +1,5 @@
 use crate::actions::{get_file_stem, load_dataset, save_dataset, save_scaler};
-use crate::console::completed;
+use crate::display::completed;
 use clap::{Args, ValueEnum};
 use console::style;
 use ndarray::ArrayView2;
