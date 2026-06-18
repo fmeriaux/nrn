@@ -42,10 +42,10 @@ fn draw_data_with(
         "Scatter plot can only be generated for datasets with exactly two features"
     );
 
-    let (mins, maxs) = dataset
-        .feature_range()
-        .and_then(|(mins, maxs)| add_padding(&mins, &maxs, cfg.padding_factor).into())
-        .ok_or("Dataset is empty, cannot determine feature range")?;
+    let (mins, maxs) = {
+        let (mins, maxs) = dataset.feature_range();
+        add_padding(&mins, &maxs, cfg.padding_factor)
+    };
 
     draw_with(cfg, |root| {
         draw_chart(

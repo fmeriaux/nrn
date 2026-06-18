@@ -81,4 +81,51 @@ mod tests {
             .unwrap();
         assert_eq!(m_weights, &array![[1.0_f32, 2.0], [3.0, 4.0]].into_dyn());
     }
+
+    #[test]
+    fn load_rejects_missing_file() {
+        // No file is written: the read itself must fail, before any parsing.
+        let path = temp_path("absent");
+        assert!(load(&path).is_err());
+    }
+
+    #[test]
+    fn load_rejects_corrupt_file() {
+        let path = temp_path("corrupt");
+        std::fs::write(path.with_extension("safetensors"), b"not safetensors").unwrap();
+
+        assert!(load(&path).is_err());
+        cleanup(&path);
+    }
+
+    #[test]
+    fn load_rejects_non_f32_tensor() {
+        use safetensors::{Dtype, View, serialize};
+        use std::borrow::Cow;
+
+        // A state file whose tensor is not f32 must be refused: the dtype guard in
+        // `read_arrayd` rejects it as the entries are read back.
+        struct U8Tensor;
+        impl View for U8Tensor {
+            fn dtype(&self) -> Dtype {
+                Dtype::U8
+            }
+            fn shape(&self) -> &[usize] {
+                &[1]
+            }
+            fn data(&self) -> Cow<'_, [u8]> {
+                Cow::Owned(vec![0])
+            }
+            fn data_len(&self) -> usize {
+                1
+            }
+        }
+
+        let bytes = serialize(vec![("layer0.m_weights".to_string(), U8Tensor)], None).unwrap();
+        let path = temp_path("non_f32");
+        std::fs::write(path.with_extension("safetensors"), bytes).unwrap();
+
+        assert!(load(&path).is_err());
+        cleanup(&path);
+    }
 }

@@ -175,6 +175,55 @@ mod tests {
     }
 
     #[test]
+    fn malformed_or_unknown_origin_metadata_degrades_to_no_origin() {
+        // A recorded origin is best-effort: an unknown discriminant or a missing /
+        // unparseable field drops the origin rather than failing the load.
+        use super::{
+            KIND_ENCODED, KIND_SYNTHETIC, ORIGIN_DISTRIBUTION, ORIGIN_KIND, ORIGIN_SEED,
+            origin_from_metadata,
+        };
+        use std::collections::HashMap;
+
+        let cases = [
+            ("no kind", HashMap::new()),
+            (
+                "unknown kind",
+                HashMap::from([(ORIGIN_KIND.to_string(), "mystery".to_string())]),
+            ),
+            (
+                "synthetic without distribution",
+                HashMap::from([
+                    (ORIGIN_KIND.to_string(), KIND_SYNTHETIC.to_string()),
+                    (ORIGIN_SEED.to_string(), "7".to_string()),
+                ]),
+            ),
+            (
+                "synthetic without seed",
+                HashMap::from([
+                    (ORIGIN_KIND.to_string(), KIND_SYNTHETIC.to_string()),
+                    (ORIGIN_DISTRIBUTION.to_string(), "spiral".to_string()),
+                ]),
+            ),
+            (
+                "synthetic with non-numeric seed",
+                HashMap::from([
+                    (ORIGIN_KIND.to_string(), KIND_SYNTHETIC.to_string()),
+                    (ORIGIN_DISTRIBUTION.to_string(), "spiral".to_string()),
+                    (ORIGIN_SEED.to_string(), "not-a-number".to_string()),
+                ]),
+            ),
+            (
+                "encoded without source",
+                HashMap::from([(ORIGIN_KIND.to_string(), KIND_ENCODED.to_string())]),
+            ),
+        ];
+
+        for (label, metadata) in cases {
+            assert_eq!(origin_from_metadata(&metadata), None, "{label}");
+        }
+    }
+
+    #[test]
     fn load_rejects_corrupt_file() {
         let path = temp_path("data_corrupt");
         std::fs::write(
@@ -186,6 +235,36 @@ mod tests {
         assert!(Dataset::load(&path).is_err());
         assert!(load_inputs(&path).is_err());
 
+        cleanup(&path);
+    }
+
+    #[test]
+    fn load_rejects_tensors_that_violate_dataset_invariants() {
+        use super::{FEATURES, LABELS};
+        use crate::io::tensors;
+        use std::collections::HashMap;
+
+        // The tensors are individually well-formed, but two feature rows against
+        // three labels is a shape mismatch that `Dataset::new` rejects — so the
+        // load must fail at the I/O boundary rather than yield a bad dataset.
+        let path = temp_path("data_invariant");
+        tensors::save(
+            &path,
+            vec![
+                (
+                    FEATURES.to_string(),
+                    tensors::tensor(&array![[0.0_f32, 1.0, 2.0], [3.0, 4.0, 5.0]]),
+                ),
+                (
+                    LABELS.to_string(),
+                    tensors::tensor(&array![0.0_f32, 1.0, 0.0]),
+                ),
+            ],
+            HashMap::new(),
+        )
+        .unwrap();
+
+        assert!(Dataset::load(&path).is_err());
         cleanup(&path);
     }
 }

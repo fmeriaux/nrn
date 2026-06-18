@@ -286,20 +286,17 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
-    fn create_run<P: AsRef<Path>>(
-        path: P,
-        dataset: &str,
-        overwrite: bool,
-    ) -> Result<CheckpointRecorder> {
-        Ok(TrainingRun::create(
+    fn create_run<P: AsRef<Path>>(path: P, dataset: &str, overwrite: bool) -> CheckpointRecorder {
+        TrainingRun::create(
             path,
             &TrainingMeta {
                 dataset: dataset.to_string(),
                 hyperparams: HyperParametersRecord::sample(),
             },
             overwrite,
-        )?
-        .recorder())
+        )
+        .unwrap()
+        .recorder()
     }
 
     fn sample_model() -> NeuralNetwork {
@@ -327,7 +324,7 @@ mod tests {
     #[test]
     fn write_names_checkpoint_dir_by_epoch() {
         let dir = temp_dir("write_epoch");
-        let recorder = create_run(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false);
         recorder
             .write(
                 &sample_model(),
@@ -347,7 +344,7 @@ mod tests {
     #[test]
     fn roundtrip_with_validation() {
         let dir = temp_dir("roundtrip_val");
-        let recorder = create_run(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false);
         for i in 0..3 {
             recorder
                 .write(
@@ -376,7 +373,7 @@ mod tests {
     #[test]
     fn roundtrip_without_validation() {
         let dir = temp_dir("roundtrip_noval");
-        let recorder = create_run(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false);
         for i in 0..3 {
             recorder
                 .write(
@@ -405,7 +402,7 @@ mod tests {
         let model = sample_model();
         let inputs = Array2::from_shape_fn((2, 4), |(i, j)| (i + j) as f32 * 0.3);
 
-        let recorder = create_run(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false);
         recorder
             .write(
                 &model,
@@ -427,7 +424,7 @@ mod tests {
     fn numeric_sort_beats_lexical() {
         let dir = temp_dir("sort");
         let model = sample_model();
-        let recorder = create_run(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false);
         for i in 0..12 {
             recorder
                 .write(
@@ -480,9 +477,20 @@ mod tests {
     }
 
     #[test]
+    fn load_ignores_unrelated_directory() {
+        // A directory whose name lacks the `checkpoint-` prefix is skipped.
+        let dir = temp_dir("unrelated_dir");
+        fs::create_dir_all(dir.join("scratch")).unwrap();
+        let archive = CheckpointArchive::load(&dir).unwrap();
+        cleanup(&dir);
+
+        assert!(archive.is_empty());
+    }
+
+    #[test]
     fn model_at_out_of_range_gives_range_error() {
         let dir = temp_dir("model_at_oob");
-        let recorder = create_run(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false);
         recorder
             .write(
                 &sample_model(),
@@ -501,9 +509,34 @@ mod tests {
     }
 
     #[test]
+    fn optimizer_and_scheduler_at_out_of_range_error() {
+        // `optimizer_at` / `scheduler_at` reach `entry_at` through `optional_file`,
+        // a different call site than `model_at`, so its range check is covered here.
+        let dir = temp_dir("state_at_oob");
+        let recorder = create_run(&dir, "ds", false);
+        recorder
+            .write(
+                &sample_model(),
+                &sample_optimizer(),
+                &sample_scheduler(),
+                &make_eval(0.0, false),
+                0,
+            )
+            .unwrap();
+
+        let archive = CheckpointArchive::load(&dir).unwrap();
+        let opt_err = archive.optimizer_at(99).unwrap_err().to_string();
+        let sched_err = archive.scheduler_at(99).unwrap_err().to_string();
+        cleanup(&dir);
+
+        assert!(opt_err.contains("out of range"), "got: {opt_err}");
+        assert!(sched_err.contains("out of range"), "got: {sched_err}");
+    }
+
+    #[test]
     fn model_at_missing_model_file_fails() {
         let dir = temp_dir("model_at_missing");
-        let recorder = create_run(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false);
         recorder
             .write(
                 &sample_model(),
@@ -525,7 +558,7 @@ mod tests {
     #[test]
     fn model_at_corrupt_model_file_fails() {
         let dir = temp_dir("model_at_corrupt");
-        let recorder = create_run(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false);
         recorder
             .write(
                 &sample_model(),
@@ -551,7 +584,7 @@ mod tests {
     #[test]
     fn evaluation_history_corrupted_evaluations_json_fails() {
         let dir = temp_dir("corrupt_evals");
-        let recorder = create_run(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false);
         recorder
             .write(
                 &sample_model(),
@@ -577,7 +610,7 @@ mod tests {
     #[test]
     fn on_checkpoint_writes_a_checkpoint() {
         let dir = temp_dir("on_checkpoint");
-        let mut recorder = create_run(&dir, "ds", false).unwrap();
+        let mut recorder = create_run(&dir, "ds", false);
 
         recorder
             .on_checkpoint(
@@ -599,7 +632,7 @@ mod tests {
     #[test]
     fn write_with_adam_writes_optimizer_state() {
         let dir = temp_dir("optimizer_adam");
-        let recorder = create_run(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false);
 
         let mut optimizer = sample_optimizer();
         let mut trained_model = sample_model();
@@ -637,7 +670,7 @@ mod tests {
     #[test]
     fn write_with_sgd_writes_no_optimizer_file() {
         let dir = temp_dir("optimizer_sgd");
-        let recorder = create_run(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false);
 
         let optimizer = StochasticGradientDescent::new(0.01.try_into().unwrap());
         recorder
@@ -662,7 +695,7 @@ mod tests {
     #[test]
     fn write_with_stateful_scheduler_writes_scheduler_state() {
         let dir = temp_dir("scheduler_step");
-        let recorder = create_run(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false);
 
         let mut scheduler = StepDecay::from_values(0.1, 2, 0.5).unwrap();
         scheduler.step();
@@ -691,7 +724,7 @@ mod tests {
     #[test]
     fn write_with_stateless_scheduler_writes_no_scheduler_file() {
         let dir = temp_dir("scheduler_constant");
-        let recorder = create_run(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false);
 
         recorder
             .write(
@@ -715,7 +748,7 @@ mod tests {
     #[test]
     fn write_fails_when_evaluations_path_is_a_directory() {
         let dir = temp_dir("write_evals_dir_conflict");
-        let recorder = create_run(&dir, "ds", false).unwrap();
+        let recorder = create_run(&dir, "ds", false);
 
         // Pre-create "evaluations.json" as a directory so json::save's fs::write fails.
         fs::create_dir_all(dir.join("checkpoint-000000").join("evaluations.json")).unwrap();

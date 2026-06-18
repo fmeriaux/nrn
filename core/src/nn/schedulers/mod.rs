@@ -17,6 +17,7 @@ use crate::learning_rate::LearningRate;
 /// Scheduler-agnostic snapshot of internal state (the current step count),
 /// for checkpointing and resuming. Serialization lives behind the `io`
 /// feature; this type stays free of serde/safetensors.
+#[derive(Debug)]
 pub struct SchedulerState {
     pub current_step: usize,
 }

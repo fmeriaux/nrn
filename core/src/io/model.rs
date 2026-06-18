@@ -198,4 +198,125 @@ mod tests {
 
         assert!(result.is_err());
     }
+
+    #[test]
+    fn load_rejects_truncated_or_malformed_files() {
+        use crate::io::tensors::{self, F32Tensor};
+        use ndarray::{Array1, array};
+        use std::collections::HashMap;
+
+        // A well-formed layer 0 (rank-2 weights, rank-1 biases). The activation
+        // value is irrelevant here: every case below fails *before* the activation
+        // is looked up, so any string serves.
+        let weights = || {
+            (
+                "layer0.weights".to_string(),
+                tensors::tensor(&array![[1.0_f32, 2.0]]),
+            )
+        };
+        let biases = || {
+            (
+                "layer0.biases".to_string(),
+                tensors::tensor(&Array1::<f32>::zeros(1)),
+            )
+        };
+        let activation = || ("layer0.activation".to_string(), "relu".to_string());
+        let one_layer = || HashMap::from([("n_layers".to_string(), "1".to_string()), activation()]);
+
+        // Each case is well-formed at the safetensors level but violates the model
+        // schema, so `load` must reject it — exercising the read guards that
+        // `model::load` delegates to `tensors` (missing key / missing tensor /
+        // wrong rank).
+        type Case = (
+            &'static str,
+            Vec<(String, F32Tensor)>,
+            HashMap<String, String>,
+        );
+        let cases: Vec<Case> = vec![
+            (
+                "n_layers metadata absent",
+                vec![weights(), biases()],
+                HashMap::from([activation()]),
+            ),
+            ("weights tensor absent", vec![biases()], one_layer()),
+            ("biases tensor absent", vec![weights()], one_layer()),
+            (
+                "activation metadata absent",
+                vec![weights(), biases()],
+                HashMap::from([("n_layers".to_string(), "1".to_string())]),
+            ),
+            (
+                "weights stored with the wrong rank",
+                vec![
+                    (
+                        "layer0.weights".to_string(),
+                        tensors::tensor(&array![1.0_f32, 2.0]),
+                    ),
+                    biases(),
+                ],
+                one_layer(),
+            ),
+        ];
+
+        for (i, (label, entries, metadata)) in cases.into_iter().enumerate() {
+            let path = temp_path(&format!("malformed_{i}"));
+            tensors::save(&path, entries, metadata).unwrap();
+            let result = NeuralNetwork::load(&path);
+            cleanup(&path);
+            assert!(result.is_err(), "{label} should be rejected");
+        }
+    }
+
+    #[test]
+    fn load_rejects_non_f32_weights() {
+        use safetensors::{Dtype, View, serialize};
+        use std::borrow::Cow;
+        use std::collections::HashMap;
+
+        // A weights tensor whose dtype is not f32 must be refused by the read
+        // guard `model::load` delegates to `tensors::read_f32`.
+        struct U8Tensor;
+        impl View for U8Tensor {
+            fn dtype(&self) -> Dtype {
+                Dtype::U8
+            }
+            fn shape(&self) -> &[usize] {
+                &[1, 1]
+            }
+            fn data(&self) -> Cow<'_, [u8]> {
+                Cow::Owned(vec![0])
+            }
+            fn data_len(&self) -> usize {
+                1
+            }
+        }
+
+        let metadata = HashMap::from([
+            ("n_layers".to_string(), "1".to_string()),
+            ("layer0.activation".to_string(), "relu".to_string()),
+        ]);
+        let bytes = serialize(
+            vec![("layer0.weights".to_string(), U8Tensor)],
+            Some(metadata),
+        )
+        .unwrap();
+
+        let path = temp_path("non_f32_weights").with_extension("safetensors");
+        path.parent().map(std::fs::create_dir_all);
+        std::fs::write(&path, bytes).unwrap();
+        let result = NeuralNetwork::load(path.with_extension(""));
+        let _ = std::fs::remove_file(&path);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn save_rejects_path_traversal() {
+        // Saving through a path that escapes the working directory is refused by
+        // the path guard in `tensors::save`; nothing is written.
+        let specs = NeuronLayerSpec::network_for(vec![2], &*RELU, 2);
+        let model = NeuralNetwork::initialization(2, &specs, 0);
+
+        assert!(model.save("../../nrn_traversal_model").is_err());
+    }
 }

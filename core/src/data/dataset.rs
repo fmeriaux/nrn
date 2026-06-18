@@ -196,17 +196,14 @@ impl Dataset {
     }
 
     /// Computes the minimum and maximum values for each feature in the dataset.
+    ///
+    /// A [`Dataset`] always has at least one sample (enforced by [`Dataset::new`]),
+    /// so the range is always defined.
     /// # Returns
-    /// An `Option` containing a tuple of two vectors:
+    /// A tuple of two vectors:
     /// - The first vector contains the minimum values for each feature.
     /// - The second vector contains the maximum values for each feature.
-    ///   If the dataset has no samples, returns `None`.
-    ///
-    pub fn feature_range(&self) -> Option<(Vec<f32>, Vec<f32>)> {
-        if self.features.nrows() == 0 {
-            return None;
-        }
-
+    pub fn feature_range(&self) -> (Vec<f32>, Vec<f32>) {
         let n_features = self.n_features();
 
         let mut mins = vec![f32::INFINITY; n_features];
@@ -219,7 +216,7 @@ impl Dataset {
             }
         }
 
-        Some((mins, maxs))
+        (mins, maxs)
     }
 
     /// Applies the specified scaling method to the training and test datasets.
@@ -554,6 +551,23 @@ mod tests {
     }
 
     #[test]
+    fn from_vec_propagates_dataset_validation_error() {
+        // The images form a valid rectangular matrix, but `from_vec` does not
+        // check that there are as many labels as images — it delegates to
+        // `Dataset::new`, which rejects the count mismatch.
+        let mut rng = StdRng::seed_from_u64(0);
+        let images = vec![array![0.0f32, 1.0], array![2.0, 3.0]];
+        let labels = vec![0usize]; // one label for two images
+        let err = Dataset::from_vec(&mut rng, images, labels, None)
+            .err()
+            .unwrap();
+        assert!(
+            err.to_string().contains("disagree on sample count"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
     fn unique_labels_deduplicates_values() {
         let dataset =
             Dataset::new(Array2::zeros((4, 1)), array![0.0f32, 1.0, 1.0, 2.0], None).unwrap();
@@ -584,7 +598,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let (mins, maxs) = dataset.feature_range().unwrap();
+        let (mins, maxs) = dataset.feature_range();
         assert_eq!(mins, vec![-2.0, 5.0]);
         assert_eq!(maxs, vec![3.0, 10.0]);
     }

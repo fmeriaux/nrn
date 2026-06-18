@@ -398,10 +398,8 @@ mod tests {
     #[test]
     fn spiral_rejects_a_feature_count_other_than_two() {
         let params = SynthParams::new(100, 3, 2, 0.0, 10.0).unwrap();
-        assert!(matches!(
-            SynthDataset::new(params, SPIRAL),
-            Err(SynthError::SpiralRequiresTwoFeatures(3))
-        ));
+        let err = SynthDataset::new(params, SPIRAL).err().unwrap();
+        assert_eq!(err, SynthError::SpiralRequiresTwoFeatures(3));
     }
 
     #[test]
@@ -429,6 +427,42 @@ mod tests {
             })
         );
         assert!(SynthParams::new(100, 2, 2, 0.0, 10.0).is_ok());
+    }
+
+    #[test]
+    fn synth_params_error_messages_are_human_readable() {
+        assert_eq!(
+            SynthParamsError::NoFeatures.to_string(),
+            "at least one feature is required"
+        );
+        assert_eq!(
+            SynthParamsError::TooFewClusters(1).to_string(),
+            "at least 2 clusters are required, but found 1"
+        );
+        assert_eq!(
+            SynthParamsError::NotEnoughSamples {
+                samples: 2,
+                clusters: 3
+            }
+            .to_string(),
+            "need at least one sample per cluster: 2 samples for 3 clusters"
+        );
+        assert_eq!(
+            SynthParamsError::EmptyRange {
+                min: 10.0,
+                max: 1.0
+            }
+            .to_string(),
+            "feature range is empty: min 10 must be less than max 1"
+        );
+    }
+
+    #[test]
+    fn synth_error_message_is_human_readable() {
+        assert_eq!(
+            SynthError::SpiralRequiresTwoFeatures(3).to_string(),
+            "spiral datasets require exactly two features, but found 3"
+        );
     }
 
     #[test]

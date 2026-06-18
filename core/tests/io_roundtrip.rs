@@ -7,7 +7,6 @@ use nrn::activations::RELU;
 use nrn::data::Dataset;
 use nrn::data::scalers::{MinMaxScaler, Scaler, ScalerMethod};
 use nrn::evaluation::{Evaluation, EvaluationSet};
-use nrn::io::checkpoint::CheckpointArchive;
 use nrn::io::data::{load_inputs, save_inputs};
 use nrn::io::hyperparams::{
     ClippingRecord, HyperParametersRecord, LossRecord, OptimizerRecord, SchedulerRecord,
@@ -97,6 +96,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
         false,
     )
     .unwrap();
+    assert_eq!(run.meta().dataset, "test_dataset");
     let mut recorder = run.recorder();
     let mut last_recorded_predictions = None;
 
@@ -141,7 +141,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
         reloaded_model.predict(model_dataset.inputs.view())
     );
 
-    let archive = CheckpointArchive::load(&run_dir).unwrap();
+    let archive = run.archive().unwrap();
     assert_eq!(archive.len(), 2);
     // Last checkpoint was written at epoch 5, not at the final epoch.
     // Load the model lazily — only one in memory at a time.
