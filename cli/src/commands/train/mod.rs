@@ -77,7 +77,6 @@ impl StartArgs {
         let dataset_name = get_file_stem(Path::new(&self.dataset));
         let dataset_path = Path::new(&self.dataset);
         let dataset = load_dataset(&self.dataset)?;
-        dataset.validate()?;
 
         let hyperparameters = HyperParameters::try_from(&self.hp)?;
 
@@ -138,7 +137,6 @@ impl ResumeArgs {
         let meta = run.meta();
 
         let dataset = load_dataset(&meta.dataset)?;
-        dataset.validate()?;
 
         let previous = HyperParameters::try_from(meta.hyperparams.clone())?;
 

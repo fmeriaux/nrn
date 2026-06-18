@@ -7,7 +7,6 @@ use nrn::activations::RELU;
 use nrn::data::Dataset;
 use nrn::data::scalers::{MinMaxScaler, Scaler, ScalerMethod};
 use nrn::evaluation::{Evaluation, EvaluationSet};
-use nrn::io::checkpoint::CheckpointArchive;
 use nrn::io::data::{load_inputs, save_inputs};
 use nrn::io::hyperparams::{
     ClippingRecord, HyperParametersRecord, LossRecord, OptimizerRecord, SchedulerRecord,
@@ -50,20 +49,22 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let dir = temp_dir();
 
     // --- Dataset --------------------------------------------------------
-    let dataset = Dataset {
-        features: array![[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]],
-        labels: array![0.0, 1.0, 1.0, 0.0],
-    };
+    let dataset = Dataset::new(
+        array![[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]],
+        array![0.0, 1.0, 1.0, 0.0],
+        None,
+    )
+    .unwrap();
 
     let dataset_path = dir.join("dataset");
     dataset.save(&dataset_path).unwrap();
-    let loaded_dataset = Dataset::load(&dataset_path).unwrap();
-    assert_eq!(dataset.features, loaded_dataset.features);
-    assert_eq!(dataset.labels, loaded_dataset.labels);
+    let loaded = Dataset::load(&dataset_path).unwrap();
+    assert_eq!(dataset.features(), loaded.features());
+    assert_eq!(dataset.labels(), loaded.labels());
 
     // --- Scaler (serialized as JSON, not safetensors) -------------------
-    let scaler = ScalerMethod::MinMax(MinMaxScaler::default().fit(dataset.features.view()));
-    let mut expected = dataset.features.clone();
+    let scaler = ScalerMethod::MinMax(MinMaxScaler::default().fit(dataset.features().view()));
+    let mut expected = dataset.features().clone();
     scaler.apply_inplace(expected.view_mut());
 
     let scaler_path = dir.join("scaler");
@@ -71,7 +72,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
     record.save(&scaler_path).unwrap();
     let reloaded_scaler: ScalerMethod = ScalerRecord::load(&scaler_path).unwrap().into();
 
-    let mut actual = dataset.features.clone();
+    let mut actual = dataset.features().clone();
     reloaded_scaler.apply_inplace(actual.view_mut());
     assert_eq!(expected, actual);
 
@@ -95,6 +96,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
         false,
     )
     .unwrap();
+    assert_eq!(run.meta().dataset, "test_dataset");
     let mut recorder = run.recorder();
     let mut last_recorded_predictions = None;
 
@@ -139,7 +141,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
         reloaded_model.predict(model_dataset.inputs.view())
     );
 
-    let archive = CheckpointArchive::load(&run_dir).unwrap();
+    let archive = run.archive().unwrap();
     assert_eq!(archive.len(), 2);
     // Last checkpoint was written at epoch 5, not at the final epoch.
     // Load the model lazily — only one in memory at a time.

@@ -364,9 +364,39 @@ mod tests {
 
     #[test]
     fn record_roundtrips_through_the_domain_spec() {
-        let record = HyperParametersRecord::sample();
-        let hyperparameters = HyperParameters::try_from(record.clone()).unwrap();
-        assert_eq!(HyperParametersRecord::from(&hyperparameters), record);
+        // The conversion is lossless both ways for *every* optimizer and scheduler
+        // variant, not just the sample's — exercising both projection directions
+        // (`From<&Config>` and the `TryFrom` back) for each.
+        let with_sgd = HyperParametersRecord {
+            optimizer: OptimizerRecord::Sgd,
+            ..HyperParametersRecord::sample()
+        };
+        let with_cosine = HyperParametersRecord {
+            scheduler: SchedulerRecord::Cosine {
+                lr_min: 0.0001,
+                steps: 100,
+                warm_restarts: true,
+                cycle_multiplier: 2,
+            },
+            ..HyperParametersRecord::sample()
+        };
+        let with_step = HyperParametersRecord {
+            scheduler: SchedulerRecord::Step {
+                decay_factor: 0.5,
+                steps: 10,
+            },
+            ..HyperParametersRecord::sample()
+        };
+
+        for record in [
+            HyperParametersRecord::sample(),
+            with_sgd,
+            with_cosine,
+            with_step,
+        ] {
+            let hyperparameters = HyperParameters::try_from(record.clone()).unwrap();
+            assert_eq!(HyperParametersRecord::from(&hyperparameters), record);
+        }
     }
 
     #[test]

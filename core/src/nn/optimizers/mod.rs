@@ -23,6 +23,7 @@ use std::fmt;
 /// estimates), shaped like a model: named tensors of arbitrary rank plus
 /// scalar metadata. Serialization lives behind the `io` feature; this type
 /// stays free of serde/safetensors.
+#[derive(Debug)]
 pub struct OptimizerState {
     pub tensors: Vec<(String, ArrayD<f32>)>,
     pub metadata: HashMap<String, String>,

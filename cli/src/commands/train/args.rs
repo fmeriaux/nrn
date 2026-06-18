@@ -312,3 +312,323 @@ impl ResumeOverrides {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    // ─── TrainArgs conversions ─────────────────────────────────────────────────
+
+    /// Parser wrapper exercising the flattened [`TrainArgs`] through clap so
+    /// defaults and the conversion impls are covered in one path.
+    #[derive(Parser)]
+    struct TrainCli {
+        #[command(flatten)]
+        args: TrainArgs,
+    }
+
+    fn train_args(extra: &[&str]) -> TrainArgs {
+        let mut argv = vec!["train", "--epochs", "100"];
+        argv.extend_from_slice(extra);
+        TrainCli::parse_from(argv).args
+    }
+
+    #[test]
+    fn optimizer_defaults_to_adam() {
+        assert_eq!(
+            OptimizerConfig::from(train_args(&[]).optimizer),
+            OptimizerConfig::Adam
+        );
+    }
+
+    #[test]
+    fn optimizer_sgd_selected() {
+        assert_eq!(
+            OptimizerConfig::from(train_args(&["--optimizer", "sgd"]).optimizer),
+            OptimizerConfig::Sgd
+        );
+    }
+
+    #[test]
+    fn scheduler_defaults_to_constant() {
+        assert_eq!(
+            SchedulerConfig::from(&train_args(&[])),
+            SchedulerConfig::Constant
+        );
+    }
+
+    #[test]
+    fn cosine_steps_default_to_total_epochs() {
+        assert_eq!(
+            SchedulerConfig::from(&train_args(&["--scheduler", "cosine"])),
+            SchedulerConfig::Cosine {
+                lr_min: 0.0,
+                steps: 100,
+                warm_restarts: false,
+                cycle_multiplier: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn cosine_carries_warm_restart_knobs() {
+        let args = train_args(&[
+            "--scheduler",
+            "cosine",
+            "--lr-min",
+            "0.0001",
+            "--steps",
+            "20",
+            "--warm-restarts",
+            "--cycle-multiplier",
+            "2",
+        ]);
+        assert_eq!(
+            SchedulerConfig::from(&args),
+            SchedulerConfig::Cosine {
+                lr_min: 0.0001,
+                steps: 20,
+                warm_restarts: true,
+                cycle_multiplier: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn step_scheduler_carries_decay_factor() {
+        let args = train_args(&[
+            "--scheduler",
+            "step",
+            "--decay-factor",
+            "0.5",
+            "--steps",
+            "30",
+        ]);
+        assert_eq!(
+            SchedulerConfig::from(&args),
+            SchedulerConfig::Step {
+                decay_factor: 0.5,
+                steps: 30,
+            }
+        );
+    }
+
+    #[test]
+    fn clipping_defaults_to_norm() {
+        assert_eq!(
+            GradientClipping::try_from(&train_args(&[])).unwrap(),
+            GradientClipping::Norm { max_norm: 1.0 }
+        );
+    }
+
+    #[test]
+    fn clip_value_is_symmetric() {
+        assert_eq!(
+            GradientClipping::try_from(&train_args(&["--clip-value", "0.5"])).unwrap(),
+            GradientClipping::Value {
+                min: -0.5,
+                max: 0.5
+            }
+        );
+    }
+
+    #[test]
+    fn no_clip_disables_clipping() {
+        assert_eq!(
+            GradientClipping::try_from(&train_args(&["--no-clip"])).unwrap(),
+            GradientClipping::None
+        );
+    }
+
+    #[test]
+    fn invalid_clip_norm_surfaces_error() {
+        assert!(GradientClipping::try_from(&train_args(&["--clip-norm", "0"])).is_err());
+    }
+
+    #[test]
+    fn early_stopping_disabled_when_zero() {
+        assert_eq!(train_args(&[]).early_stopping().unwrap(), None);
+    }
+
+    #[test]
+    fn early_stopping_enabled_with_patience() {
+        let config = train_args(&["--early-stopping", "5"])
+            .early_stopping()
+            .unwrap()
+            .expect("early stopping enabled");
+        assert_eq!(config.patience(), 5);
+        assert!(config.restore_best_model());
+    }
+
+    #[test]
+    fn hyperparameters_assembled_from_args() {
+        let args = train_args(&["--lr", "0.01", "--batch-size", "32", "--seed", "42"]);
+        let hp = HyperParameters::try_from(&args).expect("valid hyperparameters");
+        assert_eq!(hp.epochs(), 100);
+        assert_eq!(hp.lr().value(), 0.01);
+        assert_eq!(hp.batch_size(), Some(32));
+        assert_eq!(hp.seed(), 42);
+        assert_eq!(hp.optimizer(), &OptimizerConfig::Adam);
+    }
+
+    #[test]
+    fn hyperparameters_surface_validation_errors() {
+        // Validation/test ratios summing past 1.0 is a cross-field invariant violation.
+        let args = train_args(&["--val-ratio", "0.8", "--test-ratio", "0.8"]);
+        assert!(HyperParameters::try_from(&args).is_err());
+    }
+
+    // ─── ResumeOverrides ───────────────────────────────────────────────────────
+
+    #[derive(Parser)]
+    struct ResumeCli {
+        #[command(flatten)]
+        overrides: ResumeOverrides,
+    }
+
+    fn overrides(extra: &[&str]) -> ResumeOverrides {
+        let mut argv = vec!["resume"];
+        argv.extend_from_slice(extra);
+        ResumeCli::parse_from(argv).overrides
+    }
+
+    fn base_record() -> HyperParametersRecord {
+        HyperParametersRecord {
+            epochs: 100,
+            checkpoint_interval: 10,
+            batch_size: Some(32),
+            lr: 0.001,
+            optimizer: nrn::io::hyperparams::OptimizerRecord::Adam,
+            scheduler: SchedulerRecord::Constant,
+            clipping: ClippingRecord::Norm { max_norm: 1.0 },
+            early_stopping: None,
+            val_ratio: 0.1,
+            test_ratio: 0.1,
+            loss: nrn::io::hyperparams::LossRecord::CrossEntropy,
+            seed: 42,
+        }
+    }
+
+    #[test]
+    fn empty_overrides_leave_record_unchanged() {
+        let mut record = base_record();
+        overrides(&[]).apply(&mut record);
+        assert_eq!(record, base_record());
+    }
+
+    #[test]
+    fn scalar_overrides_applied() {
+        let mut record = base_record();
+        overrides(&[
+            "--epochs",
+            "200",
+            "--checkpoint-interval",
+            "5",
+            "--lr",
+            "0.01",
+        ])
+        .apply(&mut record);
+        assert_eq!(record.epochs, 200);
+        assert_eq!(record.checkpoint_interval, 5);
+        assert_eq!(record.lr, 0.01);
+    }
+
+    #[test]
+    fn lr_min_override_only_affects_cosine() {
+        // Constant scheduler: lr_min has nowhere to land, record stays put.
+        let mut constant = base_record();
+        overrides(&["--lr-min", "0.0001"]).apply(&mut constant);
+        assert_eq!(constant.scheduler, SchedulerRecord::Constant);
+
+        // Cosine scheduler: lr_min is patched in place.
+        let mut cosine = base_record();
+        cosine.scheduler = SchedulerRecord::Cosine {
+            lr_min: 0.0,
+            steps: 100,
+            warm_restarts: false,
+            cycle_multiplier: 1,
+        };
+        overrides(&["--lr-min", "0.0001"]).apply(&mut cosine);
+        assert_eq!(
+            cosine.scheduler,
+            SchedulerRecord::Cosine {
+                lr_min: 0.0001,
+                steps: 100,
+                warm_restarts: false,
+                cycle_multiplier: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn clipping_overrides_applied() {
+        let mut value = base_record();
+        overrides(&["--clip-value", "0.5"]).apply(&mut value);
+        assert_eq!(
+            value.clipping,
+            ClippingRecord::Value {
+                min: -0.5,
+                max: 0.5
+            }
+        );
+
+        let mut none = base_record();
+        overrides(&["--no-clip"]).apply(&mut none);
+        assert_eq!(none.clipping, ClippingRecord::None);
+
+        let mut norm = base_record();
+        overrides(&["--clip-norm", "2.0"]).apply(&mut norm);
+        assert_eq!(norm.clipping, ClippingRecord::Norm { max_norm: 2.0 });
+    }
+
+    #[test]
+    fn early_stopping_can_be_enabled_and_disabled() {
+        let mut enabled = base_record();
+        overrides(&["--early-stopping", "5"]).apply(&mut enabled);
+        assert_eq!(
+            enabled.early_stopping,
+            Some(EarlyStoppingRecord {
+                patience: 5,
+                restore_best_model: true,
+            })
+        );
+
+        // Patience 0 clears an existing config.
+        let mut disabled = base_record();
+        disabled.early_stopping = Some(EarlyStoppingRecord {
+            patience: 5,
+            restore_best_model: true,
+        });
+        overrides(&["--early-stopping", "0"]).apply(&mut disabled);
+        assert_eq!(disabled.early_stopping, None);
+    }
+
+    #[test]
+    fn restore_best_model_override_reuses_existing_patience() {
+        let mut record = base_record();
+        record.early_stopping = Some(EarlyStoppingRecord {
+            patience: 7,
+            restore_best_model: true,
+        });
+        overrides(&["--restore-best-model", "false"]).apply(&mut record);
+        assert_eq!(
+            record.early_stopping,
+            Some(EarlyStoppingRecord {
+                patience: 7,
+                restore_best_model: false,
+            })
+        );
+    }
+
+    #[test]
+    fn batch_size_and_full_batch_overrides() {
+        let mut sized = base_record();
+        overrides(&["--batch-size", "64"]).apply(&mut sized);
+        assert_eq!(sized.batch_size, Some(64));
+
+        let mut full = base_record();
+        overrides(&["--full-batch"]).apply(&mut full);
+        assert_eq!(full.batch_size, None);
+    }
+}

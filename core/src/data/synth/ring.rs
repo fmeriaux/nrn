@@ -1,69 +1,66 @@
-use crate::data::dataset::Dataset;
 use crate::data::synth::{
-    DatasetGenerator, calculate_radius, feature_bounds, init_features_and_labels, random_points,
+    SynthError, SynthParams, calculate_radius, feature_bounds, max_radius, random_points,
 };
-use ndarray::{Array1, s};
+use ndarray::{Array2, s};
 use ndarray_rand::rand::{Rng, RngCore};
 
-/// Generates a dataset with clusters arranged in concentric rings.
-pub struct RingDataset {
-    /// The number of samples to generate for each cluster.
-    pub n_samples: usize,
-    /// The number of features for each sample.
-    pub n_features: usize,
-    /// The number of clusters to generate.
-    pub n_clusters: usize,
-    /// The minimum value for each feature.
-    pub feature_min: f32,
-    /// The maximum value for each feature.
-    pub feature_max: f32,
+/// Increasing `(min, max)` radius range for each cluster. `overlap` controls how
+/// much consecutive rings overlap (negative values leave a gap). Shared by
+/// [`validate`] and [`fill`] so both reason about the same geometry.
+fn radii(params: &SynthParams, overlap: f32) -> Vec<(f32, f32)> {
+    let radius = calculate_radius(params.feature_min, params.feature_max, params.n_clusters);
+    (0..params.n_clusters)
+        .map(|i| {
+            let min = radius * i as f32 * (1.0 - overlap);
+            (min, min + radius)
+        })
+        .collect()
 }
 
-impl DatasetGenerator for RingDataset {
-    fn generate_rng(&self, mut rng: &mut dyn RngCore) -> Dataset {
-        assert!(
-            self.feature_min < self.feature_max,
-            "feature_min must be less than feature_max"
-        );
+/// Checks that the rings fit within the feature range, so [`fill`]'s geometry
+/// invariants hold and generation cannot panic.
+///
+/// # Errors
+/// - [`SynthError::RingOverlapTooLarge`] when `overlap >= 1.0` (inner radii would
+///   turn negative).
+/// - [`SynthError::RingTooDenseForRange`] when the outermost ring leaves no room
+///   inside the feature range for a valid center.
+pub(super) fn validate(params: &SynthParams, overlap: f32) -> Result<(), SynthError> {
+    if overlap >= 1.0 {
+        return Err(SynthError::RingOverlapTooLarge(overlap));
+    }
+    // `overlap < 1.0` keeps every inner radius non-negative, so `max_radius` holds.
+    let max_radius = max_radius(&radii(params, overlap));
+    let span = params.feature_max - params.feature_min;
+    if span <= 2.0 * max_radius {
+        return Err(SynthError::RingTooDenseForRange(params.n_clusters));
+    }
+    Ok(())
+}
 
-        let radius: f32 = calculate_radius(self.feature_min, self.feature_max, self.n_clusters);
-        let samples_per_cluster = self.n_samples / self.n_clusters;
+/// Fills `features` with concentric rings sharing a common center, one ring
+/// (class) per cluster. The geometry was checked by [`validate`] at
+/// construction, so the bounds below always leave a valid center.
+pub(super) fn fill(
+    params: &SynthParams,
+    overlap: f32,
+    features: &mut Array2<f32>,
+    mut rng: &mut dyn RngCore,
+) {
+    let samples_per_cluster = params.samples_per_cluster();
+    let radii = radii(params, overlap);
 
-        // Generate increasing radii for each cluster with a configurable overlap_factor.
-        // The overlap_factor controls the percentage of overlap between clusters.
-        let overlap_factor = -0.2;
-        let radii: Vec<(f32, f32)> = (0..self.n_clusters)
-            .map(|i| {
-                let idx = i as f32;
-                let min = radius * idx * (1.0 - overlap_factor);
-                let max = min + radius;
-                (min, max)
-            })
-            .collect();
+    let (feature_min_bound, feature_max_bound) =
+        feature_bounds(params.feature_min, params.feature_max, &radii);
 
-        let (mut features, labels) =
-            init_features_and_labels(self.n_features, radii.len(), samples_per_cluster);
+    let center: Vec<f32> = (0..params.n_features)
+        .map(|_| rng.random_range(feature_min_bound..feature_max_bound))
+        .collect();
 
-        let (feature_min_bound, feature_max_bound) =
-            feature_bounds(self.feature_min, self.feature_max, &radii);
-
-        let center = Array1::<f32>::from_shape_fn(self.n_features, |_| {
-            rng.random_range(feature_min_bound..feature_max_bound)
-        });
-
-        for (cluster_idx, &(r_min, r_max)) in radii.iter().enumerate() {
-            let points = random_points(
-                &mut rng,
-                samples_per_cluster,
-                &center.to_vec(),
-                r_min,
-                r_max,
-            );
-            let start = cluster_idx * samples_per_cluster;
-            let end = start + samples_per_cluster;
-            features.slice_mut(s![start..end, ..]).assign(&points);
-        }
-
-        Dataset::shuffled(&mut rng, &features, &labels)
+    for (cluster_idx, &(r_min, r_max)) in radii.iter().enumerate() {
+        let points = random_points(&mut rng, samples_per_cluster, &center, r_min, r_max);
+        let start = cluster_idx * samples_per_cluster;
+        let end = start + samples_per_cluster;
+        features.slice_mut(s![start..end, ..]).assign(&points);
     }
 }

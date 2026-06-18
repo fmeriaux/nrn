@@ -1,10 +1,8 @@
 use crate::actions::save_dataset;
 use crate::console::{generated, warning};
 use clap::{Args, ValueEnum};
-use nrn::data::synth::{DatasetGenerator, RingDataset, UniformDataset};
+use nrn::data::synth::{Distribution, SynthDataset, SynthParams, SynthParamsError};
 use std::error::Error;
-use std::fmt;
-use std::sync::Arc;
 
 #[derive(Args, Debug)]
 pub struct SynthArgs {
@@ -36,67 +34,68 @@ pub struct SynthArgs {
     #[arg(long, default_value_t = 10.0)]
     max: f32,
 
+    /// Ring overlap fraction between consecutive rings (negative = a gap)
+    #[arg(long, default_value_t = -0.2)]
+    overlap: f32,
+
+    /// Number of turns each spiral arm makes
+    #[arg(long, default_value_t = 1.5)]
+    turns: f32,
+
+    /// Spiral jitter, as a fraction of the arm's max radius
+    #[arg(long, default_value_t = 0.03)]
+    noise: f32,
+
     /// Indicates whether to visualize the generated dataset (requires exactly two features)
     #[arg(long, default_value_t = false)]
     plot: bool,
+
+    /// Name to save the dataset under (defaults to the dataset's identifier)
+    #[arg(short, long)]
+    output: Option<String>,
 }
 
-#[derive(ValueEnum, Clone, Debug)]
+#[derive(ValueEnum, Clone, Copy, Debug)]
 enum DistributionOption {
     Uniform,
     Ring,
+    Spiral,
 }
 
-impl fmt::Display for DistributionOption {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            DistributionOption::Uniform => write!(f, "uniform"),
-            DistributionOption::Ring => write!(f, "ring"),
+impl From<&SynthArgs> for Distribution {
+    /// Selects the core distribution, supplying each variant's shape knobs from
+    /// the relevant flags.
+    fn from(args: &SynthArgs) -> Self {
+        match args.distribution {
+            DistributionOption::Uniform => Distribution::Uniform,
+            DistributionOption::Ring => Distribution::Ring {
+                overlap: args.overlap,
+            },
+            DistributionOption::Spiral => Distribution::Spiral {
+                turns: args.turns,
+                noise: args.noise,
+            },
         }
+    }
+}
+
+impl TryFrom<&SynthArgs> for SynthParams {
+    type Error = SynthParamsError;
+
+    fn try_from(args: &SynthArgs) -> Result<Self, Self::Error> {
+        SynthParams::new(
+            args.samples,
+            args.features,
+            args.clusters,
+            args.min,
+            args.max,
+        )
     }
 }
 
 impl SynthArgs {
-    /// Validate the command line arguments
-    fn validate(&self) -> Result<(), String> {
-        if self.features < 1 {
-            return Err("The number of features must be at least 1.".to_string());
-        }
-        if self.clusters < 1 {
-            return Err("The number of clusters must be at least 1.".to_string());
-        }
-        if self.samples < self.clusters {
-            return Err(
-                "The number of samples must be at least equal to the number of clusters."
-                    .to_string(),
-            );
-        }
-        if self.min >= self.max {
-            return Err("The minimum value must be less than the maximum value.".to_string());
-        }
-        Ok(())
-    }
-
     pub fn run(&self) -> Result<(), Box<dyn Error>> {
-        self.validate()?;
-
-        // 🗂️ GENERATE THE DATASET
-        let generator: Arc<dyn DatasetGenerator> = match self.distribution {
-            DistributionOption::Uniform => Arc::new(UniformDataset {
-                n_samples: self.samples,
-                n_features: self.features,
-                n_clusters: self.clusters,
-                feature_min: self.min,
-                feature_max: self.max,
-            }),
-            DistributionOption::Ring => Arc::new(RingDataset {
-                n_samples: self.samples,
-                n_features: self.features,
-                n_clusters: self.clusters,
-                feature_min: self.min,
-                feature_max: self.max,
-            }),
-        };
+        let generator = SynthDataset::new(SynthParams::try_from(self)?, Distribution::from(self))?;
 
         let dataset = generator.generate(self.seed);
 
@@ -111,17 +110,88 @@ impl SynthArgs {
 
         generated(&dataset);
 
-        let filename = format!(
-            "{}-c{}-f{}-n{}-seed{}",
-            self.distribution,
-            self.clusters,
-            dataset.n_features(),
-            dataset.n_samples(),
-            self.seed
-        );
+        let filename = self.output.clone().unwrap_or_else(|| dataset.id());
 
         save_dataset(dataset, "DATASET", self.plot, &filename)?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    /// Minimal parser wrapper so the flattened [`SynthArgs`] can be exercised
+    /// through clap (defaults, value enums, and the conversion impls) in one path.
+    #[derive(Parser)]
+    struct Cli {
+        #[command(flatten)]
+        args: SynthArgs,
+    }
+
+    fn parse(extra: &[&str]) -> SynthArgs {
+        let mut argv = vec!["synth", "--seed", "7", "--distribution"];
+        argv.extend_from_slice(extra);
+        Cli::parse_from(argv).args
+    }
+
+    #[test]
+    fn uniform_maps_to_uniform_distribution() {
+        let args = parse(&["uniform"]);
+        assert_eq!(Distribution::from(&args), Distribution::Uniform);
+    }
+
+    #[test]
+    fn ring_carries_overlap_flag() {
+        let args = parse(&["ring", "--overlap", "0.25"]);
+        assert_eq!(
+            Distribution::from(&args),
+            Distribution::Ring { overlap: 0.25 }
+        );
+    }
+
+    #[test]
+    fn ring_overlap_defaults_when_omitted() {
+        let args = parse(&["ring"]);
+        assert_eq!(
+            Distribution::from(&args),
+            Distribution::Ring { overlap: -0.2 }
+        );
+    }
+
+    #[test]
+    fn spiral_carries_turns_and_noise() {
+        let args = parse(&["spiral", "--turns", "2.0", "--noise", "0.1"]);
+        assert_eq!(
+            Distribution::from(&args),
+            Distribution::Spiral {
+                turns: 2.0,
+                noise: 0.1
+            }
+        );
+    }
+
+    #[test]
+    fn synth_params_built_from_sizing_flags() {
+        let args = parse(&[
+            "uniform", "-n", "200", "-f", "3", "-c", "4", "--min=-1", "--max", "5",
+        ]);
+        let params = SynthParams::try_from(&args).expect("valid params");
+        assert_eq!(params, SynthParams::new(200, 3, 4, -1.0, 5.0).unwrap());
+    }
+
+    #[test]
+    fn synth_params_surface_validation_errors() {
+        // Fewer samples than clusters is rejected by the core validator.
+        let args = parse(&["uniform", "-n", "2", "-c", "5"]);
+        assert_eq!(
+            SynthParams::try_from(&args),
+            Err(SynthParamsError::NotEnoughSamples {
+                samples: 2,
+                clusters: 5,
+            })
+        );
     }
 }

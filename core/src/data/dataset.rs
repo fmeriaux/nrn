@@ -1,3 +1,4 @@
+use crate::data::origin::DatasetOrigin;
 use crate::data::scalers::Scaler;
 use ndarray::{Array1, Array2, Axis, s};
 use ndarray_rand::rand::Rng;
@@ -5,13 +6,22 @@ use ndarray_rand::rand::prelude::SliceRandom;
 use std::collections::HashSet;
 use std::error::Error;
 
-/// A dataset containing features and labels for clustering tasks.
+/// A dataset containing features and labels for classification tasks.
+///
+/// Construction goes exclusively through [`Dataset::new`], the single boundary
+/// where structural and label invariants are enforced. The fields are private so
+/// an invalid `Dataset` cannot be represented: every value of this type is
+/// guaranteed non-empty, shape-consistent, and labelled with contiguous
+/// 0-indexed class ids over at least two classes.
 #[derive(Clone)]
 pub struct Dataset {
     /// A 2D array where each row is a sample and each column is a feature
-    pub features: Array2<f32>,
+    features: Array2<f32>,
     /// A 1D array where each element is the label for the corresponding sample
-    pub labels: Array1<f32>,
+    labels: Array1<f32>,
+    /// Where the dataset came from, when known. Optional provenance that travels
+    /// with the data but plays no part in its validity.
+    origin: Option<DatasetOrigin>,
 }
 
 pub struct ModelDataset {
@@ -31,15 +41,19 @@ pub struct ModelSplit {
     pub test: ModelDataset,
 }
 
-/// Errors returned when a [`Dataset`] is not suitable for training a classifier.
+/// Errors returned when features and labels cannot form a valid [`Dataset`].
 #[derive(Debug, PartialEq, Eq)]
 pub enum DatasetError {
     /// The dataset has no features.
     NoFeatures,
     /// The dataset has no samples.
     NoSamples,
+    /// Features and labels disagree on the sample count.
+    ShapeMismatch { features: usize, labels: usize },
     /// Fewer than two distinct classes are present (carries the count found).
     TooFewClasses(usize),
+    /// Labels are not contiguous 0-indexed class ids in `[0, n_classes)`.
+    InvalidLabels,
 }
 
 impl std::fmt::Display for DatasetError {
@@ -47,9 +61,17 @@ impl std::fmt::Display for DatasetError {
         match self {
             DatasetError::NoFeatures => write!(f, "dataset has no features"),
             DatasetError::NoSamples => write!(f, "dataset has no samples"),
+            DatasetError::ShapeMismatch { features, labels } => write!(
+                f,
+                "features and labels disagree on sample count: {features} rows vs {labels} labels"
+            ),
             DatasetError::TooFewClasses(n) => {
                 write!(f, "a classifier needs at least 2 classes, but found {n}")
             }
+            DatasetError::InvalidLabels => write!(
+                f,
+                "labels must be contiguous 0-indexed class ids in [0, n_classes)"
+            ),
         }
     }
 }
@@ -57,34 +79,96 @@ impl std::fmt::Display for DatasetError {
 impl Error for DatasetError {}
 
 impl Dataset {
-    /// Checks if the dataset is empty (i.e., has no features or labels).
-    pub fn is_empty(&self) -> bool {
-        self.features.is_empty() || self.labels.is_empty()
-    }
-
-    /// Validates that the dataset can be used to train a classifier.
+    /// Builds a validated dataset from raw `features` (rows = samples, columns =
+    /// features) and `labels`.
     ///
-    /// This is the single boundary where dataset-level invariants are checked, so the
-    /// downstream layer-spec constructors ([`crate::model::NeuronLayerSpec::output_for`],
-    /// [`crate::model::NeuronLayerSpec::infer_from`]) can assume valid input and stay
-    /// infallible. Call it once, right after loading a dataset, before building a model.
+    /// This is the single boundary where dataset invariants are enforced, so every
+    /// downstream consumer — the layer-spec constructors
+    /// ([`crate::model::NeuronLayerSpec::output_for`],
+    /// [`crate::model::NeuronLayerSpec::infer_from`]) and [`Self::to_model_dataset`] —
+    /// can assume valid input and stay infallible.
     ///
     /// # Errors
+    /// - [`DatasetError::ShapeMismatch`] when the feature rows and labels disagree
+    ///   on the sample count.
     /// - [`DatasetError::NoFeatures`] when the dataset has zero features.
     /// - [`DatasetError::NoSamples`] when the dataset has zero samples.
     /// - [`DatasetError::TooFewClasses`] when fewer than two classes are present.
-    pub fn validate(&self) -> Result<(), DatasetError> {
-        if self.n_features() == 0 {
+    /// - [`DatasetError::InvalidLabels`] when labels are not contiguous 0-indexed
+    ///   class ids in `[0, n_classes)` (this also rejects non-integer labels).
+    pub fn new(
+        features: Array2<f32>,
+        labels: Array1<f32>,
+        origin: Option<DatasetOrigin>,
+    ) -> Result<Self, DatasetError> {
+        if features.nrows() != labels.len() {
+            return Err(DatasetError::ShapeMismatch {
+                features: features.nrows(),
+                labels: labels.len(),
+            });
+        }
+        if features.ncols() == 0 {
             return Err(DatasetError::NoFeatures);
         }
-        if self.n_samples() == 0 {
+        if labels.is_empty() {
             return Err(DatasetError::NoSamples);
         }
-        let n_classes = self.n_classes();
+
+        let dataset = Self {
+            features,
+            labels,
+            origin,
+        };
+
+        let n_classes = dataset.n_classes();
         if n_classes < 2 {
             return Err(DatasetError::TooFewClasses(n_classes));
         }
-        Ok(())
+        // Contiguous 0-indexed ids: with exactly `n_classes` distinct values, every
+        // label lying in `[0, n_classes)` (and integral) forces the set to be
+        // {0, 1, …, n_classes-1}. This subsumes the binary {0, 1} requirement.
+        let valid_labels = dataset
+            .labels
+            .iter()
+            .all(|&l| l >= 0.0 && l.fract() == 0.0 && (l as usize) < n_classes);
+        if !valid_labels {
+            return Err(DatasetError::InvalidLabels);
+        }
+
+        Ok(dataset)
+    }
+
+    /// Returns the dataset's recorded origin, if any.
+    pub fn origin(&self) -> Option<&DatasetOrigin> {
+        self.origin.as_ref()
+    }
+
+    /// A deterministic identifier for this dataset, pairing its origin with its
+    /// shape (classes, features, samples). Two datasets reproduced from the same
+    /// origin share it; datasets with no recorded origin fall back to a neutral
+    /// prefix.
+    pub fn id(&self) -> String {
+        let origin = self
+            .origin
+            .as_ref()
+            .map(DatasetOrigin::label)
+            .unwrap_or_else(|| "dataset".to_string());
+        format!(
+            "{origin}-c{}-f{}-n{}",
+            self.n_classes(),
+            self.n_features(),
+            self.n_samples()
+        )
+    }
+
+    /// Returns the features, with one row per sample and one column per feature.
+    pub fn features(&self) -> &Array2<f32> {
+        &self.features
+    }
+
+    /// Returns the per-sample labels.
+    pub fn labels(&self) -> &Array1<f32> {
+        &self.labels
     }
 
     /// Returns the number of samples in the dataset.
@@ -130,17 +214,14 @@ impl Dataset {
     }
 
     /// Computes the minimum and maximum values for each feature in the dataset.
+    ///
+    /// A [`Dataset`] always has at least one sample (enforced by [`Dataset::new`]),
+    /// so the range is always defined.
     /// # Returns
-    /// An `Option` containing a tuple of two vectors:
+    /// A tuple of two vectors:
     /// - The first vector contains the minimum values for each feature.
     /// - The second vector contains the maximum values for each feature.
-    ///   If the dataset has no samples, returns `None`.
-    ///
-    pub fn feature_range(&self) -> Option<(Vec<f32>, Vec<f32>)> {
-        if self.features.nrows() == 0 {
-            return None;
-        }
-
+    pub fn feature_range(&self) -> (Vec<f32>, Vec<f32>) {
         let n_features = self.n_features();
 
         let mut mins = vec![f32::INFINITY; n_features];
@@ -153,7 +234,7 @@ impl Dataset {
             }
         }
 
-        Some((mins, maxs))
+        (mins, maxs)
     }
 
     /// Applies the specified scaling method to the training and test datasets.
@@ -179,70 +260,40 @@ impl Dataset {
 
         let n_classes = self.n_classes();
 
+        // Label validity (contiguous 0-indexed ids, binary ⊆ {0, 1}) is guaranteed
+        // by [`Self::new`], so no re-check is needed here.
         let targets: Array2<f32> = if n_classes > 2 {
-            // Labels must be 0-indexed integers in [0, n_classes)
-            assert!(
-                self.labels
-                    .iter()
-                    .all(|&l| l >= 0.0 && (l as usize) < n_classes),
-                "Labels must be 0-indexed integers in [0, n_classes). Found a label outside this range."
-            );
             let mut one_hot = Array2::zeros((n_classes, self.n_samples()));
             for (i, &label) in self.labels.iter().enumerate() {
                 one_hot[[label as usize, i]] = 1.0;
             }
             one_hot
         } else {
-            // Binary labels are used directly; they must be exactly 0.0 or 1.0.
-            assert!(
-                self.labels.iter().all(|&l| l == 0.0 || l == 1.0),
-                "Binary labels must be 0.0 or 1.0. Found a label outside this range."
-            );
+            // Binary labels (0.0 / 1.0) are used directly as a single target row.
             self.labels.to_owned().insert_axis(Axis(0))
         };
 
         ModelDataset { inputs, targets }
     }
 
-    /// Shuffles the dataset features and labels in unison using a random number generator.
-    /// See [`shuffle_inplace`](Self::shuffle_inplace) for details.
-    pub fn shuffled<R: Rng>(rng: &mut R, features: &Array2<f32>, labels: &Array1<f32>) -> Self {
-        assert_eq!(
-            features.nrows(),
-            labels.len(),
-            "Features and labels must have the same number of samples"
-        );
-
-        let mut dataset = Dataset {
-            features: features.to_owned(),
-            labels: labels.to_owned(),
-        };
-        dataset.shuffle_inplace(rng);
-        dataset
-    }
-
-    /// Shuffles the dataset features and labels in unison using a random number generator.
+    /// Shuffles the dataset features and labels in unison and returns it, so
+    /// construction and shuffling can be chained (`Dataset::new(..)?.shuffled(rng)`).
+    ///
+    /// Reordering preserves every dataset invariant, so the result needs no
+    /// re-validation.
     /// # Arguments
     /// - `rng`: A mutable reference to a random number generator.
     /// # Details
-    /// - The method generates a vector of indices corresponding to the number of samples in the dataset
-    /// - It shuffles these indices using the provided random number generator.
-    /// - It then reorders both the `features` and `labels` arrays according to
-    ///   the shuffled indices, ensuring that the correspondence between features and labels is maintained.
-    pub fn shuffle_inplace<R: Rng>(&mut self, rng: &mut R) {
+    /// - Generates a vector of indices over the samples and shuffles it.
+    /// - Reorders both `features` and `labels` by those indices, keeping the
+    ///   feature/label correspondence intact.
+    pub fn shuffled<R: Rng + ?Sized>(mut self, rng: &mut R) -> Self {
         let mut indices: Vec<usize> = (0..self.features.nrows()).collect();
         indices.shuffle(rng);
 
-        let shuffled_features = self.features.select(Axis(0), &indices);
-        let shuffled_labels = Array1::from(
-            indices
-                .iter()
-                .map(|&i| self.labels[i])
-                .collect::<Vec<f32>>(),
-        );
-
-        self.features = shuffled_features.to_owned();
-        self.labels = shuffled_labels;
+        self.features = self.features.select(Axis(0), &indices);
+        self.labels = self.labels.select(Axis(0), &indices);
+        self
     }
 
     /// Creates a new dataset from a vector of images and their corresponding labels.
@@ -250,10 +301,12 @@ impl Dataset {
     /// - `rng`: A mutable reference to a random number generator for shuffling.
     /// - `images`: A vector of images represented as 1D arrays of pixel values.
     /// - `labels`: A vector of labels corresponding to each image.
+    /// - `origin`: Where the images were encoded from, when known.
     pub fn from_vec<R: Rng>(
         rng: &mut R,
         images: Vec<Array1<f32>>,
         labels: Vec<usize>,
+        origin: Option<DatasetOrigin>,
     ) -> Result<Self, Box<dyn Error>> {
         assert!(
             !images.is_empty(),
@@ -268,7 +321,7 @@ impl Dataset {
         let labels: Array1<f32> =
             Array1::from(labels.into_iter().map(|x| x as f32).collect::<Vec<_>>());
 
-        Ok(Dataset::shuffled(rng, &features, &labels))
+        Ok(Dataset::new(features, labels, origin)?.shuffled(rng))
     }
 }
 
@@ -380,20 +433,21 @@ mod tests {
     use ndarray_rand::rand::prelude::StdRng;
 
     #[test]
-    #[should_panic(expected = "Labels must be 0-indexed")]
-    fn out_of_range_label_panics_with_clear_message() {
+    fn new_rejects_out_of_range_multiclass_label() {
         // labels = [0, 1, 2, 5]: n_classes=4, but label 5 >= n_classes=4
         let features = Array2::zeros((4, 2));
         let labels = array![0.0f32, 1.0, 2.0, 5.0];
-        let dataset = Dataset { features, labels };
-        dataset.to_model_dataset();
+        assert_eq!(
+            Dataset::new(features, labels, None).err(),
+            Some(DatasetError::InvalidLabels)
+        );
     }
 
     #[test]
     fn valid_multiclass_labels_produce_correct_one_hot() {
         let features = Array2::zeros((3, 2));
         let labels = array![0.0f32, 1.0, 2.0];
-        let dataset = Dataset { features, labels };
+        let dataset = Dataset::new(features, labels, None).unwrap();
         let model_dataset = dataset.to_model_dataset();
         // targets shape: (n_classes=3, n_samples=3)
         assert_eq!(model_dataset.targets.shape(), &[3, 3]);
@@ -407,52 +461,94 @@ mod tests {
     fn binary_labels_produce_single_row_targets() {
         let features = Array2::zeros((3, 2));
         let labels = array![0.0f32, 1.0, 0.0];
-        let model_dataset = Dataset { features, labels }.to_model_dataset();
+        let model_dataset = Dataset::new(features, labels, None)
+            .unwrap()
+            .to_model_dataset();
         // Binary labels stay as a single (1, n_samples) row, not one-hot encoded.
         assert_eq!(model_dataset.targets.shape(), &[1, 3]);
         assert_eq!(model_dataset.targets.row(0).to_vec(), vec![0.0, 1.0, 0.0]);
     }
 
     #[test]
-    #[should_panic(expected = "Binary labels must be 0.0 or 1.0")]
-    fn out_of_range_binary_label_panics_with_clear_message() {
-        // labels = [1, 2]: n_classes=2 (binary branch), but 2 is not a valid binary target
+    fn new_rejects_non_contiguous_binary_labels() {
+        // labels = [1, 2]: two classes, but not the contiguous {0, 1} set.
         let features = Array2::zeros((2, 2));
         let labels = array![1.0f32, 2.0];
-        let dataset = Dataset { features, labels };
-        dataset.to_model_dataset();
+        assert_eq!(
+            Dataset::new(features, labels, None).err(),
+            Some(DatasetError::InvalidLabels)
+        );
     }
 
     #[test]
-    fn validate_accepts_a_well_formed_dataset() {
+    fn new_accepts_a_well_formed_dataset() {
         let features = Array2::zeros((4, 2));
         let labels = array![0.0f32, 1.0, 0.0, 1.0];
-        let dataset = Dataset { features, labels };
-        assert_eq!(dataset.validate(), Ok(()));
+        assert!(Dataset::new(features, labels, None).is_ok());
     }
 
     #[test]
-    fn validate_rejects_single_class_dataset() {
+    fn id_pairs_origin_label_with_shape() {
+        let features = Array2::zeros((4, 2));
+        let labels = array![0.0f32, 1.0, 0.0, 1.0];
+        let origin = DatasetOrigin::Synthetic {
+            distribution: "spiral".to_string(),
+            seed: 42,
+        };
+        let dataset = Dataset::new(features, labels, Some(origin)).unwrap();
+        assert_eq!(dataset.id(), "spiral-seed42-c2-f2-n4");
+    }
+
+    #[test]
+    fn id_falls_back_to_a_neutral_prefix_without_origin() {
+        let features = Array2::zeros((4, 2));
+        let labels = array![0.0f32, 1.0, 0.0, 1.0];
+        let dataset = Dataset::new(features, labels, None).unwrap();
+        assert_eq!(dataset.id(), "dataset-c2-f2-n4");
+    }
+
+    #[test]
+    fn new_rejects_single_class_dataset() {
         let features = Array2::zeros((3, 2));
         let labels = array![1.0f32, 1.0, 1.0];
-        let dataset = Dataset { features, labels };
-        assert_eq!(dataset.validate(), Err(DatasetError::TooFewClasses(1)));
+        assert_eq!(
+            Dataset::new(features, labels, None).err(),
+            Some(DatasetError::TooFewClasses(1))
+        );
     }
 
     #[test]
-    fn validate_rejects_dataset_without_features() {
+    fn new_rejects_dataset_without_features() {
         let features = Array2::zeros((3, 0));
         let labels = array![0.0f32, 1.0, 0.0];
-        let dataset = Dataset { features, labels };
-        assert_eq!(dataset.validate(), Err(DatasetError::NoFeatures));
+        assert_eq!(
+            Dataset::new(features, labels, None).err(),
+            Some(DatasetError::NoFeatures)
+        );
     }
 
     #[test]
-    fn validate_rejects_empty_dataset() {
+    fn new_rejects_empty_dataset() {
         let features = Array2::zeros((0, 2));
         let labels = Array1::zeros(0);
-        let dataset = Dataset { features, labels };
-        assert_eq!(dataset.validate(), Err(DatasetError::NoSamples));
+        assert_eq!(
+            Dataset::new(features, labels, None).err(),
+            Some(DatasetError::NoSamples)
+        );
+    }
+
+    #[test]
+    fn new_rejects_shape_mismatch() {
+        // 3 feature rows but only 2 labels.
+        let features = Array2::zeros((3, 2));
+        let labels = array![0.0f32, 1.0];
+        assert_eq!(
+            Dataset::new(features, labels, None).err(),
+            Some(DatasetError::ShapeMismatch {
+                features: 3,
+                labels: 2
+            })
+        );
     }
 
     #[test]
@@ -484,36 +580,30 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0);
         let images = vec![array![0.0f32, 1.0], array![2.0, 3.0, 4.0]];
         let labels = vec![0usize, 1];
-        assert!(Dataset::from_vec(&mut rng, images, labels).is_err());
+        assert!(Dataset::from_vec(&mut rng, images, labels, None).is_err());
     }
 
     #[test]
-    fn is_empty_reflects_missing_features_or_labels() {
-        let populated = Dataset {
-            features: Array2::zeros((2, 2)),
-            labels: array![0.0f32, 1.0],
-        };
-        assert!(!populated.is_empty());
-
-        let no_features = Dataset {
-            features: Array2::zeros((0, 0)),
-            labels: array![0.0f32],
-        };
-        assert!(no_features.is_empty());
-
-        let no_labels = Dataset {
-            features: Array2::zeros((2, 2)),
-            labels: Array1::zeros(0),
-        };
-        assert!(no_labels.is_empty());
+    fn from_vec_propagates_dataset_validation_error() {
+        // The images form a valid rectangular matrix, but `from_vec` does not
+        // check that there are as many labels as images — it delegates to
+        // `Dataset::new`, which rejects the count mismatch.
+        let mut rng = StdRng::seed_from_u64(0);
+        let images = vec![array![0.0f32, 1.0], array![2.0, 3.0]];
+        let labels = vec![0usize]; // one label for two images
+        let err = Dataset::from_vec(&mut rng, images, labels, None)
+            .err()
+            .unwrap();
+        assert!(
+            err.to_string().contains("disagree on sample count"),
+            "got: {err}"
+        );
     }
 
     #[test]
     fn unique_labels_deduplicates_values() {
-        let dataset = Dataset {
-            features: Array2::zeros((4, 1)),
-            labels: array![0.0f32, 1.0, 1.0, 2.0],
-        };
+        let dataset =
+            Dataset::new(Array2::zeros((4, 1)), array![0.0f32, 1.0, 1.0, 2.0], None).unwrap();
         let mut unique = dataset.unique_labels();
         unique.sort_by(f32::total_cmp);
         assert_eq!(unique, vec![0.0, 1.0, 2.0]);
@@ -521,10 +611,12 @@ mod tests {
 
     #[test]
     fn get_features_for_label_selects_matching_rows() {
-        let dataset = Dataset {
-            features: array![[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]],
-            labels: array![0.0f32, 1.0, 0.0],
-        };
+        let dataset = Dataset::new(
+            array![[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]],
+            array![0.0f32, 1.0, 0.0],
+            None,
+        )
+        .unwrap();
         let rows = dataset.get_features_for_label(0.0);
         assert_eq!(rows.shape(), &[2, 2]);
         assert_eq!(rows.row(0).to_vec(), vec![1.0, 1.0]);
@@ -533,35 +625,26 @@ mod tests {
 
     #[test]
     fn feature_range_returns_per_feature_min_max() {
-        let dataset = Dataset {
-            features: array![[1.0, 10.0], [3.0, 5.0], [-2.0, 8.0]],
-            labels: array![0.0f32, 1.0, 0.0],
-        };
-        let (mins, maxs) = dataset.feature_range().unwrap();
+        let dataset = Dataset::new(
+            array![[1.0, 10.0], [3.0, 5.0], [-2.0, 8.0]],
+            array![0.0f32, 1.0, 0.0],
+            None,
+        )
+        .unwrap();
+        let (mins, maxs) = dataset.feature_range();
         assert_eq!(mins, vec![-2.0, 5.0]);
         assert_eq!(maxs, vec![3.0, 10.0]);
     }
 
     #[test]
-    fn feature_range_is_none_without_samples() {
-        let dataset = Dataset {
-            features: Array2::zeros((0, 2)),
-            labels: Array1::zeros(0),
-        };
-        assert!(dataset.feature_range().is_none());
-    }
-
-    #[test]
     fn scale_inplace_applies_scaler_to_features() {
-        let mut dataset = Dataset {
-            features: array![[0.0, 0.0], [10.0, 20.0]],
-            labels: array![0.0f32, 1.0],
-        };
-        let scaler = MinMaxScaler::default().fit(dataset.features.view());
+        let mut dataset =
+            Dataset::new(array![[0.0, 0.0], [10.0, 20.0]], array![0.0f32, 1.0], None).unwrap();
+        let scaler = MinMaxScaler::default().fit(dataset.features().view());
         dataset.scale_inplace(&scaler);
         assert!(
             dataset
-                .features
+                .features()
                 .iter()
                 .all(|&v| (0.0..=1.0 + 1e-5).contains(&v))
         );
@@ -573,9 +656,9 @@ mod tests {
         let images = vec![array![0.0f32, 1.0], array![2.0, 3.0], array![4.0, 5.0]];
         let labels = vec![0usize, 1, 2];
 
-        let dataset = Dataset::from_vec(&mut rng, images, labels).unwrap();
-        assert_eq!(dataset.features.shape(), &[3, 2]);
-        assert_eq!(dataset.labels.len(), 3);
+        let dataset = Dataset::from_vec(&mut rng, images, labels, None).unwrap();
+        assert_eq!(dataset.features().shape(), &[3, 2]);
+        assert_eq!(dataset.labels().len(), 3);
         let mut unique = dataset.unique_labels();
         unique.sort_by(f32::total_cmp);
         assert_eq!(unique, vec![0.0, 1.0, 2.0]);
@@ -592,8 +675,20 @@ mod tests {
             "dataset has no samples"
         );
         assert_eq!(
+            DatasetError::ShapeMismatch {
+                features: 3,
+                labels: 2
+            }
+            .to_string(),
+            "features and labels disagree on sample count: 3 rows vs 2 labels"
+        );
+        assert_eq!(
             DatasetError::TooFewClasses(1).to_string(),
             "a classifier needs at least 2 classes, but found 1"
+        );
+        assert_eq!(
+            DatasetError::InvalidLabels.to_string(),
+            "labels must be contiguous 0-indexed class ids in [0, n_classes)"
         );
     }
 }

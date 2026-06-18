@@ -156,72 +156,15 @@ pub fn read_metadata(bytes: &[u8]) -> Result<HashMap<String, String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::array;
 
+    // The read guards (`read_f32` missing-tensor / wrong-rank / non-f32, `meta`
+    // missing-key, `read_arrayd` non-f32) are exercised through their higher-level
+    // callers — `model::load` and `optimizer::load` — rather than here, so the
+    // failure modes are tested at the API boundary that owns them. Only
+    // `read_metadata`'s own guard has no such caller (every caller reaches it after
+    // a successful `deserialize` of the same bytes), so it is tested directly.
     #[test]
     fn read_metadata_rejects_corrupt_bytes() {
         assert!(read_metadata(b"not a safetensors header").is_err());
-    }
-
-    #[test]
-    fn read_rejects_missing_tensor() {
-        let bytes = serialize(
-            vec![("present".to_string(), tensor(&array![1.0_f32, 2.0]))],
-            None,
-        )
-        .unwrap();
-        let st = SafeTensors::deserialize(&bytes).unwrap();
-
-        assert!(read_array1("absent", &st).is_err());
-    }
-
-    #[test]
-    fn read_rejects_wrong_rank() {
-        // A 2D tensor read back as 1D must fail the rank check.
-        let bytes = serialize(
-            vec![("matrix".to_string(), tensor(&array![[1.0_f32, 2.0]]))],
-            None,
-        )
-        .unwrap();
-        let st = SafeTensors::deserialize(&bytes).unwrap();
-
-        assert!(read_array1("matrix", &st).is_err());
-    }
-
-    #[test]
-    fn read_rejects_non_f32_dtype() {
-        // A tensor stored with a non-f32 dtype must be refused on read.
-        struct U8Tensor {
-            shape: Vec<usize>,
-        }
-        impl View for U8Tensor {
-            fn dtype(&self) -> Dtype {
-                Dtype::U8
-            }
-            fn shape(&self) -> &[usize] {
-                &self.shape
-            }
-            fn data(&self) -> Cow<'_, [u8]> {
-                Cow::Owned(vec![0])
-            }
-            fn data_len(&self) -> usize {
-                1
-            }
-        }
-
-        let bytes = serialize(
-            vec![("byte".to_string(), U8Tensor { shape: vec![1] })],
-            None,
-        )
-        .unwrap();
-        let st = SafeTensors::deserialize(&bytes).unwrap();
-
-        assert!(read_array1("byte", &st).is_err());
-    }
-
-    #[test]
-    fn meta_reports_missing_key() {
-        let metadata = HashMap::new();
-        assert!(meta(&metadata, "interval").is_err());
     }
 }

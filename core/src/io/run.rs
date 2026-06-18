@@ -16,19 +16,6 @@ pub struct TrainingMeta {
     pub hyperparams: HyperParametersRecord,
 }
 
-impl TrainingMeta {
-    /// Loads the metadata from `meta.json` inside `dir`.
-    pub fn load<P: AsRef<Path>>(dir: P) -> Result<Self> {
-        let dir = Path::combine_safe_with_cwd(dir)?;
-        json::load(dir.join("meta"))
-    }
-
-    fn save<P: AsRef<Path>>(&self, dir: P) -> Result<PathBuf> {
-        let dir = Path::combine_safe_with_cwd(dir)?;
-        json::save(self, dir.join("meta"))
-    }
-}
-
 /// A handle to a training run directory: its location and run-level metadata.
 /// Produces [`CheckpointRecorder`]s (the pure runtime callback) and
 /// [`CheckpointArchive`]s (read-only access to recorded checkpoints).
@@ -59,7 +46,7 @@ impl TrainingRun {
             }
         }
 
-        meta.save(&dir)?;
+        json::save(meta, dir.join("meta"))?;
 
         Ok(TrainingRun {
             dir,
@@ -72,7 +59,7 @@ impl TrainingRun {
     /// Returns a `NotFound` error if the directory or its `meta.json` doesn't exist.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let dir = Path::combine_safe_with_cwd(path)?;
-        let meta = TrainingMeta::load(&dir)?;
+        let meta: TrainingMeta = json::load(dir.join("meta"))?;
         Ok(TrainingRun { dir, meta })
     }
 
@@ -141,10 +128,10 @@ mod tests {
         let dir = temp_dir("meta");
         TrainingRun::create(&dir, &meta("my_dataset"), false).unwrap();
 
-        let loaded = TrainingMeta::load(&dir).unwrap();
+        let loaded = TrainingRun::open(&dir).unwrap();
         cleanup(&dir);
 
-        assert_eq!(loaded.dataset, "my_dataset");
+        assert_eq!(loaded.meta().dataset, "my_dataset");
     }
 
     #[test]
