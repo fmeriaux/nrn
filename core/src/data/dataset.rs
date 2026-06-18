@@ -292,12 +292,7 @@ impl Dataset {
         indices.shuffle(rng);
 
         self.features = self.features.select(Axis(0), &indices);
-        self.labels = Array1::from(
-            indices
-                .iter()
-                .map(|&i| self.labels[i])
-                .collect::<Vec<f32>>(),
-        );
+        self.labels = self.labels.select(Axis(0), &indices);
         self
     }
 

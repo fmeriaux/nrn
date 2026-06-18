@@ -147,11 +147,18 @@ impl fmt::Display for Distribution {
 
 /// Errors returned when a [`Distribution`] is incompatible with its
 /// [`SynthParams`].
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum SynthError {
     /// A spiral was requested with a feature count other than two (carries the
     /// count found); spirals are inherently two-dimensional.
     SpiralRequiresTwoFeatures(usize),
+    /// A ring `overlap` of `1.0` or more was requested (carries the value); the
+    /// inner radii would turn negative.
+    RingOverlapTooLarge(f32),
+    /// The requested rings do not fit within the feature range (carries the
+    /// cluster count): too many clusters, or an overlap so low the rings grow
+    /// past the available space.
+    RingTooDenseForRange(usize),
 }
 
 impl fmt::Display for SynthError {
@@ -161,6 +168,16 @@ impl fmt::Display for SynthError {
                 write!(
                     f,
                     "spiral datasets require exactly two features, but found {n}"
+                )
+            }
+            SynthError::RingOverlapTooLarge(overlap) => {
+                write!(f, "ring overlap must be less than 1.0, but found {overlap}")
+            }
+            SynthError::RingTooDenseForRange(clusters) => {
+                write!(
+                    f,
+                    "rings for {clusters} clusters do not fit within the feature range: \
+                     reduce the number of clusters or increase the overlap"
                 )
             }
         }
@@ -182,16 +199,20 @@ pub struct SynthDataset {
 }
 
 impl SynthDataset {
-    /// Pairs validated `params` with a `distribution`, checking their cross-field
-    /// invariants.
+    /// Pairs validated `params` with a `distribution`, delegating the cross-field
+    /// check to the chosen generator's `validate` (the sibling of its `fill`).
     ///
     /// # Errors
     /// - [`SynthError::SpiralRequiresTwoFeatures`] when a spiral is requested with
     ///   a feature count other than two.
+    /// - [`SynthError::RingOverlapTooLarge`] / [`SynthError::RingTooDenseForRange`]
+    ///   when a ring's overlap or cluster count leaves no room for the rings.
     pub fn new(params: SynthParams, distribution: Distribution) -> Result<Self, SynthError> {
-        if matches!(distribution, Distribution::Spiral { .. }) && params.n_features != 2 {
-            return Err(SynthError::SpiralRequiresTwoFeatures(params.n_features));
-        }
+        match distribution {
+            Distribution::Uniform => uniform::validate(&params),
+            Distribution::Ring { overlap } => ring::validate(&params, overlap),
+            Distribution::Spiral { .. } => spiral::validate(&params),
+        }?;
         Ok(Self {
             params,
             distribution,
@@ -403,6 +424,24 @@ mod tests {
     }
 
     #[test]
+    fn ring_rejects_overlap_of_one_or_more() {
+        let err = SynthDataset::new(params(100, 2), Distribution::Ring { overlap: 1.0 })
+            .err()
+            .unwrap();
+        assert_eq!(err, SynthError::RingOverlapTooLarge(1.0));
+    }
+
+    #[test]
+    fn ring_rejects_geometry_that_overflows_the_range() {
+        // A large gap (very negative overlap) over many clusters grows the outer
+        // rings past the feature range, leaving no room for a valid center.
+        let err = SynthDataset::new(params(100, 5), Distribution::Ring { overlap: -1.0 })
+            .err()
+            .unwrap();
+        assert_eq!(err, SynthError::RingTooDenseForRange(5));
+    }
+
+    #[test]
     fn new_params_validates_invariants() {
         assert_eq!(
             SynthParams::new(100, 0, 2, 0.0, 10.0),
@@ -462,6 +501,15 @@ mod tests {
         assert_eq!(
             SynthError::SpiralRequiresTwoFeatures(3).to_string(),
             "spiral datasets require exactly two features, but found 3"
+        );
+        assert_eq!(
+            SynthError::RingOverlapTooLarge(1.5).to_string(),
+            "ring overlap must be less than 1.0, but found 1.5"
+        );
+        assert_eq!(
+            SynthError::RingTooDenseForRange(5).to_string(),
+            "rings for 5 clusters do not fit within the feature range: \
+             reduce the number of clusters or increase the overlap"
         );
     }
 

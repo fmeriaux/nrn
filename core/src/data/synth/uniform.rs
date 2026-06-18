@@ -1,6 +1,15 @@
-use crate::data::synth::{SynthParams, calculate_radius, feature_bounds, random_points};
+use crate::data::synth::{
+    SynthError, SynthParams, calculate_radius, feature_bounds, random_points,
+};
 use ndarray::{Array2, s};
 use ndarray_rand::rand::{Rng, RngCore};
+
+/// Uniform blobs impose no constraints beyond a valid [`SynthParams`]: the
+/// per-cluster radius is always small enough to fit the feature range. Present
+/// for symmetry with [`fill`] and the other generators' `validate`.
+pub(super) fn validate(_params: &SynthParams) -> Result<(), SynthError> {
+    Ok(())
+}
 
 /// Fills `features` with isotropic blobs: one spherical cluster (class) per
 /// cluster, each centered at a random point within the bounded region.

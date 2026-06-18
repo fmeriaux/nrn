@@ -1,8 +1,20 @@
-use crate::data::synth::SynthParams;
+use crate::data::synth::{SynthError, SynthParams};
 use ndarray::Array2;
 use ndarray_rand::rand::{Rng, RngCore};
 use ndarray_rand::rand_distr::StandardNormal;
 use std::f32::consts::TAU;
+
+/// Checks that the spiral is two-dimensional, the only constraint [`fill`] adds
+/// (it indexes features 0 and 1 directly).
+///
+/// # Errors
+/// - [`SynthError::SpiralRequiresTwoFeatures`] when `n_features != 2`.
+pub(super) fn validate(params: &SynthParams) -> Result<(), SynthError> {
+    if params.n_features != 2 {
+        return Err(SynthError::SpiralRequiresTwoFeatures(params.n_features));
+    }
+    Ok(())
+}
 
 /// Fills `features` with interleaved spiral arms, one arm (class) per cluster.
 ///
