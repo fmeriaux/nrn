@@ -117,3 +117,81 @@ impl SynthArgs {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    /// Minimal parser wrapper so the flattened [`SynthArgs`] can be exercised
+    /// through clap (defaults, value enums, and the conversion impls) in one path.
+    #[derive(Parser)]
+    struct Cli {
+        #[command(flatten)]
+        args: SynthArgs,
+    }
+
+    fn parse(extra: &[&str]) -> SynthArgs {
+        let mut argv = vec!["synth", "--seed", "7", "--distribution"];
+        argv.extend_from_slice(extra);
+        Cli::parse_from(argv).args
+    }
+
+    #[test]
+    fn uniform_maps_to_uniform_distribution() {
+        let args = parse(&["uniform"]);
+        assert_eq!(Distribution::from(&args), Distribution::Uniform);
+    }
+
+    #[test]
+    fn ring_carries_overlap_flag() {
+        let args = parse(&["ring", "--overlap", "0.25"]);
+        assert_eq!(
+            Distribution::from(&args),
+            Distribution::Ring { overlap: 0.25 }
+        );
+    }
+
+    #[test]
+    fn ring_overlap_defaults_when_omitted() {
+        let args = parse(&["ring"]);
+        assert_eq!(
+            Distribution::from(&args),
+            Distribution::Ring { overlap: -0.2 }
+        );
+    }
+
+    #[test]
+    fn spiral_carries_turns_and_noise() {
+        let args = parse(&["spiral", "--turns", "2.0", "--noise", "0.1"]);
+        assert_eq!(
+            Distribution::from(&args),
+            Distribution::Spiral {
+                turns: 2.0,
+                noise: 0.1
+            }
+        );
+    }
+
+    #[test]
+    fn synth_params_built_from_sizing_flags() {
+        let args = parse(&[
+            "uniform", "-n", "200", "-f", "3", "-c", "4", "--min=-1", "--max", "5",
+        ]);
+        let params = SynthParams::try_from(&args).expect("valid params");
+        assert_eq!(params, SynthParams::new(200, 3, 4, -1.0, 5.0).unwrap());
+    }
+
+    #[test]
+    fn synth_params_surface_validation_errors() {
+        // Fewer samples than clusters is rejected by the core validator.
+        let args = parse(&["uniform", "-n", "2", "-c", "5"]);
+        assert_eq!(
+            SynthParams::try_from(&args),
+            Err(SynthParamsError::NotEnoughSamples {
+                samples: 2,
+                clusters: 5,
+            })
+        );
+    }
+}

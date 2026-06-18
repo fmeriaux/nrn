@@ -1,3 +1,10 @@
+//! End-to-end coverage of the `train`/`plot` happy paths: a full run produces a
+//! run directory and checkpoints, `plot` renders the training curves (PNG) and
+//! the decision-boundary animation (GIF), and the recap reflects resume
+//! overrides. Also exercises the checkpoint-count guards, early-stopping
+//! checkpoint flushing, and optimizer-state restoration on resume. The
+//! lifecycle and error paths live in `train_lifecycle.rs`.
+
 use assert_cmd::Command;
 use predicates::str::contains;
 use std::fs;
