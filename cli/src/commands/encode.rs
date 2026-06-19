@@ -128,13 +128,7 @@ impl ImgDirArgs {
         };
         let dataset = Dataset::from_vec(&mut rng, data, labels, Some(origin))?;
 
-        completed(
-            style("Encoding completed")
-                .bright()
-                .green()
-                .to_string()
-                .as_str(),
-        );
+        completed!("Encoding completed");
 
         saved(&Artifacts::single(
             "Image Dataset",

@@ -29,7 +29,7 @@ pub(crate) fn plot_dataset<P: AsRef<Path>>(
     path: P,
 ) -> Result<Option<PathBuf>, Box<dyn Error>> {
     if dataset.n_features() != 2 {
-        warning("Plotting is only available for datasets with exactly two features");
+        warning!("Plotting is only available for datasets with exactly two features");
         return Ok(None);
     }
 

@@ -31,6 +31,12 @@ pub(crate) fn label(text: &str) -> String {
     style(text).cyan().to_string()
 }
 
+/// A success status line, in bold green — the `completed!` counterpart to the
+/// bold `warn_label`/`error_label` lead-ins.
+pub(crate) fn success(text: impl Display) -> String {
+    style(text).bold().green().to_string()
+}
+
 /// The dotted leader joining a label to its value.
 pub(crate) fn leader(dots: &str) -> String {
     style(dots).dim().to_string()
@@ -44,4 +50,24 @@ pub(crate) fn value(text: impl Display) -> String {
 /// The `▲ was …` annotation shown when a value differs from a previous run.
 pub(crate) fn diff(text: impl Display) -> String {
     style(text).yellow().to_string()
+}
+
+/// The bold `Warning:` lead-in, in the conventional warning color.
+pub(crate) fn warn_label(text: &str) -> String {
+    style(text).bold().yellow().to_string()
+}
+
+/// A warning message body.
+pub(crate) fn warn_text(text: impl Display) -> String {
+    style(text).yellow().to_string()
+}
+
+/// The bold `Error:` lead-in, in the conventional error color.
+pub(crate) fn error_label(text: &str) -> String {
+    style(text).bold().red().to_string()
+}
+
+/// An error message body.
+pub(crate) fn error_text(text: impl Display) -> String {
+    style(text).red().to_string()
 }

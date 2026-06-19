@@ -23,7 +23,7 @@ pub(crate) use icons::*;
 pub(crate) use progress::{bar, styled_bar};
 
 use crate::path::PathExt;
-use console::{Emoji, style};
+use console::Emoji;
 use std::fmt::Display;
 use std::path::Path;
 
@@ -145,28 +145,54 @@ pub(crate) fn recording_at<P: AsRef<Path>>(name: &str, at: P) {
 
 // ─── Message verbs ──────────────────────────────────────────────────────────
 
-pub(crate) fn completed(message: &str) {
-    action(SUCCESS_ICON, message);
-}
-
 pub(crate) fn trace(message: &str) {
     action(TRACE_ICON, message);
 }
 
-pub(crate) fn warning(message: &str) {
+/// Backing implementation for the [`completed!`] macro: a success-icon status
+/// line, followed by a blank line. Prefer the macro at call sites.
+#[doc(hidden)]
+pub(crate) fn emit_completed(message: &str) {
+    action(SUCCESS_ICON, theme::success(message));
+}
+
+/// Backing implementation for the [`warning!`] macro: a styled `Warning:` line
+/// on stderr, followed by a blank line. Prefer the macro at call sites.
+#[doc(hidden)]
+pub(crate) fn emit_warning(message: &str) {
     eprintln!(
         "{} {} {}\n",
         theme::warn_icon(WARN_ICON),
-        style("Warning:").bold().yellow(),
-        style(message).yellow()
+        theme::warn_label("Warning:"),
+        theme::warn_text(message)
     );
 }
 
-pub(crate) fn error(message: &str) {
+/// Backing implementation for the [`error!`] macro: a styled `Error:` line on
+/// stderr, followed by a blank line. Prefer the macro at call sites.
+#[doc(hidden)]
+pub(crate) fn emit_error(message: &str) {
     eprintln!(
         "{} {} {}\n",
         theme::error_icon(ERROR_ICON),
-        style("Error:").bold().red(),
-        style(message).red()
+        theme::error_label("Error:"),
+        theme::error_text(message)
     );
 }
+
+/// Emit a success status line, taking `format!`-style arguments.
+macro_rules! completed {
+    ($($arg:tt)*) => { $crate::display::emit_completed(&::std::format!($($arg)*)) };
+}
+
+/// Emit a styled `Warning:` line to stderr, taking `format!`-style arguments.
+macro_rules! warning {
+    ($($arg:tt)*) => { $crate::display::emit_warning(&::std::format!($($arg)*)) };
+}
+
+/// Emit a styled `Error:` line to stderr, taking `format!`-style arguments.
+macro_rules! error {
+    ($($arg:tt)*) => { $crate::display::emit_error(&::std::format!($($arg)*)) };
+}
+
+pub(crate) use {completed, error, warning};

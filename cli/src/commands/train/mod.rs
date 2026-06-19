@@ -191,9 +191,7 @@ impl ResumeArgs {
         let recorder = if hyperparameters.checkpoint_interval() > 0 {
             let trimmed = run.trim_after(from_epoch)?;
             if trimmed > 0 {
-                warning(&format!(
-                    "Removed {trimmed} checkpoint(s) after epoch {from_epoch}"
-                ));
+                warning!("Removed {trimmed} checkpoint(s) after epoch {from_epoch}");
             }
             recording_at("TRAINING RUN", run_dir);
             Some(run.recorder())

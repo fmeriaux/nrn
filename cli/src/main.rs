@@ -10,7 +10,7 @@ mod path;
 
 fn main() {
     CliArgs::parse().command.run().unwrap_or_else(|e| {
-        error(&e.to_string());
+        error!("{e}");
         std::process::exit(1);
     });
 }

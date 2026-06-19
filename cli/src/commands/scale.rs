@@ -1,10 +1,9 @@
 use crate::actions::{load_dataset, plot_dataset};
-use crate::display::{Artifacts, completed, saved};
+use crate::display::{Artifacts, completed, saved, show};
 use crate::path::PathExt;
 use clap::{Args, ValueEnum};
-use console::style;
 use ndarray::ArrayView2;
-use nrn::data::scalers::{MinMaxScaler, Scaler, ScalerMethod, ZScoreScaler};
+use nrn::data::scalers::{MinMaxScaler, ScalerMethod, ZScoreScaler};
 use nrn::io::scalers::ScalerRecord;
 use std::path::Path;
 
@@ -43,10 +42,8 @@ impl ScaleArgs {
         let scaler = self.scaling.fit(dataset.features().view());
         dataset.scale_inplace(&scaler);
 
-        completed(&format!(
-            "Scaling completed · {}",
-            style(&scaler.name().to_uppercase()).bold().blue()
-        ));
+        completed!("Scaling completed");
+        show(&scaler);
 
         // Extract the filename without extension
         let path = Path::new(&self.dataset);

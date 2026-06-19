@@ -55,7 +55,7 @@ impl PredictArgs {
                 match raw.trim().parse::<f32>() {
                     Ok(val) => inputs.push(val),
                     Err(err) => {
-                        error(err.to_string().as_str());
+                        error!("{err}");
                     }
                 }
 

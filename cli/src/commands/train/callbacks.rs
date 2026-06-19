@@ -6,7 +6,6 @@
 use crate::display::{
     Artifacts, Describe, HyperParametersView, completed, saved, show, styled_bar, trace, warning,
 };
-use console::style;
 use indicatif::ProgressBar;
 use nrn::data::ModelSplit;
 use nrn::evaluation::EvaluationSet;
@@ -46,16 +45,16 @@ impl TrainerCallback for ConsoleMonitor {
         scheduler: Option<&dyn Scheduler>,
     ) -> CallbackResult {
         if let Some(scheduler) = scheduler {
-            completed(&format!(
+            completed!(
                 "Restored {} scheduler state from checkpoint at epoch {epoch_start}",
                 scheduler.name()
-            ));
+            );
         }
         if let Some(optimizer) = optimizer {
-            completed(&format!(
+            completed!(
                 "Restored {} optimizer state from checkpoint at epoch {epoch_start}",
                 optimizer.name()
-            ));
+            );
         }
         Ok(())
     }
@@ -92,16 +91,12 @@ impl TrainerCallback for ConsoleMonitor {
         self.bar.finish_and_clear();
 
         match outcome {
-            TrainingOutcome::Completed => completed(&format!(
-                "{} · {}",
-                style("Training completed").bright().green(),
-                eval.expect("eval is present on completion").describe()
-            )),
+            TrainingOutcome::Completed => {
+                completed!("Training completed");
+                trace(&eval.expect("eval is present on completion").describe());
+            }
             TrainingOutcome::EarlyStopped { restored } => {
-                completed(&format!(
-                    "Early stopping triggered at epoch {}",
-                    style(epoch).yellow()
-                ));
+                completed!("Early stopping triggered at epoch {epoch}");
                 if restored {
                     trace("Restored the best model observed during training");
                 }
@@ -110,10 +105,9 @@ impl TrainerCallback for ConsoleMonitor {
                 }
             }
             TrainingOutcome::Diverged { recovered: true } => {
-                warning(&format!(
-                    "Model diverged at epoch {} (NaN/Inf); recovered best model from early stopping.",
-                    epoch
-                ));
+                warning!(
+                    "Model diverged at epoch {epoch} (NaN/Inf); recovered best model from early stopping."
+                );
                 if let Some(eval) = eval {
                     trace(&eval.describe());
                 }

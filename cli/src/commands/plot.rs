@@ -52,8 +52,8 @@ impl PlotArgs {
             let dataset = load_dataset(&dataset)?;
 
             if dataset.n_features() != 2 {
-                warning(
-                    "Decision boundary visualization is only available for datasets with exactly two features",
+                warning!(
+                    "Decision boundary visualization is only available for datasets with exactly two features"
                 );
             } else {
                 let n = archive.len();

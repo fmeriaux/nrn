@@ -100,12 +100,12 @@ impl SynthArgs {
         let dataset = generator.generate(self.seed);
 
         if dataset.n_samples() != self.samples {
-            warning(&format!(
+            warning!(
                 "Requested {} samples but generated {} ({} dropped due to uneven cluster division)",
                 self.samples,
                 dataset.n_samples(),
                 self.samples - dataset.n_samples()
-            ));
+            );
         }
 
         generated(&dataset);
