@@ -1,8 +1,9 @@
-use crate::actions::{load_dataset, load_history};
-use crate::display::{Artifacts, bar, saved, warning};
+use crate::display::{Artifacts, bar, loaded, saved, warning};
 use clap::Args;
 use indicatif::ProgressIterator;
 use nrn::charts::RenderConfig;
+use nrn::data::Dataset;
+use nrn::io::checkpoint::CheckpointArchive;
 use nrn::io::gif::save_gif_from_rgb;
 use nrn::io::png::save_rgb;
 use std::error::Error;
@@ -35,7 +36,14 @@ pub struct PlotArgs {
 
 impl PlotArgs {
     pub fn run(self) -> Result<(), Box<dyn Error>> {
-        let archive = load_history(&self.run_dir)?;
+        let archive = CheckpointArchive::load(&self.run_dir)?;
+
+        if archive.len() <= 2 {
+            return Err("Training run must contain more than two checkpoints to plot.".into());
+        }
+
+        loaded(&archive);
+
         let history = archive.evaluation_history()?;
         let render_cfg = RenderConfig::new(self.width as u32, self.height as u32);
 
@@ -49,7 +57,8 @@ impl PlotArgs {
         )]);
 
         if let Some(dataset) = self.dataset {
-            let dataset = load_dataset(&dataset)?;
+            let dataset = Dataset::load(&dataset)?;
+            loaded(&dataset);
 
             if dataset.n_features() != 2 {
                 warning!(

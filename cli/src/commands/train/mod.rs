@@ -1,17 +1,17 @@
 mod args;
 mod callbacks;
 
-use crate::actions::*;
-use crate::display::{loaded, recording_at, warning};
+use crate::display::{initialized, loaded, recording_at, warning};
 use crate::path::PathExt;
 use args::{ResumeOverrides, TrainArgs};
 use callbacks::{ConsoleMonitor, ModelSaver};
 use clap::*;
-use nrn::data::ModelDataset;
+use nrn::activations::RELU;
+use nrn::data::{Dataset, ModelDataset};
 use nrn::io::checkpoint::CheckpointRecorder;
 use nrn::io::hyperparams::HyperParametersRecord;
 use nrn::io::run::{TrainingMeta, TrainingRun};
-use nrn::model::{LayerPlan, NeuralNetwork};
+use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::OptimizerState;
 use nrn::schedulers::SchedulerState;
 use nrn::training::{Callbacks, FatalDivergence, HyperParameters};
@@ -85,13 +85,33 @@ impl StartArgs {
 
         let dataset_name = Path::new(&self.dataset).file_stem_string();
         let dataset_path = Path::new(&self.dataset);
-        let dataset = load_dataset(&self.dataset)?;
+        let dataset = Dataset::load(&self.dataset)?;
+        loaded(&dataset);
 
         let hyperparameters = HyperParameters::try_from(&self.hp)?;
 
         let model = match &self.model {
-            Some(path) => load_model(path)?,
-            None => initialize_model_with(&dataset, LayerPlan::from(self), hyperparameters.seed()),
+            Some(path) => {
+                let model = NeuralNetwork::load(path)?;
+                loaded(&model);
+                model
+            }
+            None => {
+                let layer_specs = NeuronLayerSpec::plan(
+                    LayerPlan::from(self),
+                    dataset.n_features(),
+                    dataset.n_classes(),
+                    dataset.n_samples(),
+                    &*RELU,
+                );
+                let model = NeuralNetwork::initialization(
+                    dataset.n_features(),
+                    &layer_specs,
+                    hyperparameters.seed(),
+                );
+                initialized(&model);
+                model
+            }
         };
 
         let run_dir = dataset_path.with_file_name(format!("training-model-{dataset_name}"));
@@ -140,7 +160,8 @@ impl ResumeArgs {
         let run = TrainingRun::open(run_dir)?;
         let meta = run.meta();
 
-        let dataset = load_dataset(&meta.dataset)?;
+        let dataset = Dataset::load(&meta.dataset)?;
+        loaded(&dataset);
 
         let previous = HyperParameters::try_from(meta.hyperparams.clone())?;
 

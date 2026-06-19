@@ -1,8 +1,9 @@
-use crate::actions::{load_dataset, plot_dataset};
-use crate::display::{Artifacts, completed, saved, show};
+use crate::actions::plot_dataset;
+use crate::display::{Artifacts, completed, loaded, saved, show};
 use crate::path::PathExt;
 use clap::{Args, ValueEnum};
 use ndarray::ArrayView2;
+use nrn::data::Dataset;
 use nrn::data::scalers::{MinMaxScaler, ScalerMethod, ZScoreScaler};
 use nrn::io::scalers::ScalerRecord;
 use std::path::Path;
@@ -37,7 +38,8 @@ impl ScalingOption {
 
 impl ScaleArgs {
     pub fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        let mut dataset = load_dataset(&self.dataset)?;
+        let mut dataset = Dataset::load(&self.dataset)?;
+        loaded(&dataset);
 
         let scaler = self.scaling.fit(dataset.features().view());
         dataset.scale_inplace(&scaler);
