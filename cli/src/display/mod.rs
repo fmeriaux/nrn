@@ -78,9 +78,10 @@ fn row(label: &str, value: &str, width: usize, previous: Option<&str>) -> String
 
 // ─── Action & entity verbs ────────────────────────────────────────────────────
 
-/// Traces an action as a single status line: a styled icon then `message`.
+/// Traces an action as a single status line: a styled icon then `message`,
+/// followed by a blank line so consecutive blocks stay visually separated.
 pub(crate) fn action(icon: Emoji, message: impl Display) {
-    println!("{} {}", theme::icon(icon), message);
+    println!("{} {}\n", theme::icon(icon), message);
 }
 
 /// The event `icon`, a header pairing the entity's NAME with `verb`, then its
@@ -154,7 +155,7 @@ pub(crate) fn trace(message: &str) {
 
 pub(crate) fn warning(message: &str) {
     eprintln!(
-        "{} {} {}",
+        "{} {} {}\n",
         theme::warn_icon(WARN_ICON),
         style("Warning:").bold().yellow(),
         style(message).yellow()
@@ -163,7 +164,7 @@ pub(crate) fn warning(message: &str) {
 
 pub(crate) fn error(message: &str) {
     eprintln!(
-        "{} {} {}",
+        "{} {} {}\n",
         theme::error_icon(ERROR_ICON),
         style("Error:").bold().red(),
         style(message).red()

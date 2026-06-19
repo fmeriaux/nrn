@@ -112,7 +112,7 @@ impl SynthArgs {
 
         let filename = self.output.clone().unwrap_or_else(|| dataset.id());
 
-        let mut artifacts = Artifacts::from([("Dataset", dataset.save(&filename)?)]);
+        let mut artifacts = Artifacts::single("Dataset", dataset.save(&filename)?);
 
         if self.plot
             && let Some(plot) = plot_dataset(&dataset, &filename)?

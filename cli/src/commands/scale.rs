@@ -53,19 +53,21 @@ impl ScaleArgs {
         let dataset_name = path.file_stem_string();
         let scaled_path = path.with_file_name(format!("scaled-{dataset_name}"));
 
-        let mut artifacts = Artifacts::from([("Scaled Dataset", dataset.save(&scaled_path)?)]);
+        let record: ScalerRecord = scaler.into();
+
+        let mut artifacts = Artifacts::from([
+            ("Scaled Dataset", dataset.save(&scaled_path)?),
+            (
+                "Scaler",
+                record.save(path.with_file_name(format!("scaler-{dataset_name}")))?,
+            ),
+        ]);
 
         if self.plot
             && let Some(plot) = plot_dataset(&dataset, &scaled_path)?
         {
             artifacts.add("Visualization", plot);
         }
-
-        let record: ScalerRecord = scaler.into();
-        artifacts.add(
-            "Scaler",
-            record.save(path.with_file_name(format!("scaler-{dataset_name}")))?,
-        );
 
         saved(&artifacts);
 
