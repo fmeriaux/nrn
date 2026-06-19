@@ -12,7 +12,11 @@ use std::path::{Path, PathBuf};
 /// Written once by [`TrainingRun::create`] into `meta.json`.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TrainingMeta {
+    /// Bare file name (stem) of the dataset the run trained on.
     pub dataset: String,
+    /// Bare file name (stem) of the run's final-model artifact.
+    pub model: String,
+    /// Hyperparameters the run was configured with.
     pub hyperparams: HyperParametersRecord,
 }
 
@@ -112,6 +116,7 @@ mod tests {
     fn meta(dataset: &str) -> TrainingMeta {
         TrainingMeta {
             dataset: dataset.to_string(),
+            model: format!("model-{dataset}"),
             hyperparams: HyperParametersRecord::sample(),
         }
     }

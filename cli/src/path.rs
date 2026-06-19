@@ -12,6 +12,10 @@ pub(crate) trait PathExt {
 
     /// The file stem as an owned `String`. Panics if the path has none.
     fn file_stem_string(&self) -> String;
+
+    /// A sibling path in the same directory, named `{prefix}-{stem}` from this
+    /// path's file stem. Panics if the path has no stem.
+    fn sibling(&self, prefix: &str) -> PathBuf;
 }
 
 impl PathExt for Path {
@@ -27,5 +31,9 @@ impl PathExt for Path {
             .unwrap_or_else(|| panic!("Failed to get file stem from path: {}", self.display()))
             .to_string_lossy()
             .to_string()
+    }
+
+    fn sibling(&self, prefix: &str) -> PathBuf {
+        self.with_file_name(format!("{prefix}-{}", self.file_stem_string()))
     }
 }

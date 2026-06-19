@@ -13,7 +13,7 @@ use nrn::model::NeuralNetwork;
 use nrn::optimizers::Optimizer;
 use nrn::schedulers::Scheduler;
 use nrn::training::{CallbackResult, HyperParameters, TrainerCallback, TrainingOutcome};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // ─── ConsoleMonitor ─────────────────────────────────────────────────────────
 
@@ -128,8 +128,13 @@ pub struct ModelSaver {
 }
 
 impl ModelSaver {
-    pub fn new(path: PathBuf) -> Self {
-        Self { path }
+    /// Saves the final model beside `run_dir`, in a file named `model_name`.
+    /// Start and resume both construct the saver here, so the model can't land
+    /// in two different places.
+    pub fn new(run_dir: &Path, model_name: &str) -> Self {
+        Self {
+            path: run_dir.parent().unwrap_or(Path::new(".")).join(model_name),
+        }
     }
 }
 

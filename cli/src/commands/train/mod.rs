@@ -65,26 +65,13 @@ pub struct StartArgs {
     hp: TrainArgs,
 }
 
-impl From<&StartArgs> for LayerPlan {
-    fn from(args: &StartArgs) -> Self {
-        if args.auto_layers {
-            LayerPlan::Auto
-        } else {
-            LayerPlan::Explicit(args.layers.clone().unwrap_or_default())
-        }
-    }
-}
-
 impl StartArgs {
-    pub fn run(&self) -> Result<(), Box<dyn Error>> {
-        if let Some(ref layers) = self.layers
-            && layers.contains(&0)
-        {
-            return Err("Each hidden layer must have at least one neuron.".into());
-        }
+    fn run_dir(&self) -> PathBuf {
+        Path::new(&self.dataset).sibling("training-model")
+    }
 
+    pub fn run(&self) -> Result<(), Box<dyn Error>> {
         let dataset_name = Path::new(&self.dataset).file_stem_string();
-        let dataset_path = Path::new(&self.dataset);
         let dataset = Dataset::load(&self.dataset)?;
         loaded(&dataset);
 
@@ -97,13 +84,15 @@ impl StartArgs {
                 model
             }
             None => {
-                let layer_specs = NeuronLayerSpec::plan(
-                    LayerPlan::from(self),
-                    dataset.n_features(),
-                    dataset.n_classes(),
-                    dataset.n_samples(),
-                    &*RELU,
-                );
+                let plan = if self.auto_layers {
+                    LayerPlan::Auto {
+                        n_features: dataset.n_features(),
+                        n_samples: dataset.n_samples(),
+                    }
+                } else {
+                    LayerPlan::Explicit(self.layers.clone().unwrap_or_default())
+                };
+                let layer_specs = NeuronLayerSpec::plan(plan, dataset.n_classes(), &*RELU)?;
                 let model = NeuralNetwork::initialization(
                     dataset.n_features(),
                     &layer_specs,
@@ -114,13 +103,17 @@ impl StartArgs {
             }
         };
 
-        let run_dir = dataset_path.with_file_name(format!("training-model-{dataset_name}"));
-        let model_save_path = dataset_path.with_file_name(format!("model-{dataset_name}"));
+        let run_dir = self.run_dir();
+        let model_name = format!("model-{dataset_name}");
+        let saver = ModelSaver::new(&run_dir, &model_name);
 
         let recorder = if hyperparameters.checkpoint_interval() > 0 {
-            let record = HyperParametersRecord::from(&hyperparameters);
-            let recorder =
-                create_checkpoint_recorder(&run_dir, &dataset_name, &record, self.overwrite)?;
+            let meta = TrainingMeta {
+                dataset: dataset_name,
+                model: model_name,
+                hyperparams: HyperParametersRecord::from(&hyperparameters),
+            };
+            let recorder = create_run(&run_dir, &meta, self.overwrite)?;
             recording_at("TRAINING RUN", &run_dir);
             Some(recorder)
         } else {
@@ -131,7 +124,7 @@ impl StartArgs {
             hyperparameters,
             model,
             dataset.to_model_dataset(),
-            model_save_path,
+            saver,
             recorder,
             None,
             None,
@@ -195,10 +188,7 @@ impl ResumeArgs {
         let model = archive.model_at(checkpoint_idx)?;
         loaded(&model);
 
-        let model_save_path = run_dir
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join(format!("model-{}", meta.dataset));
+        let saver = ModelSaver::new(run_dir, &meta.model);
 
         let from_epoch = archive
             .epoch_at(checkpoint_idx)
@@ -224,7 +214,7 @@ impl ResumeArgs {
             hyperparameters,
             model,
             dataset.to_model_dataset(),
-            model_save_path,
+            saver,
             recorder,
             Some(previous),
             Some(ResumeState {
@@ -253,14 +243,14 @@ fn execute_training(
     hyperparameters: HyperParameters,
     model: NeuralNetwork,
     dataset: ModelDataset,
-    model_save_path: PathBuf,
+    saver: ModelSaver,
     recorder: Option<CheckpointRecorder>,
     previous: Option<HyperParameters>,
     resume: Option<ResumeState>,
 ) -> Result<(), Box<dyn Error>> {
     let callbacks = Callbacks::empty()
         .with(ConsoleMonitor::new(hyperparameters.clone(), previous))
-        .with(ModelSaver::new(model_save_path))
+        .with(saver)
         .with_opt(recorder);
 
     let mut trainer = hyperparameters.build(model, dataset, callbacks);
@@ -290,17 +280,12 @@ fn divergence_error(divergence: FatalDivergence) -> Box<dyn Error> {
 
 /// Wraps [`TrainingRun::create`], adding the `--overwrite` remediation
 /// hint to an `AlreadyExists` error.
-fn create_checkpoint_recorder(
+fn create_run(
     run_dir: &Path,
-    dataset_name: &str,
-    hyperparams: &HyperParametersRecord,
+    meta: &TrainingMeta,
     overwrite: bool,
 ) -> IoResult<CheckpointRecorder> {
-    let meta = TrainingMeta {
-        dataset: dataset_name.to_string(),
-        hyperparams: hyperparams.clone(),
-    };
-    TrainingRun::create(run_dir, &meta, overwrite)
+    TrainingRun::create(run_dir, meta, overwrite)
         .map(|run| run.recorder())
         .map_err(|e| {
             if e.kind() == ErrorKind::AlreadyExists {

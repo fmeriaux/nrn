@@ -14,7 +14,7 @@ use nrn::io::hyperparams::{
 use nrn::io::run::{TrainingMeta, TrainingRun};
 use nrn::io::scalers::ScalerRecord;
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
-use nrn::model::{NeuralNetwork, NeuronLayerSpec};
+use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::Adam;
 use nrn::schedulers::ConstantScheduler;
 use nrn::training::{GradientClipping, TrainerCallback};
@@ -78,7 +78,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
 
     // --- Model + training run (incremental writer → directory load) --
     let model_dataset = dataset.to_model_dataset();
-    let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 2);
+    let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![4]), 2, &*RELU).unwrap();
     let mut model = NeuralNetwork::initialization(2, &specs, 0);
 
     let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
@@ -91,12 +91,14 @@ fn full_pipeline_roundtrips_through_safetensors() {
         &run_dir,
         &TrainingMeta {
             dataset: "test_dataset".to_string(),
+            model: "model-test_dataset".to_string(),
             hyperparams: sample_hyperparams(),
         },
         false,
     )
     .unwrap();
     assert_eq!(run.meta().dataset, "test_dataset");
+    assert_eq!(run.meta().model, "model-test_dataset");
     let mut recorder = run.recorder();
     let mut last_recorded_predictions = None;
 

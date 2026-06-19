@@ -47,19 +47,14 @@ impl ScaleArgs {
         completed!("Scaling completed");
         show(&scaler);
 
-        // Extract the filename without extension
         let path = Path::new(&self.dataset);
-        let dataset_name = path.file_stem_string();
-        let scaled_path = path.with_file_name(format!("scaled-{dataset_name}"));
+        let scaled_path = path.sibling("scaled");
 
         let record: ScalerRecord = scaler.into();
 
         let mut artifacts = Artifacts::from([
             ("Scaled Dataset", dataset.save(&scaled_path)?),
-            (
-                "Scaler",
-                record.save(path.with_file_name(format!("scaler-{dataset_name}")))?,
-            ),
+            ("Scaler", record.save(path.sibling("scaler"))?),
         ]);
 
         if self.plot

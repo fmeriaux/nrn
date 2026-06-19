@@ -291,6 +291,7 @@ mod tests {
             path,
             &TrainingMeta {
                 dataset: dataset.to_string(),
+                model: format!("model-{dataset}"),
                 hyperparams: HyperParametersRecord::sample(),
             },
             overwrite,
