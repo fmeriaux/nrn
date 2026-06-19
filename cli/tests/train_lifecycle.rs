@@ -219,7 +219,7 @@ fn resume_with_no_checkpoints_fails() {
 
     nrn(dir, &["train", "resume", &run_arg, "--epochs", "3"])
         .failure()
-        .stderr(contains("No checkpoints found"));
+        .stderr(contains("no checkpoints found"));
 }
 
 #[test]
@@ -284,5 +284,5 @@ fn fatal_divergence_without_early_stopping_errors() {
         ],
     )
     .failure()
-    .stderr(contains("Model diverged at epoch"));
+    .stderr(contains("model diverged at epoch"));
 }
