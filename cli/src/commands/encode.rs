@@ -1,6 +1,6 @@
-use crate::actions::{get_file_stem, save_dataset};
 use crate::display::bar;
-use crate::display::{completed, trace};
+use crate::display::{Artifacts, completed, saved, trace};
+use crate::path::PathExt;
 use clap::{Args, Subcommand};
 use console::style;
 use ndarray_rand::rand::SeedableRng;
@@ -124,7 +124,7 @@ impl ImgDirArgs {
 
         let mut rng = StdRng::seed_from_u64(self.seed);
         let origin = DatasetOrigin::Encoded {
-            source: get_file_stem(&self.input),
+            source: Path::new(&self.input).file_stem_string(),
         };
         let dataset = Dataset::from_vec(&mut rng, data, labels, Some(origin))?;
 
@@ -136,7 +136,10 @@ impl ImgDirArgs {
                 .as_str(),
         );
 
-        save_dataset(dataset, "IMAGE DATASET", false, &self.output)?;
+        saved(&Artifacts::single(
+            "Image Dataset",
+            dataset.save(&self.output)?,
+        ));
 
         Ok(())
     }

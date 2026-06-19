@@ -1,8 +1,8 @@
-//! The `TRAINING HYPERPARAMETERS` recap. Unlike the entity verbs, this block is
-//! built field-by-field so a resumed run can diff each value against its
-//! previous setting and annotate the changed lines with `▲ was …`.
+//! The `TRAINING HYPERPARAMETERS` recap, rendered from a [`HyperParametersView`]:
+//! a run's configuration field-by-field, and — when resuming — each value
+//! compared against its previous setting, the changed lines annotated `▲ was …`.
 
-use super::{TRACE_ICON, label_width, row, theme};
+use super::{Describe, Named, label_width, row};
 use nrn::training::{
     EarlyStoppingConfig, GradientClipping, HyperParameters, LossConfig, OptimizerConfig,
     SchedulerConfig,
@@ -12,8 +12,8 @@ use nrn::training::{
 /// [`HyperParameters`] into its displayed value.
 type Row = (&'static str, fn(&HyperParameters) -> String);
 
-/// Recap rows in display order. [`print_recap`] iterates over these to align the
-/// leader dots and to diff each field against `previous`.
+/// Recap rows in display order. [`HyperParametersView::describe`] iterates over
+/// these to align the leader dots and to diff each field against `previous`.
 const ROWS: &[Row] = &[
     ("Seed", |h| h.seed().to_string()),
     ("Epochs", |h| h.epochs().to_string()),
@@ -33,22 +33,31 @@ const ROWS: &[Row] = &[
     }),
 ];
 
-/// Prints the `TRAINING HYPERPARAMETERS` recap: one dotted-leader line per field
-/// of `current`. If `previous` is given and a field renders differently from its
-/// value in `previous`, the line is annotated `▲ was <previous value>`.
-pub(crate) fn print_recap(current: &HyperParameters, previous: Option<&HyperParameters>) {
-    let width = label_width(ROWS.iter().map(|(label, _)| *label));
+/// A run's configuration, optionally paired with the previous one it resumes
+/// from. Its description is the `TRAINING HYPERPARAMETERS` recap: a title line
+/// then one dotted-leader line per field of `current`; with a `previous`, each
+/// field that renders differently is annotated `▲ was <previous value>`.
+pub(crate) struct HyperParametersView<'a> {
+    pub current: &'a HyperParameters,
+    pub previous: Option<&'a HyperParameters>,
+}
 
-    println!(
-        "{} {}",
-        theme::icon(TRACE_ICON),
-        theme::title("TRAINING HYPERPARAMETERS"),
-    );
+impl Named for HyperParametersView<'_> {
+    const NAME: &'static str = "TRAINING HYPERPARAMETERS";
+}
 
-    for (label, render) in ROWS {
-        let value = render(current);
-        let was = previous.map(render).filter(|prev| *prev != value);
-        println!("{}", row(label, &value, width, was.as_deref()));
+impl Describe for HyperParametersView<'_> {
+    fn describe(&self) -> String {
+        let width = label_width(ROWS.iter().map(|(label, _)| *label));
+
+        ROWS.iter()
+            .map(|(label, render)| {
+                let value = render(self.current);
+                let was = self.previous.map(render).filter(|prev| *prev != value);
+                row(label, &value, width, was.as_deref())
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 

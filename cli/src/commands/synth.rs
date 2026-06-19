@@ -1,5 +1,5 @@
-use crate::actions::save_dataset;
-use crate::display::{generated, warning};
+use crate::actions::plot_dataset;
+use crate::display::{Artifacts, generated, saved, warning};
 use clap::{Args, ValueEnum};
 use nrn::data::synth::{Distribution, SynthDataset, SynthParams, SynthParamsError};
 use std::error::Error;
@@ -112,7 +112,15 @@ impl SynthArgs {
 
         let filename = self.output.clone().unwrap_or_else(|| dataset.id());
 
-        save_dataset(dataset, "DATASET", self.plot, &filename)?;
+        let mut artifacts = Artifacts::from([("Dataset", dataset.save(&filename)?)]);
+
+        if self.plot
+            && let Some(plot) = plot_dataset(&dataset, &filename)?
+        {
+            artifacts.add("Visualization", plot);
+        }
+
+        saved(&artifacts);
 
         Ok(())
     }

@@ -1,6 +1,5 @@
-//! Centralized console palette. Every color used by the entity blocks and the
-//! message verbs lives here, so the look is changed in one place and the
-//! [`Description`](super::Description) values stay plain (ANSI-free, testable).
+//! Centralized console palette: every color used by the entity blocks and the
+//! message verbs. [`Describe`](super::Describe) values stay ANSI-free.
 
 use console::{Emoji, style};
 use std::fmt::Display;

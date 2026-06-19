@@ -3,9 +3,8 @@
 //! between the training lifecycle and the CLI's display / persistence. Split
 //! into a `callbacks/` submodule if this file grows.
 
-use crate::display::hyperparameters::print_recap;
 use crate::display::{
-    MODEL_ICON, completed, eval_set_summary, saved_at, split_summary, styled_bar, trace, warning,
+    Artifacts, Describe, HyperParametersView, completed, saved, show, styled_bar, trace, warning,
 };
 use console::style;
 use indicatif::ProgressBar;
@@ -65,9 +64,14 @@ impl TrainerCallback for ConsoleMonitor {
         self.bar.set_length(self.current.epochs() as u64);
         self.bar.set_message("Training");
 
+        let view = HyperParametersView {
+            current: &self.current,
+            previous: self.previous.as_ref(),
+        };
+
         self.bar.suspend(|| {
-            print_recap(&self.current, self.previous.as_ref());
-            trace(&split_summary(split));
+            show(&view);
+            trace(&split.describe());
         });
 
         Ok(())
@@ -91,7 +95,7 @@ impl TrainerCallback for ConsoleMonitor {
             TrainingOutcome::Completed => completed(&format!(
                 "{} · {}",
                 style("Training completed").bright().green(),
-                eval_set_summary(eval.expect("eval is present on completion"))
+                eval.expect("eval is present on completion").describe()
             )),
             TrainingOutcome::EarlyStopped { restored } => {
                 completed(&format!(
@@ -102,7 +106,7 @@ impl TrainerCallback for ConsoleMonitor {
                     trace("Restored the best model observed during training");
                 }
                 if let Some(eval) = eval {
-                    trace(&eval_set_summary(eval));
+                    trace(&eval.describe());
                 }
             }
             TrainingOutcome::Diverged { recovered: true } => {
@@ -111,7 +115,7 @@ impl TrainerCallback for ConsoleMonitor {
                     epoch
                 ));
                 if let Some(eval) = eval {
-                    trace(&eval_set_summary(eval));
+                    trace(&eval.describe());
                 }
             }
             TrainingOutcome::Diverged { recovered: false } => {}
@@ -144,8 +148,10 @@ impl TrainerCallback for ModelSaver {
         _epoch: usize,
     ) -> CallbackResult {
         if let Some(model) = model {
-            let path = model.save(&self.path)?;
-            saved_at(MODEL_ICON, "NEURAL NETWORK", path);
+            saved(&Artifacts::single(
+                "Neural Network",
+                model.save(&self.path)?,
+            ));
         }
         Ok(())
     }

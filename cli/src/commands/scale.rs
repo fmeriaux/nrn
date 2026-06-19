@@ -1,9 +1,11 @@
-use crate::actions::{get_file_stem, load_dataset, save_dataset, save_scaler};
-use crate::display::completed;
+use crate::actions::{load_dataset, plot_dataset};
+use crate::display::{Artifacts, completed, saved};
+use crate::path::PathExt;
 use clap::{Args, ValueEnum};
 use console::style;
 use ndarray::ArrayView2;
 use nrn::data::scalers::{MinMaxScaler, Scaler, ScalerMethod, ZScoreScaler};
+use nrn::io::scalers::ScalerRecord;
 use std::path::Path;
 
 #[derive(Args, Debug)]
@@ -42,25 +44,30 @@ impl ScaleArgs {
         dataset.scale_inplace(&scaler);
 
         completed(&format!(
-            "Scaled with {}",
+            "Scaling completed · {}",
             style(&scaler.name().to_uppercase()).bold().blue()
         ));
 
         // Extract the filename without extension
         let path = Path::new(&self.dataset);
-        let dataset_name = get_file_stem(path);
+        let dataset_name = path.file_stem_string();
+        let scaled_path = path.with_file_name(format!("scaled-{dataset_name}"));
 
-        save_dataset(
-            dataset,
-            "SCALED DATASET",
-            self.plot,
-            path.with_file_name(format!("scaled-{}", dataset_name)),
-        )?;
+        let mut artifacts = Artifacts::from([("Scaled Dataset", dataset.save(&scaled_path)?)]);
 
-        save_scaler(
-            scaler,
-            path.with_file_name(format!("scaler-{}", dataset_name)),
-        )?;
+        if self.plot
+            && let Some(plot) = plot_dataset(&dataset, &scaled_path)?
+        {
+            artifacts.add("Visualization", plot);
+        }
+
+        let record: ScalerRecord = scaler.into();
+        artifacts.add(
+            "Scaler",
+            record.save(path.with_file_name(format!("scaler-{dataset_name}")))?,
+        );
+
+        saved(&artifacts);
 
         Ok(())
     }

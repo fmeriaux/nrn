@@ -2,7 +2,8 @@ mod args;
 mod callbacks;
 
 use crate::actions::*;
-use crate::display::{RUN_ICON, loaded, recording_at, warning};
+use crate::display::{loaded, recording_at, warning};
+use crate::path::PathExt;
 use args::{ResumeOverrides, TrainArgs};
 use callbacks::{ConsoleMonitor, ModelSaver};
 use clap::*;
@@ -10,7 +11,7 @@ use nrn::data::ModelDataset;
 use nrn::io::checkpoint::CheckpointRecorder;
 use nrn::io::hyperparams::HyperParametersRecord;
 use nrn::io::run::{TrainingMeta, TrainingRun};
-use nrn::model::NeuralNetwork;
+use nrn::model::{LayerPlan, NeuralNetwork};
 use nrn::optimizers::OptimizerState;
 use nrn::schedulers::SchedulerState;
 use nrn::training::{Callbacks, FatalDivergence, HyperParameters};
@@ -64,6 +65,16 @@ pub struct StartArgs {
     hp: TrainArgs,
 }
 
+impl From<&StartArgs> for LayerPlan {
+    fn from(args: &StartArgs) -> Self {
+        if args.auto_layers {
+            LayerPlan::Auto
+        } else {
+            LayerPlan::Explicit(args.layers.clone().unwrap_or_default())
+        }
+    }
+}
+
 impl StartArgs {
     pub fn run(&self) -> Result<(), Box<dyn Error>> {
         if let Some(ref layers) = self.layers
@@ -72,7 +83,7 @@ impl StartArgs {
             return Err("Each hidden layer must have at least one neuron.".into());
         }
 
-        let dataset_name = get_file_stem(Path::new(&self.dataset));
+        let dataset_name = Path::new(&self.dataset).file_stem_string();
         let dataset_path = Path::new(&self.dataset);
         let dataset = load_dataset(&self.dataset)?;
 
@@ -80,12 +91,7 @@ impl StartArgs {
 
         let model = match &self.model {
             Some(path) => load_model(path)?,
-            None => initialize_model_with(
-                &dataset,
-                self.layers.clone(),
-                self.auto_layers,
-                hyperparameters.seed(),
-            ),
+            None => initialize_model_with(&dataset, LayerPlan::from(self), hyperparameters.seed()),
         };
 
         let run_dir = dataset_path.with_file_name(format!("training-model-{dataset_name}"));
@@ -95,7 +101,7 @@ impl StartArgs {
             let record = HyperParametersRecord::from(&hyperparameters);
             let recorder =
                 create_checkpoint_recorder(&run_dir, &dataset_name, &record, self.overwrite)?;
-            recording_at(RUN_ICON, "TRAINING RUN", &run_dir);
+            recording_at("TRAINING RUN", &run_dir);
             Some(recorder)
         } else {
             None
@@ -189,7 +195,7 @@ impl ResumeArgs {
                     "Removed {trimmed} checkpoint(s) after epoch {from_epoch}"
                 ));
             }
-            recording_at(RUN_ICON, "TRAINING RUN", run_dir);
+            recording_at("TRAINING RUN", run_dir);
             Some(run.recorder())
         } else {
             None

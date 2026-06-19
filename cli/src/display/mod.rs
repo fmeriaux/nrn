@@ -1,51 +1,56 @@
 //! Console rendering for the CLI.
 //!
-//! Every domain entity describes itself through [`Describe`], returning a
-//! multi-line string: a styled title line followed by aligned, dotted-leader
-//! rows. Entities build that string with the shared [`block`] helper, so the
-//! layout — used by the entity verbs (`loaded`, `generated`, `initialized`) and
-//! the training hyperparameter recap alike — lives in one place. One entity per
-//! submodule; colors live in [`theme`].
+//! A value renders its detail through [`Describe`] as a styled string — a single
+//! line, or aligned dotted-leader [`rows`]. A [`Named`] value pairs that detail
+//! with a NAME header: the lifecycle verbs ([`loaded`]/[`generated`]/
+//! [`initialized`]) prefix `NAME VERB` under an event icon, [`show`] and [`saved`]
+//! prefix the NAME alone. One entity per submodule; colors live in [`theme`].
 
+mod artifacts;
 mod checkpoint;
 mod dataset;
 mod evaluation;
-pub(crate) mod hyperparameters;
+mod hyperparameters;
 mod icons;
 mod model;
 mod progress;
 mod scaler;
 mod theme;
 
-pub(crate) use evaluation::{eval_set_summary, split_summary};
+pub(crate) use artifacts::Artifacts;
+pub(crate) use hyperparameters::HyperParametersView;
 pub(crate) use icons::*;
 pub(crate) use progress::{bar, styled_bar};
 
+use crate::path::PathExt;
 use console::{Emoji, style};
-use pathdiff::diff_paths;
-use std::env;
-use std::path::{Path, PathBuf};
+use std::fmt::Display;
+use std::path::Path;
 
 // ─── Entity descriptions ────────────────────────────────────────────────────
 
-/// An entity that can describe itself for the console as a styled, multi-line
-/// block. Implementors build their string with [`block`].
+/// A value that can describe itself for the console as a styled string — a
+/// single line, or the multi-line detail of [`rows`].
 pub(crate) trait Describe {
+    /// The styled text describing this value.
     fn describe(&self) -> String;
 }
 
-/// Renders a labelled block: a styled `title` line followed by one dotted-leader
-/// row per `(label, value)`. The returned string carries no leading icon — the
-/// verb that prints it supplies the prefix.
-fn block(title: &str, rows: &[(&str, String)]) -> String {
-    let width = label_width(rows.iter().map(|(label, _)| *label));
+/// An entity with a NAME.
+pub(crate) trait Named {
+    /// This entity's display name.
+    const NAME: &'static str;
+}
 
-    let mut out = theme::title(title);
-    for (label, value) in rows {
-        out.push('\n');
-        out.push_str(&row(label, value, width, None));
-    }
-    out
+/// One dotted-leader row per `(label, value)`, aligned to the widest label.
+fn rows(entries: &[(&str, String)]) -> String {
+    let width = label_width(entries.iter().map(|(label, _)| *label));
+
+    entries
+        .iter()
+        .map(|(label, value)| row(label, value, width, None))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The widest label in `labels`, used to align the dotted leaders of a block.
@@ -71,61 +76,80 @@ fn row(label: &str, value: &str, width: usize, previous: Option<&str>) -> String
     line
 }
 
-// ─── Entity verbs ─────────────────────────────────────────────────────────────
+// ─── Action & entity verbs ────────────────────────────────────────────────────
 
-pub(crate) fn loaded<D: Describe>(subject: &D) {
-    println!("{} Loaded {}", theme::icon(LOAD_ICON), subject.describe(),);
+/// Traces an action as a single status line: a styled icon then `message`.
+pub(crate) fn action(icon: Emoji, message: impl Display) {
+    println!("{} {}", theme::icon(icon), message);
 }
 
-pub(crate) fn initialized<D: Describe>(subject: &D) {
-    println!(
-        "{} Initialized {}",
-        theme::icon(INIT_ICON),
-        subject.describe(),
+/// The event `icon`, a header pairing the entity's NAME with `verb`, then its
+/// detail rows.
+fn reported<E: Named + Describe>(icon: Emoji, verb: &str, entity: &E) {
+    action(
+        icon,
+        format!(
+            "{}\n{}",
+            theme::title(&format!("{} {verb}", E::NAME)),
+            entity.describe()
+        ),
     );
 }
 
-pub(crate) fn generated<D: Describe>(subject: &D) {
-    println!("{} Generated {}", theme::icon(GEN_ICON), subject.describe(),);
+pub(crate) fn loaded<E: Named + Describe>(entity: &E) {
+    reported(LOAD_ICON, "LOADED", entity);
+}
+
+pub(crate) fn generated<E: Named + Describe>(entity: &E) {
+    reported(GEN_ICON, "GENERATED", entity);
+}
+
+pub(crate) fn initialized<E: Named + Describe>(entity: &E) {
+    reported(INIT_ICON, "INITIALIZED", entity);
+}
+
+/// The trace icon, the entity's NAME, then its detail rows.
+pub(crate) fn show<E: Named + Describe>(entity: &E) {
+    action(
+        TRACE_ICON,
+        format!("{}\n{}", theme::title(E::NAME), entity.describe()),
+    );
+}
+
+/// The save icon, the ARTIFACTS header, then the written files.
+pub(crate) fn saved(artifacts: &Artifacts) {
+    action(
+        SAVE_ICON,
+        format!(
+            "{}\n{}",
+            theme::title(Artifacts::NAME),
+            artifacts.describe()
+        ),
+    );
 }
 
 // ─── File event verbs ───────────────────────────────────────────────────────
 
-fn to_relative_path<P: AsRef<Path>>(path: P) -> PathBuf {
-    env::current_dir()
-        .ok()
-        .and_then(|cwd| diff_paths(&path, cwd))
-        .unwrap_or_else(|| path.as_ref().to_path_buf())
-}
-
-pub(crate) fn saved_at<P: AsRef<Path>>(icon: Emoji, name: &str, at: P) {
-    let relative_path = to_relative_path(&at);
-    println!(
-        "{} Exported {} at {}",
-        theme::icon(icon),
-        style(name).bold().blue(),
-        style(relative_path.display()).bright().magenta().italic()
-    );
-}
-
-pub(crate) fn recording_at<P: AsRef<Path>>(icon: Emoji, name: &str, at: P) {
-    let relative_path = to_relative_path(&at);
-    println!(
-        "{} Recording {} at {}",
-        theme::icon(icon),
-        style(name).bold().blue(),
-        style(relative_path.display()).bright().magenta().italic()
+/// A record event: the record icon, the entity `name`, and the directory path.
+pub(crate) fn recording_at<P: AsRef<Path>>(name: &str, at: P) {
+    action(
+        RECORD_ICON,
+        format!(
+            "Recording {} at {}",
+            theme::title(name),
+            theme::value(at.as_ref().to_relative().display())
+        ),
     );
 }
 
 // ─── Message verbs ──────────────────────────────────────────────────────────
 
 pub(crate) fn completed(message: &str) {
-    println!("{} {}", theme::icon(SUCCESS_ICON), message);
+    action(SUCCESS_ICON, message);
 }
 
 pub(crate) fn trace(message: &str) {
-    println!("{} {}", theme::icon(TRACE_ICON), message);
+    action(TRACE_ICON, message);
 }
 
 pub(crate) fn warning(message: &str) {

@@ -1,7 +1,5 @@
 use crate::actions::{load_dataset, load_history};
-use crate::display::bar;
-use crate::display::warning;
-use crate::display::{ANIMATION_ICON, RUN_ICON, saved_at};
+use crate::display::{Artifacts, bar, saved, warning};
 use clap::Args;
 use indicatif::ProgressIterator;
 use nrn::charts::RenderConfig;
@@ -45,11 +43,10 @@ impl PlotArgs {
 
         let frame = history.draw(&render_cfg)?;
 
-        saved_at(
-            RUN_ICON,
-            "TRAINING CURVES",
+        let mut artifacts = Artifacts::from([(
+            "Training Curves",
             save_rgb(frame, &self.run_dir, width, height)?,
-        );
+        )]);
 
         if let Some(dataset) = self.dataset {
             let dataset = load_dataset(&dataset)?;
@@ -58,39 +55,39 @@ impl PlotArgs {
                 warning(
                     "Decision boundary visualization is only available for datasets with exactly two features",
                 );
-                return Ok(());
-            }
+            } else {
+                let n = archive.len();
+                let interval = n / n.min(self.frames.into());
 
-            let n = archive.len();
-            let interval = n / n.min(self.frames.into());
+                let progress = bar(n, "Generating decision boundary animation");
 
-            let progress = bar(n, "Generating decision boundary animation");
+                let mut decision_frames = Vec::new();
 
-            let mut decision_frames = Vec::new();
+                for step in (0..n).progress_with(progress) {
+                    let step_number = step + 1;
 
-            for step in (0..n).progress_with(progress) {
-                let step_number = step + 1;
-
-                if step_number == 1 || step_number % interval == 0 || step_number == n {
-                    // Load one model at a time — no full checkpoint array in memory.
-                    let model = archive.model_at(step)?;
-                    let rgb_frame = model.draw_decision_boundary(&dataset, &render_cfg)?;
-                    decision_frames.push(rgb_frame);
+                    if step_number == 1 || step_number % interval == 0 || step_number == n {
+                        // Load one model at a time — no full checkpoint array in memory.
+                        let model = archive.model_at(step)?;
+                        let rgb_frame = model.draw_decision_boundary(&dataset, &render_cfg)?;
+                        decision_frames.push(rgb_frame);
+                    }
                 }
-            }
 
-            saved_at(
-                ANIMATION_ICON,
-                "DECISION BOUNDARY ANIMATION",
-                save_gif_from_rgb(
-                    decision_frames,
-                    self.width,
-                    self.height,
-                    self.delay,
-                    &self.run_dir,
-                )?,
-            );
+                artifacts.add(
+                    "Decision Boundary Animation",
+                    save_gif_from_rgb(
+                        decision_frames,
+                        self.width,
+                        self.height,
+                        self.delay,
+                        &self.run_dir,
+                    )?,
+                );
+            }
         }
+
+        saved(&artifacts);
 
         Ok(())
     }

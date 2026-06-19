@@ -39,6 +39,15 @@ pub struct NeuronLayerSpec {
     pub activation: Arc<dyn Activation>,
 }
 
+/// How the hidden-layer architecture of a network is chosen.
+#[derive(Debug, Clone)]
+pub enum LayerPlan {
+    /// Explicit hidden-layer neuron counts (empty = single-layer perceptron).
+    Explicit(Vec<usize>),
+    /// Infer the hidden layers from the dataset shape.
+    Auto,
+}
+
 /// Returns the last activation from a vector of activations.
 /// # Panics
 /// - When the `activations` vector is empty.
@@ -302,6 +311,27 @@ impl NeuronLayerSpec {
         let mut specs = Self::hidden(hidden_neurons, hidden_activation);
         specs.push(Self::output_for(n_classes));
         specs
+    }
+
+    /// Resolves a [`LayerPlan`] into a full network specification.
+    ///
+    /// This is the single entry point for turning the architecture choice (explicit
+    /// hidden layers vs. inferred from the dataset) into layer specs; it delegates to
+    /// [`network_for`](Self::network_for) or [`infer_from`](Self::infer_from). The
+    /// dataset-shape arguments are only consulted for [`LayerPlan::Auto`].
+    pub fn plan<A: Activation + 'static>(
+        plan: LayerPlan,
+        n_features: usize,
+        n_classes: usize,
+        n_samples: usize,
+        hidden_activation: &Arc<A>,
+    ) -> Vec<Self> {
+        match plan {
+            LayerPlan::Auto => {
+                Self::infer_from(n_features, n_classes, n_samples, hidden_activation)
+            }
+            LayerPlan::Explicit(layers) => Self::network_for(layers, hidden_activation, n_classes),
+        }
     }
 
     /// Infers a suitable network architecture based on dataset characteristics.
@@ -570,5 +600,22 @@ mod tests {
             specs[0].neurons, 16,
             "first layer should use at least 16 neurons"
         );
+    }
+
+    #[test]
+    fn plan_explicit_matches_network_for() {
+        // Explicit plan ignores the dataset-shape args and uses the given layers verbatim.
+        let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![8, 4]), 2, 3, 1000, &RELU);
+        assert_eq!(specs.len(), 3, "expected 2 hidden + 1 output specs");
+        assert_eq!(specs[0].neurons, 8);
+        assert_eq!(specs[1].neurons, 4);
+        assert_eq!(specs[2].neurons, 3, "output layer matches n_classes");
+    }
+
+    #[test]
+    fn plan_auto_matches_infer_from() {
+        // Auto plan defers to infer_from: ln(2 * 2 / 1000) ≈ -5.5 → 1 hidden layer.
+        let specs = NeuronLayerSpec::plan(LayerPlan::Auto, 2, 2, 1000, &RELU);
+        assert_eq!(specs.len(), 2, "expected 1 hidden + 1 output spec");
     }
 }
