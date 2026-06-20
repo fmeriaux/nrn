@@ -12,3 +12,4 @@ pub(crate) const WARN_ICON: Emoji = Emoji("⚠️", "[!]");
 pub(crate) const ERROR_ICON: Emoji = Emoji("❌", "[X]");
 pub(crate) const SUCCESS_ICON: Emoji = Emoji("✅", "[✓]");
 pub(crate) const TRACE_ICON: Emoji = Emoji("🔍", "[*]");
+pub(crate) const EVAL_ICON: Emoji = Emoji("📊", "[=]");

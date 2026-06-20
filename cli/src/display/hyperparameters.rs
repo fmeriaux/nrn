@@ -2,7 +2,7 @@
 //! a run's configuration field-by-field, and — when resuming — each value
 //! compared against its previous setting, the changed lines annotated `▲ was …`.
 
-use super::{Describe, Named, label_width, row};
+use super::{Describe, Named, column_width, row};
 use nrn::training::{
     EarlyStoppingConfig, GradientClipping, HyperParameters, LossConfig, OptimizerConfig,
     SchedulerConfig,
@@ -48,7 +48,7 @@ impl Named for HyperParametersView<'_> {
 
 impl Describe for HyperParametersView<'_> {
     fn describe(&self) -> String {
-        let width = label_width(ROWS.iter().map(|(label, _)| *label));
+        let width = column_width(ROWS.iter().map(|(label, _)| *label));
 
         ROWS.iter()
             .map(|(label, render)| {

@@ -42,10 +42,10 @@ impl ScaleArgs {
         loaded(&dataset);
 
         let scaler = self.scaling.fit(dataset.features().view());
-        dataset.scale_inplace(&scaler);
-
-        completed!("Scaling completed");
         show(&scaler);
+
+        dataset.scale_inplace(&scaler);
+        completed!("Scaling completed");
 
         let path = Path::new(&self.dataset);
         let scaled_path = path.sibling("scaled");

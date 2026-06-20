@@ -1,4 +1,4 @@
-use super::{Describe, Named, rows};
+use super::{Describe, Named, column_width, theme};
 use crate::path::PathExt;
 use std::path::PathBuf;
 
@@ -35,13 +35,34 @@ impl Named for Artifacts {
 }
 
 impl Describe for Artifacts {
+    /// A lone artifact is its bare path; several are one file per line — a
+    /// bullet, the written path padded to a column, then its role as a dim
+    /// lowercase caption.
     fn describe(&self) -> String {
-        let entries: Vec<(&str, String)> = self
+        if let [(_, path)] = self.items.as_slice() {
+            return theme::value(path.to_relative().display());
+        }
+
+        let paths: Vec<String> = self
             .items
             .iter()
-            .map(|(label, path)| (*label, path.to_relative().display().to_string()))
+            .map(|(_, path)| path.to_relative().display().to_string())
             .collect();
+        let width = column_width(paths.iter().map(String::as_str));
 
-        rows(&entries)
+        self.items
+            .iter()
+            .zip(&paths)
+            .map(|((label, _), path)| {
+                format!(
+                    "   {} {}{}  {}",
+                    theme::caption("›"),
+                    theme::value(path),
+                    " ".repeat(width - path.len()),
+                    theme::caption(label.to_lowercase()),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }

@@ -1,9 +1,12 @@
-//! Inline evaluation/split descriptions: single-line [`Describe`] strings
-//! appended to a message verb (e.g. `Training completed · Train(..) · …`).
+//! The split-sample line shown at train start, and the per-split EVALUATION
+//! table — loss and accuracy for Train / Val / Test — shown at train end.
 
-use super::{Describe, theme};
+use super::{Describe, Named, column_width, theme};
 use nrn::data::ModelSplit;
 use nrn::evaluation::{Evaluation, EvaluationSet};
+
+const LOSS_HEADER: &str = "loss";
+const ACC_HEADER: &str = "accuracy";
 
 /// The realized per-split sample counts.
 impl Describe for ModelSplit {
@@ -17,27 +20,61 @@ impl Describe for ModelSplit {
     }
 }
 
-/// `Train(..) · Val(..) · Test(..)`, each split's loss/accuracy via
-/// [`evaluation_summary`] and `N/A` for an absent validation split.
-impl Describe for EvaluationSet {
-    fn describe(&self) -> String {
-        format!(
-            "Train({}) · Val({}) · Test({})",
-            evaluation_summary(&self.train),
-            self.validation
-                .as_ref()
-                .map_or_else(|| "N/A".to_string(), evaluation_summary),
-            evaluation_summary(&self.test),
-        )
-    }
+impl Named for EvaluationSet {
+    const NAME: &'static str = "EVALUATION";
 }
 
-/// Formats a single [`Evaluation`] as `L=<loss> · A=<accuracy>%`.
-fn evaluation_summary(eval: &Evaluation) -> String {
-    format!(
-        "L={} · A={}{}",
-        theme::value(format!("{:.4}", eval.loss)),
-        theme::value(format!("{:.1}", eval.accuracy)),
-        theme::value("%"),
-    )
+/// One row per split — its label, loss, and accuracy — under a `loss`/`accuracy`
+/// header, the columns aligned. An absent validation split reads `n/a`.
+impl Describe for EvaluationSet {
+    fn describe(&self) -> String {
+        let cells: Vec<(&str, String, String)> = [
+            ("Train", Some(&self.train)),
+            ("Val", self.validation.as_ref()),
+            ("Test", Some(&self.test)),
+        ]
+        .into_iter()
+        .map(|(name, eval)| match eval {
+            Some(Evaluation { loss, accuracy }) => {
+                (name, format!("{loss:.4}"), format!("{accuracy:.1}%"))
+            }
+            None => (name, "n/a".to_string(), "n/a".to_string()),
+        })
+        .collect();
+
+        let name_w = column_width(cells.iter().map(|(name, ..)| *name));
+        let loss_w = column_width(
+            cells
+                .iter()
+                .map(|(_, loss, _)| loss.as_str())
+                .chain([LOSS_HEADER]),
+        );
+        let acc_w = column_width(
+            cells
+                .iter()
+                .map(|(.., acc)| acc.as_str())
+                .chain([ACC_HEADER]),
+        );
+
+        let header = format!(
+            "   {}   {}   {}",
+            " ".repeat(name_w),
+            theme::caption(format!("{LOSS_HEADER:>loss_w$}")),
+            theme::caption(format!("{ACC_HEADER:>acc_w$}")),
+        );
+
+        let body = cells.iter().map(|(name, loss, acc)| {
+            format!(
+                "   {}   {}   {}",
+                theme::label(format!("{name:<name_w$}")),
+                theme::value(format!("{loss:>loss_w$}")),
+                theme::value(format!("{acc:>acc_w$}")),
+            )
+        });
+
+        std::iter::once(header)
+            .chain(body)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }

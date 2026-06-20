@@ -1,4 +1,4 @@
-use super::{Describe, Named, rows};
+use super::{Describe, Named, theme};
 use nrn::data::scalers::{Scaler, ScalerMethod};
 
 impl Named for ScalerMethod {
@@ -7,6 +7,6 @@ impl Named for ScalerMethod {
 
 impl Describe for ScalerMethod {
     fn describe(&self) -> String {
-        rows(&[("Method", self.name().to_string())])
+        theme::value(self.name())
     }
 }

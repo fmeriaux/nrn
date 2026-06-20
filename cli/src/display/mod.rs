@@ -2,9 +2,11 @@
 //!
 //! A value renders its detail through [`Describe`] as a styled string — a single
 //! line, or aligned dotted-leader [`rows`]. A [`Named`] value pairs that detail
-//! with a NAME header: the lifecycle verbs ([`loaded`]/[`generated`]/
-//! [`initialized`]) prefix `NAME VERB` under an event icon, [`show`] and [`saved`]
-//! prefix the NAME alone. One entity per submodule; colors live in [`theme`].
+//! with a NAME header via [`titled`]: a single-line description collapses onto
+//! the header (`NAME · detail`), a multi-line one follows below it. The
+//! lifecycle verbs ([`loaded`]/[`generated`]/[`initialized`]) head the NAME with
+//! `VERB` under an event icon, [`show`] and [`saved`] head the NAME alone. One
+//! entity per submodule; colors live in [`theme`].
 
 mod artifacts;
 mod checkpoint;
@@ -42,7 +44,7 @@ pub(crate) trait Named {
 
 /// One dotted-leader row per `(label, value)`, aligned to the widest label.
 fn rows(entries: &[(&str, String)]) -> String {
-    let width = label_width(entries.iter().map(|(label, _)| *label));
+    let width = column_width(entries.iter().map(|(label, _)| *label));
 
     entries
         .iter()
@@ -51,9 +53,9 @@ fn rows(entries: &[(&str, String)]) -> String {
         .join("\n")
 }
 
-/// The widest label in `labels`, used to align the dotted leaders of a block.
-fn label_width<'a>(labels: impl Iterator<Item = &'a str>) -> usize {
-    labels.map(str::len).max().unwrap_or(0)
+/// The widest of `texts`, used to align a column to it.
+fn column_width<'a>(texts: impl Iterator<Item = &'a str>) -> usize {
+    texts.map(str::len).max().unwrap_or(0)
 }
 
 /// One block row: `label`, a dotted leader padding it to `width`, then `value`.
@@ -82,16 +84,24 @@ pub(crate) fn action(icon: Emoji, message: impl Display) {
     println!("{} {}\n", theme::icon(icon), message);
 }
 
+/// Pairs a styled `title` header with an entity's `description`: a single-line
+/// description collapses onto the title as `title · description`; a multi-line
+/// description follows on its own lines.
+fn titled(title: &str, description: String) -> String {
+    let title = theme::title(title);
+    if description.contains('\n') {
+        format!("{title}\n{description}")
+    } else {
+        format!("{title} · {description}")
+    }
+}
+
 /// The event `icon`, a header pairing the entity's NAME with `verb`, then its
-/// detail rows.
+/// description.
 fn reported<E: Named + Describe>(icon: Emoji, verb: &str, entity: &E) {
     action(
         icon,
-        format!(
-            "{}\n{}",
-            theme::title(&format!("{} {verb}", E::NAME)),
-            entity.describe()
-        ),
+        titled(&format!("{} {verb}", E::NAME), entity.describe()),
     );
 }
 
@@ -107,24 +117,24 @@ pub(crate) fn initialized<E: Named + Describe>(entity: &E) {
     reported(INIT_ICON, "INITIALIZED", entity);
 }
 
-/// The trace icon, the entity's NAME, then its detail rows.
+/// An `icon` line heading the entity's NAME with its description.
+fn headed<E: Named + Describe>(icon: Emoji, entity: &E) {
+    action(icon, titled(E::NAME, entity.describe()));
+}
+
+/// The trace icon, the entity's NAME, then its description.
 pub(crate) fn show<E: Named + Describe>(entity: &E) {
-    action(
-        TRACE_ICON,
-        format!("{}\n{}", theme::title(E::NAME), entity.describe()),
-    );
+    headed(TRACE_ICON, entity);
+}
+
+/// The results icon, the entity's NAME, then its description.
+pub(crate) fn evaluated<E: Named + Describe>(entity: &E) {
+    headed(EVAL_ICON, entity);
 }
 
 /// The save icon, the ARTIFACTS header, then the written files.
 pub(crate) fn saved(artifacts: &Artifacts) {
-    action(
-        SAVE_ICON,
-        format!(
-            "{}\n{}",
-            theme::title(Artifacts::NAME),
-            artifacts.describe()
-        ),
-    );
+    headed(SAVE_ICON, artifacts);
 }
 
 // ─── File event verbs ───────────────────────────────────────────────────────

@@ -22,12 +22,12 @@ pub(crate) fn error_icon(glyph: Emoji) -> String {
 }
 
 /// The bold blue entity title (e.g. `DATASET`, `TRAINING HYPERPARAMETERS`).
-pub(crate) fn title(text: &str) -> String {
+pub(crate) fn title(text: impl Display) -> String {
     style(text).bold().blue().to_string()
 }
 
 /// A field label (the left column of a block row).
-pub(crate) fn label(text: &str) -> String {
+pub(crate) fn label(text: impl Display) -> String {
     style(text).cyan().to_string()
 }
 
@@ -38,8 +38,13 @@ pub(crate) fn success(text: impl Display) -> String {
 }
 
 /// The dotted leader joining a label to its value.
-pub(crate) fn leader(dots: &str) -> String {
+pub(crate) fn leader(dots: impl Display) -> String {
     style(dots).dim().to_string()
+}
+
+/// A dim trailing caption — e.g. an artifact's role shown beside its path.
+pub(crate) fn caption(text: impl Display) -> String {
+    style(text).dim().to_string()
 }
 
 /// A field value (the right column of a block row, and inline figures).
@@ -53,7 +58,7 @@ pub(crate) fn diff(text: impl Display) -> String {
 }
 
 /// The bold `Warning:` lead-in, in the conventional warning color.
-pub(crate) fn warn_label(text: &str) -> String {
+pub(crate) fn warn_label(text: impl Display) -> String {
     style(text).bold().yellow().to_string()
 }
 
@@ -63,7 +68,7 @@ pub(crate) fn warn_text(text: impl Display) -> String {
 }
 
 /// The bold `Error:` lead-in, in the conventional error color.
-pub(crate) fn error_label(text: &str) -> String {
+pub(crate) fn error_label(text: impl Display) -> String {
     style(text).bold().red().to_string()
 }
 

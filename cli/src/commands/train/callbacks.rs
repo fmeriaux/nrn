@@ -4,7 +4,8 @@
 //! into a `callbacks/` submodule if this file grows.
 
 use crate::display::{
-    Artifacts, Describe, HyperParametersView, completed, saved, show, styled_bar, trace, warning,
+    Artifacts, Describe, HyperParametersView, completed, evaluated, saved, show, styled_bar, trace,
+    warning,
 };
 use indicatif::ProgressBar;
 use nrn::data::ModelSplit;
@@ -93,26 +94,23 @@ impl TrainerCallback for ConsoleMonitor {
         match outcome {
             TrainingOutcome::Completed => {
                 completed!("Training completed");
-                trace(&eval.expect("eval is present on completion").describe());
             }
             TrainingOutcome::EarlyStopped { restored } => {
                 completed!("Early stopping triggered at epoch {epoch}");
                 if restored {
                     trace("Restored the best model observed during training");
                 }
-                if let Some(eval) = eval {
-                    trace(&eval.describe());
-                }
             }
             TrainingOutcome::Diverged { recovered: true } => {
                 warning!(
                     "Model diverged at epoch {epoch} (NaN/Inf); recovered best model from early stopping."
                 );
-                if let Some(eval) = eval {
-                    trace(&eval.describe());
-                }
             }
             TrainingOutcome::Diverged { recovered: false } => {}
+        }
+
+        if let Some(eval) = eval {
+            evaluated(eval);
         }
 
         Ok(())
