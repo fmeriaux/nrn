@@ -564,3 +564,220 @@ fn divergence_with_early_stopping_recovers_best_model() {
         );
     }
 }
+
+#[test]
+fn synth_warns_on_uneven_clusters_and_plots_scatter() {
+    // 21 samples across 2 clusters → 1 dropped (uneven division warning, stderr).
+    // The dataset id reflects the *generated* count, and --plot renders the
+    // 2-feature scatter to a PNG beside it.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    let out = Command::cargo_bin("nrn")
+        .unwrap()
+        .current_dir(dir)
+        .args([
+            "synth",
+            "--seed",
+            "1",
+            "--distribution",
+            "ring",
+            "--clusters",
+            "2",
+            "--samples",
+            "21",
+            "--plot",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("1 dropped"),
+        "expected an uneven-cluster warning on stderr: {stderr}"
+    );
+
+    let ds_name = "ring-seed1-c2-f2-n20";
+    assert!(
+        dir.join(format!("{ds_name}.safetensors")).exists(),
+        "expected dataset named after the generated count"
+    );
+    assert!(
+        dir.join(format!("{ds_name}.png")).exists(),
+        "expected --plot to render a scatter PNG"
+    );
+}
+
+#[test]
+fn start_with_auto_layers_infers_architecture() {
+    // --auto-layers derives the hidden layers from the dataset shape instead of
+    // taking explicit --layers; the recap reports the inferred architecture.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    nrn(
+        dir,
+        &[
+            "synth",
+            "--seed",
+            "1",
+            "--distribution",
+            "ring",
+            "--clusters",
+            "2",
+            "--samples",
+            "20",
+        ],
+    )
+    .success();
+
+    let ds_name = "ring-seed1-c2-f2-n20";
+
+    let out = Command::cargo_bin("nrn")
+        .unwrap()
+        .current_dir(dir)
+        .args([
+            "train",
+            "start",
+            "--seed",
+            "42",
+            ds_name,
+            "--epochs",
+            "2",
+            "--checkpoint-interval",
+            "0",
+            "--no-clip",
+            "--auto-layers",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("relu") && stdout.contains("sigmoid"),
+        "expected an inferred hidden-layer architecture in the recap: {stdout}"
+    );
+    assert!(model_exists(dir, ds_name));
+}
+
+#[test]
+fn resume_restores_stateful_scheduler() {
+    // A run trained with a stateful scheduler (step decay) persists scheduler
+    // state in its checkpoints; resuming must reinstate it and say so. The
+    // default constant scheduler is stateless, so this path is otherwise unhit.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    nrn(
+        dir,
+        &[
+            "synth",
+            "--seed",
+            "5",
+            "--distribution",
+            "ring",
+            "--clusters",
+            "2",
+            "--samples",
+            "20",
+        ],
+    )
+    .success();
+
+    let ds_name = "ring-seed5-c2-f2-n20";
+
+    nrn(
+        dir,
+        &[
+            "train",
+            "start",
+            "--seed",
+            "42",
+            ds_name,
+            "--epochs",
+            "3",
+            "--checkpoint-interval",
+            "1",
+            "--no-clip",
+            "--scheduler",
+            "step",
+            "--steps",
+            "2",
+        ],
+    )
+    .success();
+
+    let run_arg = format!("training-model-{ds_name}");
+
+    nrn(dir, &["train", "resume", &run_arg, "--epochs", "2"])
+        .success()
+        .stdout(contains("Restored Step Decay scheduler state"));
+}
+
+#[test]
+fn resume_with_checkpoints_disabled_writes_no_new_checkpoints() {
+    // Resuming with --checkpoint-interval 0 trains forward without a recorder, so
+    // the checkpoint trajectory is left untouched.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    nrn(
+        dir,
+        &[
+            "synth",
+            "--seed",
+            "6",
+            "--distribution",
+            "ring",
+            "--clusters",
+            "2",
+            "--samples",
+            "20",
+        ],
+    )
+    .success();
+
+    let ds_name = "ring-seed6-c2-f2-n20";
+    let run_arg = format!("training-model-{ds_name}");
+    let run_dir = dir.join(&run_arg);
+
+    nrn(
+        dir,
+        &[
+            "train",
+            "start",
+            "--seed",
+            "42",
+            ds_name,
+            "--epochs",
+            "2",
+            "--checkpoint-interval",
+            "1",
+            "--no-clip",
+        ],
+    )
+    .success();
+    let before = checkpoint_count(&run_dir);
+
+    nrn(
+        dir,
+        &[
+            "train",
+            "resume",
+            &run_arg,
+            "--epochs",
+            "2",
+            "--checkpoint-interval",
+            "0",
+        ],
+    )
+    .success();
+
+    assert_eq!(
+        checkpoint_count(&run_dir),
+        before,
+        "resuming with checkpoints disabled must not add or remove checkpoints"
+    );
+}

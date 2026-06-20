@@ -3,8 +3,8 @@ use nrn::io::hyperparams::{
     ClippingRecord, EarlyStoppingRecord, HyperParametersRecord, SchedulerRecord,
 };
 use nrn::training::{
-    EarlyStoppingConfig, EarlyStoppingConfigError, GradientClipping, GradientClippingError,
-    HyperParameters, HyperParametersError, LossConfig, OptimizerConfig, SchedulerConfig,
+    EarlyStoppingConfig, GradientClipping, GradientClippingError, HyperParameters,
+    HyperParametersError, LossConfig, OptimizerConfig, SchedulerConfig,
 };
 
 // ─── Value enums ─────────────────────────────────────────────────────────────
@@ -148,15 +148,8 @@ impl TryFrom<&TrainArgs> for GradientClipping {
 
 impl TrainArgs {
     /// The early-stopping config, or `None` when patience is zero (disabled).
-    fn early_stopping(&self) -> Result<Option<EarlyStoppingConfig>, EarlyStoppingConfigError> {
-        if self.early_stopping > 0 {
-            Ok(Some(EarlyStoppingConfig::new(
-                self.early_stopping,
-                self.restore_best_model,
-            )?))
-        } else {
-            Ok(None)
-        }
+    fn early_stopping(&self) -> Option<EarlyStoppingConfig> {
+        EarlyStoppingConfig::new(self.early_stopping, self.restore_best_model).ok()
     }
 }
 
@@ -178,7 +171,7 @@ impl TryFrom<&TrainArgs> for HyperParameters {
             SchedulerConfig::from(args),
             GradientClipping::try_from(args)?,
             LossConfig::CrossEntropy,
-            args.early_stopping()?,
+            args.early_stopping(),
             args.val_ratio,
             args.test_ratio,
             args.seed.unwrap_or_else(ndarray_rand::rand::random),
@@ -448,14 +441,13 @@ mod tests {
 
     #[test]
     fn early_stopping_disabled_when_zero() {
-        assert_eq!(train_args(&[]).early_stopping().unwrap(), None);
+        assert_eq!(train_args(&[]).early_stopping(), None);
     }
 
     #[test]
     fn early_stopping_enabled_with_patience() {
         let config = train_args(&["--early-stopping", "5"])
             .early_stopping()
-            .unwrap()
             .expect("early stopping enabled");
         assert_eq!(config.patience(), 5);
         assert!(config.restore_best_model());

@@ -238,3 +238,23 @@ fn overwrite_hint(error: IoError) -> IoError {
         error
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::overwrite_hint;
+    use std::io::{Error as IoError, ErrorKind};
+
+    #[test]
+    fn overwrite_hint_appends_remediation_for_already_exists() {
+        let mapped = overwrite_hint(IoError::new(ErrorKind::AlreadyExists, "run dir exists"));
+        assert_eq!(mapped.kind(), ErrorKind::AlreadyExists);
+        assert!(mapped.to_string().contains("use --overwrite"));
+    }
+
+    #[test]
+    fn overwrite_hint_passes_other_errors_through_unchanged() {
+        let mapped = overwrite_hint(IoError::new(ErrorKind::PermissionDenied, "denied"));
+        assert_eq!(mapped.kind(), ErrorKind::PermissionDenied);
+        assert_eq!(mapped.to_string(), "denied");
+    }
+}
