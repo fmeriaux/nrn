@@ -1,24 +1,21 @@
 mod args;
-mod model_saver;
-mod monitor;
+mod callbacks;
 
-use crate::actions::*;
-use crate::console::{RUN_ICON, loaded, recording_at, warning};
+use crate::display::{initialized, loaded, recording, warning};
+use crate::path::PathExt;
 use args::{ResumeOverrides, TrainArgs};
+use callbacks::{ConsoleMonitor, ModelSaver};
 use clap::*;
-use model_saver::ModelSaver;
-use monitor::ConsoleMonitor;
-use nrn::data::ModelDataset;
-use nrn::io::checkpoint::CheckpointRecorder;
+use nrn::activations::RELU;
+use nrn::data::Dataset;
 use nrn::io::hyperparams::HyperParametersRecord;
 use nrn::io::run::{TrainingMeta, TrainingRun};
-use nrn::model::NeuralNetwork;
-use nrn::optimizers::OptimizerState;
-use nrn::schedulers::SchedulerState;
+use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec};
 use nrn::training::{Callbacks, FatalDivergence, HyperParameters};
 use std::error::Error;
-use std::io::{Error as IoError, ErrorKind, Result as IoResult};
-use std::path::{Path, PathBuf};
+use std::fmt;
+use std::io::{Error as IoError, ErrorKind};
+use std::path::Path;
 
 // ─── TrainCommand ─────────────────────────────────────────────────────────────
 
@@ -68,50 +65,69 @@ pub struct StartArgs {
 
 impl StartArgs {
     pub fn run(&self) -> Result<(), Box<dyn Error>> {
-        if let Some(ref layers) = self.layers
-            && layers.contains(&0)
-        {
-            return Err("Each hidden layer must have at least one neuron.".into());
-        }
-
-        let dataset_name = get_file_stem(Path::new(&self.dataset));
         let dataset_path = Path::new(&self.dataset);
-        let dataset = load_dataset(&self.dataset)?;
+        let dataset_name = dataset_path.file_stem_string();
+        let run_dir = dataset_path.sibling("training-model");
+        let model_name = format!("model-{dataset_name}");
+
+        let dataset = Dataset::load(&self.dataset)?;
+        loaded(&dataset);
 
         let hyperparameters = HyperParameters::try_from(&self.hp)?;
 
         let model = match &self.model {
-            Some(path) => load_model(path)?,
-            None => initialize_model_with(
-                &dataset,
-                self.layers.clone(),
-                self.auto_layers,
-                hyperparameters.seed(),
-            ),
+            Some(path) => {
+                let model = NeuralNetwork::load(path)?;
+                loaded(&model);
+                model
+            }
+            None => {
+                let plan = if self.auto_layers {
+                    LayerPlan::Auto {
+                        n_features: dataset.n_features(),
+                        n_samples: dataset.n_samples(),
+                    }
+                } else {
+                    LayerPlan::Explicit(self.layers.clone().unwrap_or_default())
+                };
+                let layer_specs = NeuronLayerSpec::plan(plan, dataset.n_classes(), &*RELU)?;
+                let model = NeuralNetwork::initialization(
+                    dataset.n_features(),
+                    &layer_specs,
+                    hyperparameters.seed(),
+                );
+                initialized(&model);
+                model
+            }
         };
 
-        let run_dir = dataset_path.with_file_name(format!("training-model-{dataset_name}"));
-        let model_save_path = dataset_path.with_file_name(format!("model-{dataset_name}"));
-
         let recorder = if hyperparameters.checkpoint_interval() > 0 {
-            let record = HyperParametersRecord::from(&hyperparameters);
-            let recorder =
-                create_checkpoint_recorder(&run_dir, &dataset_name, &record, self.overwrite)?;
-            recording_at(RUN_ICON, "TRAINING RUN", &run_dir);
+            let meta = TrainingMeta {
+                dataset: dataset_name,
+                model: model_name.clone(),
+                hyperparams: HyperParametersRecord::from(&hyperparameters),
+            };
+            let recorder = TrainingRun::create(&run_dir, &meta, self.overwrite)
+                .map_err(overwrite_hint)?
+                .recorder();
+            recording(&recorder);
             Some(recorder)
         } else {
             None
         };
 
-        execute_training(
-            hyperparameters,
-            model,
-            dataset.to_model_dataset(),
-            model_save_path,
-            recorder,
-            None,
-            None,
-        )
+        let callbacks = Callbacks::empty()
+            .with(ConsoleMonitor::new(hyperparameters.clone(), None))
+            .with(ModelSaver::new(&run_dir, &model_name))
+            .with_opt(recorder);
+
+        hyperparameters
+            .build(model, dataset.to_model_dataset(), callbacks)
+            .train()?
+            .into_result()
+            .map_err(DivergedRun::from)?;
+
+        Ok(())
     }
 }
 
@@ -122,7 +138,7 @@ pub struct ResumeArgs {
     /// Training run directory to resume from
     run_dir: String,
 
-    /// Checkpoint index to resume from (default: last checkpoint)
+    /// Epoch to resume from; must match a recorded checkpoint (default: last checkpoint)
     #[arg(long)]
     from: Option<usize>,
 
@@ -136,7 +152,8 @@ impl ResumeArgs {
         let run = TrainingRun::open(run_dir)?;
         let meta = run.meta();
 
-        let dataset = load_dataset(&meta.dataset)?;
+        let dataset = Dataset::load(&meta.dataset)?;
+        loaded(&dataset);
 
         let previous = HyperParameters::try_from(meta.hyperparams.clone())?;
 
@@ -145,145 +162,99 @@ impl ResumeArgs {
         let hyperparameters = HyperParameters::try_from(record)?;
 
         let archive = run.archive()?;
-        if archive.is_empty() {
-            return Err(format!(
-                "No checkpoints found in '{}'; cannot resume.",
-                run_dir.display()
-            )
-            .into());
-        }
-
-        let checkpoint_idx = match self.from {
-            Some(idx) => {
-                if idx >= archive.len() {
-                    return Err(format!(
-                        "Checkpoint index {idx} out of range (run has {} checkpoints).",
-                        archive.len()
-                    )
-                    .into());
-                }
-                idx
-            }
-            None => archive.len() - 1,
-        };
+        let checkpoint_idx = archive.resolve_epoch(self.from)?;
 
         let model = archive.model_at(checkpoint_idx)?;
         loaded(&model);
 
-        let model_save_path = run_dir
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join(format!("model-{}", meta.dataset));
-
         let from_epoch = archive
             .epoch_at(checkpoint_idx)
-            .expect("checkpoint_idx was just validated against archive.len()");
+            .expect("checkpoint_idx was just resolved against the archive");
 
-        // Read the checkpointed optimizer/scheduler state now; it is restored on
-        // the built `Trainer` just before training (see the `prepare` closure).
         let scheduler_state = archive.scheduler_at(checkpoint_idx)?;
         let optimizer_state = archive.optimizer_at(checkpoint_idx)?;
 
         let recorder = if hyperparameters.checkpoint_interval() > 0 {
             let trimmed = run.trim_after(from_epoch)?;
             if trimmed > 0 {
-                warning(&format!(
-                    "Removed {trimmed} checkpoint(s) after epoch {from_epoch}"
-                ));
+                warning!("Removed {trimmed} checkpoint(s) after epoch {from_epoch}");
             }
-            recording_at(RUN_ICON, "TRAINING RUN", run_dir);
-            Some(run.recorder())
+            let recorder = run.recorder();
+            recording(&recorder);
+            Some(recorder)
         } else {
             None
         };
 
-        execute_training(
-            hyperparameters,
-            model,
-            dataset.to_model_dataset(),
-            model_save_path,
-            recorder,
-            Some(previous),
-            Some(ResumeState {
-                epoch_start: from_epoch,
-                optimizer: optimizer_state,
-                scheduler: scheduler_state,
-            }),
+        let callbacks = Callbacks::empty()
+            .with(ConsoleMonitor::new(hyperparameters.clone(), Some(previous)))
+            .with(ModelSaver::new(run_dir, &meta.model))
+            .with_opt(recorder);
+
+        let mut trainer = hyperparameters.build(model, dataset.to_model_dataset(), callbacks);
+        trainer.restore(from_epoch, optimizer_state, scheduler_state)?;
+        trainer.train()?.into_result().map_err(DivergedRun::from)?;
+
+        Ok(())
+    }
+}
+
+/// Reported when training ends in an unrecovered divergence, with actionable hints.
+#[derive(Debug)]
+struct DivergedRun {
+    final_epoch: usize,
+}
+
+impl From<FatalDivergence> for DivergedRun {
+    fn from(divergence: FatalDivergence) -> Self {
+        Self {
+            final_epoch: divergence.final_epoch,
+        }
+    }
+}
+
+impl fmt::Display for DivergedRun {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "model diverged at epoch {} (NaN/Inf in weights). \
+             Try: --early-stopping with --restore-best-model, --scheduler cosine, \
+             a lower --lr, or stronger gradient clipping.",
+            self.final_epoch
         )
     }
 }
 
-// ─── Shared execution ─────────────────────────────────────────────────────────
+impl Error for DivergedRun {}
 
-/// The checkpointed state a resumed run restores onto its [`Trainer`] before
-/// training: the epoch to resume from plus any persisted optimizer/scheduler state.
-struct ResumeState {
-    epoch_start: usize,
-    optimizer: Option<OptimizerState>,
-    scheduler: Option<SchedulerState>,
+/// Adds the `--overwrite` remediation hint to an `AlreadyExists` error.
+fn overwrite_hint(error: IoError) -> IoError {
+    if error.kind() == ErrorKind::AlreadyExists {
+        IoError::new(
+            error.kind(),
+            format!("{error}; use --overwrite to replace it"),
+        )
+    } else {
+        error
+    }
 }
 
-/// Builds the callbacks and the `Trainer`, restores checkpointed state when
-/// resuming, then trains to completion, mapping a fatal divergence to a
-/// user-facing error.
-fn execute_training(
-    hyperparameters: HyperParameters,
-    model: NeuralNetwork,
-    dataset: ModelDataset,
-    model_save_path: PathBuf,
-    recorder: Option<CheckpointRecorder>,
-    previous: Option<HyperParameters>,
-    resume: Option<ResumeState>,
-) -> Result<(), Box<dyn Error>> {
-    let callbacks = Callbacks::empty()
-        .with(ConsoleMonitor::new(hyperparameters.clone(), previous))
-        .with(ModelSaver::new(model_save_path))
-        .with_opt(recorder);
+#[cfg(test)]
+mod tests {
+    use super::overwrite_hint;
+    use std::io::{Error as IoError, ErrorKind};
 
-    let mut trainer = hyperparameters.build(model, dataset, callbacks);
-
-    // Restoring fires `on_restore`, which the console monitor narrates.
-    if let Some(resume) = resume {
-        trainer.restore(resume.epoch_start, resume.optimizer, resume.scheduler)?;
+    #[test]
+    fn overwrite_hint_appends_remediation_for_already_exists() {
+        let mapped = overwrite_hint(IoError::new(ErrorKind::AlreadyExists, "run dir exists"));
+        assert_eq!(mapped.kind(), ErrorKind::AlreadyExists);
+        assert!(mapped.to_string().contains("use --overwrite"));
     }
 
-    trainer.train()?.into_result().map_err(divergence_error)?;
-
-    Ok(())
-}
-
-// ─── Report handling ──────────────────────────────────────────────────────────
-
-/// Turns a [`FatalDivergence`] into a user-facing error with actionable hints.
-fn divergence_error(divergence: FatalDivergence) -> Box<dyn Error> {
-    format!(
-        "Model diverged at epoch {} (NaN/Inf in weights). \
-         Try: --early-stopping with --restore-best-model, --scheduler cosine, \
-         a lower --lr, or stronger gradient clipping.",
-        divergence.final_epoch
-    )
-    .into()
-}
-
-/// Wraps [`TrainingRun::create`], adding the `--overwrite` remediation
-/// hint to an `AlreadyExists` error.
-fn create_checkpoint_recorder(
-    run_dir: &Path,
-    dataset_name: &str,
-    hyperparams: &HyperParametersRecord,
-    overwrite: bool,
-) -> IoResult<CheckpointRecorder> {
-    let meta = TrainingMeta {
-        dataset: dataset_name.to_string(),
-        hyperparams: hyperparams.clone(),
-    };
-    TrainingRun::create(run_dir, &meta, overwrite)
-        .map(|run| run.recorder())
-        .map_err(|e| {
-            if e.kind() == ErrorKind::AlreadyExists {
-                IoError::new(e.kind(), format!("{e}; use --overwrite to replace it"))
-            } else {
-                e
-            }
-        })
+    #[test]
+    fn overwrite_hint_passes_other_errors_through_unchanged() {
+        let mapped = overwrite_hint(IoError::new(ErrorKind::PermissionDenied, "denied"));
+        assert_eq!(mapped.kind(), ErrorKind::PermissionDenied);
+        assert_eq!(mapped.to_string(), "denied");
+    }
 }

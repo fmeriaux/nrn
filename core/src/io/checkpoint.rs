@@ -73,27 +73,6 @@ pub(super) struct CheckpointRef {
     pub(super) dir: PathBuf,
 }
 
-/// Scans `dir` for `checkpoint-*` subdirectories, sorted by their numeric epoch
-/// (not lexically, so 10+ checkpoints sort correctly). Reads no other files.
-pub(super) fn scan_checkpoints(dir: &Path) -> Result<Vec<CheckpointRef>> {
-    let mut checkpoints: Vec<CheckpointRef> = fs::read_dir(dir)?
-        .filter_map(StdResult::ok)
-        .filter_map(|entry| {
-            let path = entry.path();
-            let name = path.file_name()?.to_str()?;
-            if path.is_dir() {
-                let epoch = name.strip_prefix("checkpoint-")?.parse::<usize>().ok()?;
-                Some(CheckpointRef { epoch, dir: path })
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    checkpoints.sort_by_key(|s| s.epoch);
-    Ok(checkpoints)
-}
-
 /// Writes model checkpoints to a directory.
 ///
 /// Each call to [`write`](CheckpointRecorder::write) creates a subdirectory
@@ -112,6 +91,11 @@ impl CheckpointRecorder {
     /// [`TrainingRun::recorder`](crate::io::run::TrainingRun::recorder).
     pub(super) fn new(dir: PathBuf) -> Self {
         CheckpointRecorder { dir }
+    }
+
+    /// The directory checkpoints are written into.
+    pub fn dir(&self) -> &Path {
+        &self.dir
     }
 
     /// Writes `checkpoint-{epoch:06}/` containing the model weights, evaluations,
@@ -165,16 +149,38 @@ impl TrainerCallback for CheckpointRecorder {
 /// [`model_at`](CheckpointArchive::model_at) or
 /// [`evaluation_history`](CheckpointArchive::evaluation_history) is called.
 pub struct CheckpointArchive {
+    dir: PathBuf,
     entries: Vec<CheckpointRef>,
 }
 
 impl CheckpointArchive {
-    /// Scans `dir` for `checkpoint-*` subdirectories, sorted by epoch.
+    /// Opens the archive at `dir`, scanning its `checkpoint-*` subdirectories
+    /// (sorted by numeric epoch, not lexically, so 10+ checkpoints sort
+    /// correctly). Reads no other files.
     pub fn load<P: AsRef<Path>>(dir: P) -> Result<Self> {
         let dir = Path::combine_safe_with_cwd(dir)?;
-        Ok(CheckpointArchive {
-            entries: scan_checkpoints(&dir)?,
-        })
+
+        let mut entries: Vec<CheckpointRef> = fs::read_dir(&dir)?
+            .filter_map(StdResult::ok)
+            .filter_map(|entry| {
+                let path = entry.path();
+                let name = path.file_name()?.to_str()?;
+                if path.is_dir() {
+                    let epoch = name.strip_prefix("checkpoint-")?.parse::<usize>().ok()?;
+                    Some(CheckpointRef { epoch, dir: path })
+                } else {
+                    None
+                }
+            })
+            .collect();
+        entries.sort_by_key(|s| s.epoch);
+
+        Ok(CheckpointArchive { dir, entries })
+    }
+
+    /// The scanned checkpoint references, ordered by epoch.
+    pub(super) fn entries(&self) -> &[CheckpointRef] {
+        &self.entries
     }
 
     /// Returns the number of checkpoints found.
@@ -191,6 +197,36 @@ impl CheckpointArchive {
     /// scanned directory name (zero I/O).
     pub fn epoch_at(&self, index: usize) -> Option<usize> {
         self.entries.get(index).map(|s| s.epoch)
+    }
+
+    /// Resolves an optional checkpoint selection to a concrete index: the
+    /// checkpoint recorded at `epoch`, or — when `None` — the most recent
+    /// checkpoint. Errors if the archive holds no checkpoints, or if no
+    /// checkpoint was recorded at `epoch`.
+    pub fn resolve_epoch(&self, epoch: Option<usize>) -> Result<usize> {
+        let Some(last) = self.entries.len().checked_sub(1) else {
+            return Err(Error::new(
+                InvalidData,
+                format!("no checkpoints found in '{}'", self.dir.display()),
+            ));
+        };
+        let Some(epoch) = epoch else {
+            return Ok(last);
+        };
+        // Entries are sorted by epoch, so a binary search locates the match.
+        self.entries
+            .binary_search_by_key(&epoch, |entry| entry.epoch)
+            .map_err(|_| {
+                Error::new(
+                    InvalidData,
+                    format!(
+                        "no checkpoint recorded at epoch {epoch} in '{}' (recorded epochs: {}..={})",
+                        self.dir.display(),
+                        self.entries[0].epoch,
+                        self.entries[last].epoch,
+                    ),
+                )
+            })
     }
 
     /// Returns the checkpoint entry at `index`, or an error if out of range.
@@ -291,6 +327,7 @@ mod tests {
             path,
             &TrainingMeta {
                 dataset: dataset.to_string(),
+                model: format!("model-{dataset}"),
                 hyperparams: HyperParametersRecord::sample(),
             },
             overwrite,
@@ -302,6 +339,18 @@ mod tests {
     fn sample_model() -> NeuralNetwork {
         let specs = NeuronLayerSpec::network_for(vec![3], &*RELU, 2);
         NeuralNetwork::initialization(2, &specs, 0)
+    }
+
+    fn write_checkpoint(recorder: &CheckpointRecorder, epoch: usize) {
+        recorder
+            .write(
+                &sample_model(),
+                &sample_optimizer(),
+                &sample_scheduler(),
+                &make_eval(0.0, false),
+                epoch,
+            )
+            .unwrap();
     }
 
     fn make_eval(loss: f32, with_validation: bool) -> EvaluationSet {
@@ -454,6 +503,67 @@ mod tests {
 
         assert!(archive.is_empty());
         assert_eq!(archive.len(), 0);
+    }
+
+    #[test]
+    fn resolve_epoch_on_empty_archive_errors() {
+        let dir = temp_dir("resolve_empty");
+        let archive = CheckpointArchive::load(&dir).unwrap();
+        let err = archive.resolve_epoch(None).unwrap_err().to_string();
+        cleanup(&dir);
+
+        assert!(err.contains("no checkpoints"), "got: {err}");
+    }
+
+    #[test]
+    fn resolve_epoch_defaults_to_last_checkpoint() {
+        let dir = temp_dir("resolve_last");
+        let recorder = create_run(&dir, "ds", false);
+        for epoch in [0, 5, 10] {
+            write_checkpoint(&recorder, epoch);
+        }
+
+        let archive = CheckpointArchive::load(&dir).unwrap();
+        let idx = archive.resolve_epoch(None).unwrap();
+        cleanup(&dir);
+
+        assert_eq!(idx, 2);
+    }
+
+    #[test]
+    fn resolve_epoch_finds_matching_checkpoint() {
+        let dir = temp_dir("resolve_match");
+        let recorder = create_run(&dir, "ds", false);
+        for epoch in [0, 5, 10] {
+            write_checkpoint(&recorder, epoch);
+        }
+
+        let archive = CheckpointArchive::load(&dir).unwrap();
+        // Epoch 5 is the second checkpoint (index 1), not at index 5.
+        let idx = archive.resolve_epoch(Some(5)).unwrap();
+        cleanup(&dir);
+
+        assert_eq!(idx, 1);
+    }
+
+    #[test]
+    fn resolve_epoch_without_checkpoint_errors() {
+        let dir = temp_dir("resolve_unknown");
+        let recorder = create_run(&dir, "ds", false);
+        for epoch in [0, 5] {
+            write_checkpoint(&recorder, epoch);
+        }
+
+        let archive = CheckpointArchive::load(&dir).unwrap();
+        // Epoch 3 falls between checkpoints, so no checkpoint matches it.
+        let err = archive.resolve_epoch(Some(3)).unwrap_err().to_string();
+        cleanup(&dir);
+
+        assert!(
+            err.contains("no checkpoint recorded at epoch 3"),
+            "got: {err}"
+        );
+        assert!(err.contains("0..=5"), "got: {err}");
     }
 
     #[test]

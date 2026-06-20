@@ -1,5 +1,5 @@
-use crate::actions::save_dataset;
-use crate::console::{generated, warning};
+use crate::actions::plot_dataset;
+use crate::display::{Artifacts, generated, saved, warning};
 use clap::{Args, ValueEnum};
 use nrn::data::synth::{Distribution, SynthDataset, SynthParams, SynthParamsError};
 use std::error::Error;
@@ -100,19 +100,27 @@ impl SynthArgs {
         let dataset = generator.generate(self.seed);
 
         if dataset.n_samples() != self.samples {
-            warning(&format!(
+            warning!(
                 "Requested {} samples but generated {} ({} dropped due to uneven cluster division)",
                 self.samples,
                 dataset.n_samples(),
                 self.samples - dataset.n_samples()
-            ));
+            );
         }
 
         generated(&dataset);
 
         let filename = self.output.clone().unwrap_or_else(|| dataset.id());
 
-        save_dataset(dataset, "DATASET", self.plot, &filename)?;
+        let mut artifacts = Artifacts::single("Dataset", dataset.save(&filename)?);
+
+        if self.plot
+            && let Some(plot) = plot_dataset(&dataset, &filename)?
+        {
+            artifacts.add("Visualization", plot);
+        }
+
+        saved(&artifacts);
 
         Ok(())
     }

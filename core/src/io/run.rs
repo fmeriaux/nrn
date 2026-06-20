@@ -1,4 +1,4 @@
-use crate::io::checkpoint::{CheckpointArchive, CheckpointRecorder, scan_checkpoints};
+use crate::io::checkpoint::{CheckpointArchive, CheckpointRecorder};
 use crate::io::hyperparams::HyperParametersRecord;
 use crate::io::json;
 use crate::io::path::PathExt;
@@ -12,7 +12,11 @@ use std::path::{Path, PathBuf};
 /// Written once by [`TrainingRun::create`] into `meta.json`.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TrainingMeta {
+    /// Bare file name (stem) of the dataset the run trained on.
     pub dataset: String,
+    /// Bare file name (stem) of the run's final-model artifact.
+    pub model: String,
+    /// Hyperparameters the run was configured with.
     pub hyperparams: HyperParametersRecord,
 }
 
@@ -33,7 +37,7 @@ impl TrainingRun {
         let dir = Path::combine_safe_with_cwd(path)?;
         fs::create_dir_all(&dir)?;
 
-        let existing = scan_checkpoints(&dir)?;
+        let existing = CheckpointArchive::load(&dir)?;
         if !existing.is_empty() {
             if !overwrite {
                 return Err(Error::new(
@@ -41,7 +45,7 @@ impl TrainingRun {
                     format!("training history already exists at {}", dir.display()),
                 ));
             }
-            for checkpoint in existing {
+            for checkpoint in existing.entries() {
                 fs::remove_dir_all(&checkpoint.dir)?;
             }
         }
@@ -76,14 +80,17 @@ impl TrainingRun {
     /// Removes checkpoints whose epoch is greater than `from_epoch`, rewinding
     /// the trajectory. Returns the number of checkpoints removed.
     pub fn trim_after(&self, from_epoch: usize) -> Result<usize> {
-        let to_remove: Vec<_> = scan_checkpoints(&self.dir)?
-            .into_iter()
+        let archive = CheckpointArchive::load(&self.dir)?;
+        let to_remove: Vec<&Path> = archive
+            .entries()
+            .iter()
             .filter(|checkpoint| checkpoint.epoch > from_epoch)
+            .map(|checkpoint| checkpoint.dir.as_path())
             .collect();
 
         let trimmed = to_remove.len();
-        for checkpoint in to_remove {
-            fs::remove_dir_all(&checkpoint.dir)?;
+        for dir in to_remove {
+            fs::remove_dir_all(dir)?;
         }
 
         Ok(trimmed)
@@ -112,6 +119,7 @@ mod tests {
     fn meta(dataset: &str) -> TrainingMeta {
         TrainingMeta {
             dataset: dataset.to_string(),
+            model: format!("model-{dataset}"),
             hyperparams: HyperParametersRecord::sample(),
         }
     }

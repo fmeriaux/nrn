@@ -1,7 +1,7 @@
 use ndarray::array;
 use nrn::activations::SIGMOID;
 use nrn::data::ModelDataset;
-use nrn::model::{NeuralNetwork, NeuronLayerSpec};
+use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec};
 use nrn::training::{
     Callbacks, GradientClipping, HyperParameters, LossConfig, OptimizerConfig, SchedulerConfig,
 };
@@ -21,7 +21,7 @@ fn xor_converges_to_low_loss() {
         targets: array![[0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0]], // (1 output, 8 samples)
     };
 
-    let specs = NeuronLayerSpec::network_for(vec![8], &*SIGMOID, 2);
+    let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![8]), 2, &*SIGMOID).unwrap();
 
     let report = HyperParameters::from_values(
         10_000,
@@ -64,7 +64,7 @@ fn xor_converges_with_mini_batch() {
         targets: array![[0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0]],
     };
 
-    let specs = NeuronLayerSpec::network_for(vec![8], &*SIGMOID, 2);
+    let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![8]), 2, &*SIGMOID).unwrap();
 
     let report = HyperParameters::from_values(
         8_000,
@@ -116,7 +116,7 @@ fn three_class_converges_to_low_loss() {
 
     // Sigmoid avoids the dead-neuron risk of ReLU(0)=0 for the [0.0, 0.0] sample
     // (He init sets biases to zero, so relu([0,0]) = 0 and its gradient is dead at epoch 0).
-    let specs = NeuronLayerSpec::network_for(vec![8], &*SIGMOID, 3);
+    let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![8]), 3, &*SIGMOID).unwrap();
 
     let report = HyperParameters::from_values(
         5_000,

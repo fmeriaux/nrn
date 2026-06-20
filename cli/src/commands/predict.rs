@@ -1,10 +1,11 @@
-use crate::actions::{load_model, load_scaler};
-use crate::console::error;
+use crate::display::{error, loaded};
 use clap::Args;
 use console::style;
 use ndarray::Array1;
 use nrn::data::scalers::{Scaler, ScalerMethod};
 use nrn::io::data::load_inputs;
+use nrn::io::scalers::ScalerRecord;
+use nrn::model::NeuralNetwork;
 use std::cmp::Ordering::Equal;
 use std::error::Error;
 use std::io::stdin;
@@ -25,10 +26,18 @@ pub struct PredictArgs {
 
 impl PredictArgs {
     pub fn run(self) -> Result<(), Box<dyn Error>> {
-        let model = load_model(&self.model)?;
+        let model = NeuralNetwork::load(&self.model)?;
+        loaded(&model);
 
-        let scaler: Option<ScalerMethod> =
-            self.scaler.as_ref().map(|s| load_scaler(s)).transpose()?;
+        let scaler: Option<ScalerMethod> = self
+            .scaler
+            .as_ref()
+            .map(|s| -> Result<ScalerMethod, Box<dyn Error>> {
+                let scaler: ScalerMethod = ScalerRecord::load(s)?.into();
+                loaded(&scaler);
+                Ok(scaler)
+            })
+            .transpose()?;
 
         let mut input = if let Some(input_file) = self.input {
             let input = load_inputs(&input_file)?;
@@ -55,7 +64,7 @@ impl PredictArgs {
                 match raw.trim().parse::<f32>() {
                     Ok(val) => inputs.push(val),
                     Err(err) => {
-                        error(err.to_string().as_str());
+                        error!("{err}");
                     }
                 }
 

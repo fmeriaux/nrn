@@ -9,6 +9,7 @@ use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
 use ndarray_rand::rand::RngCore;
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::rngs::StdRng;
+use std::fmt;
 use std::iter::once;
 use std::sync::Arc;
 
@@ -38,6 +39,39 @@ pub struct NeuronLayerSpec {
     /// The activation function used in this layer.
     pub activation: Arc<dyn Activation>,
 }
+
+/// How the hidden-layer architecture of a network is chosen.
+#[derive(Debug, Clone)]
+pub enum LayerPlan {
+    /// Explicit hidden-layer neuron counts (empty = single-layer perceptron).
+    Explicit(Vec<usize>),
+    /// Infer the hidden layers from the dataset shape.
+    Auto {
+        /// Number of input features.
+        n_features: usize,
+        /// Number of training samples.
+        n_samples: usize,
+    },
+}
+
+/// Error returned when an explicit [`LayerPlan`] is invalid.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LayerPlanError {
+    /// A hidden layer was given zero neurons.
+    ZeroNeuronLayer,
+}
+
+impl fmt::Display for LayerPlanError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LayerPlanError::ZeroNeuronLayer => {
+                write!(f, "each hidden layer must have at least one neuron")
+            }
+        }
+    }
+}
+
+impl std::error::Error for LayerPlanError {}
 
 /// Returns the last activation from a vector of activations.
 /// # Panics
@@ -244,7 +278,7 @@ impl NeuronLayerSpec {
     /// - `activation`: The activation function to be used for all hidden layers.
     /// # Returns
     /// A vector of `NeuronLayerSpec` instances, one for each hidden layer.
-    pub fn hidden<A: Activation + 'static>(
+    pub(crate) fn hidden<A: Activation + 'static>(
         neurons: impl IntoIterator<Item = usize>,
         activation: &Arc<A>,
     ) -> Vec<Self> {
@@ -294,7 +328,7 @@ impl NeuronLayerSpec {
     /// - `n_classes`: The number of classes for the output layer.
     /// # Returns
     /// A vector of `NeuronLayerSpec` instances, including hidden layers and the output layer.
-    pub fn network_for<A: Activation + 'static>(
+    pub(crate) fn network_for<A: Activation + 'static>(
         hidden_neurons: impl IntoIterator<Item = usize>,
         hidden_activation: &Arc<A>,
         n_classes: usize,
@@ -302,6 +336,35 @@ impl NeuronLayerSpec {
         let mut specs = Self::hidden(hidden_neurons, hidden_activation);
         specs.push(Self::output_for(n_classes));
         specs
+    }
+
+    /// Resolves a [`LayerPlan`] into a full network specification.
+    ///
+    /// The single public entry point for turning an architecture choice into layer
+    /// specs: it dispatches to the internal builders and is the only place that
+    /// validates the plan, rejecting an explicit layer with zero neurons.
+    pub fn plan<A: Activation + 'static>(
+        plan: LayerPlan,
+        n_classes: usize,
+        hidden_activation: &Arc<A>,
+    ) -> Result<Vec<Self>, LayerPlanError> {
+        match plan {
+            LayerPlan::Auto {
+                n_features,
+                n_samples,
+            } => Ok(Self::infer_from(
+                n_features,
+                n_classes,
+                n_samples,
+                hidden_activation,
+            )),
+            LayerPlan::Explicit(layers) => {
+                if layers.contains(&0) {
+                    return Err(LayerPlanError::ZeroNeuronLayer);
+                }
+                Ok(Self::network_for(layers, hidden_activation, n_classes))
+            }
+        }
     }
 
     /// Infers a suitable network architecture based on dataset characteristics.
@@ -315,7 +378,7 @@ impl NeuronLayerSpec {
     /// These are preconditions the caller must guarantee. For data-derived values,
     /// validate the dataset up front with [`crate::data::Dataset::validate`], which
     /// reports these conditions as errors instead of panicking.
-    pub fn infer_from<A: Activation + 'static>(
+    pub(crate) fn infer_from<A: Activation + 'static>(
         n_features: usize,
         n_classes: usize,
         n_samples: usize,
@@ -570,5 +633,47 @@ mod tests {
             specs[0].neurons, 16,
             "first layer should use at least 16 neurons"
         );
+    }
+
+    #[test]
+    fn plan_explicit_matches_network_for() {
+        // Explicit plan uses the given layers verbatim.
+        let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![8, 4]), 3, &RELU).unwrap();
+        assert_eq!(specs.len(), 3, "expected 2 hidden + 1 output specs");
+        assert_eq!(specs[0].neurons, 8);
+        assert_eq!(specs[1].neurons, 4);
+        assert_eq!(specs[2].neurons, 3, "output layer matches n_classes");
+    }
+
+    #[test]
+    fn plan_explicit_rejects_zero_neuron_layer() {
+        let err = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![8, 0, 4]), 3, &RELU).unwrap_err();
+        assert_eq!(err, LayerPlanError::ZeroNeuronLayer);
+        assert_eq!(
+            err.to_string(),
+            "each hidden layer must have at least one neuron"
+        );
+    }
+
+    #[test]
+    fn plan_explicit_accepts_empty_layers() {
+        // Empty = single-layer perceptron: just the output layer, no hidden layers.
+        let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![]), 2, &RELU).unwrap();
+        assert_eq!(specs.len(), 1, "expected only the output spec");
+    }
+
+    #[test]
+    fn plan_auto_matches_infer_from() {
+        // Auto plan defers to infer_from: ln(2 * 2 / 1000) ≈ -5.5 → 1 hidden layer.
+        let specs = NeuronLayerSpec::plan(
+            LayerPlan::Auto {
+                n_features: 2,
+                n_samples: 1000,
+            },
+            2,
+            &RELU,
+        )
+        .unwrap();
+        assert_eq!(specs.len(), 2, "expected 1 hidden + 1 output spec");
     }
 }

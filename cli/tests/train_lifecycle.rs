@@ -143,7 +143,7 @@ fn overwrite_required_to_replace_existing_run() {
 }
 
 #[test]
-fn resume_from_index_trims_later_checkpoints() {
+fn resume_from_epoch_trims_later_checkpoints() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
     let ds = synth_ring(dir, "7", "20");
@@ -169,8 +169,8 @@ fn resume_from_index_trims_later_checkpoints() {
     .success();
     assert_eq!(checkpoint_count(&run_dir), 5);
 
-    // Resuming from the first checkpoint rewinds the trajectory: the later
-    // checkpoints are trimmed before training forward again.
+    // Resuming from epoch 0 rewinds the trajectory: the later checkpoints are
+    // trimmed before training forward again.
     nrn(
         dir,
         &["train", "resume", &run_arg, "--from", "0", "--epochs", "3"],
@@ -219,11 +219,11 @@ fn resume_with_no_checkpoints_fails() {
 
     nrn(dir, &["train", "resume", &run_arg, "--epochs", "3"])
         .failure()
-        .stderr(contains("No checkpoints found"));
+        .stderr(contains("no checkpoints found"));
 }
 
 #[test]
-fn resume_from_out_of_range_index_fails() {
+fn resume_from_unknown_epoch_fails() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
     let ds = synth_ring(dir, "8", "20");
@@ -253,7 +253,7 @@ fn resume_from_out_of_range_index_fails() {
         ],
     )
     .failure()
-    .stderr(contains("out of range"));
+    .stderr(contains("no checkpoint recorded at epoch 999"));
 }
 
 #[test]
@@ -284,5 +284,5 @@ fn fatal_divergence_without_early_stopping_errors() {
         ],
     )
     .failure()
-    .stderr(contains("Model diverged at epoch"));
+    .stderr(contains("model diverged at epoch"));
 }

@@ -1,15 +1,16 @@
 use crate::cli::CliArgs;
-use crate::console::error;
+use crate::display::error;
 use clap::Parser;
 
 mod actions;
 mod cli;
 mod commands;
-pub mod console;
+mod display;
+mod path;
 
 fn main() {
     CliArgs::parse().command.run().unwrap_or_else(|e| {
-        error(&e.to_string());
+        error!("{e}");
         std::process::exit(1);
     });
 }

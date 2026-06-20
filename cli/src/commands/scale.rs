@@ -1,9 +1,11 @@
-use crate::actions::{get_file_stem, load_dataset, save_dataset, save_scaler};
-use crate::console::completed;
+use crate::actions::plot_dataset;
+use crate::display::{Artifacts, completed, loaded, saved, show};
+use crate::path::PathExt;
 use clap::{Args, ValueEnum};
-use console::style;
 use ndarray::ArrayView2;
-use nrn::data::scalers::{MinMaxScaler, Scaler, ScalerMethod, ZScoreScaler};
+use nrn::data::Dataset;
+use nrn::data::scalers::{MinMaxScaler, ScalerMethod, ZScoreScaler};
+use nrn::io::scalers::ScalerRecord;
 use std::path::Path;
 
 #[derive(Args, Debug)]
@@ -36,31 +38,32 @@ impl ScalingOption {
 
 impl ScaleArgs {
     pub fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        let mut dataset = load_dataset(&self.dataset)?;
+        let mut dataset = Dataset::load(&self.dataset)?;
+        loaded(&dataset);
 
         let scaler = self.scaling.fit(dataset.features().view());
+        show(&scaler);
+
         dataset.scale_inplace(&scaler);
+        completed!("Scaling completed");
 
-        completed(&format!(
-            "Scaled with {}",
-            style(&scaler.name().to_uppercase()).bold().blue()
-        ));
-
-        // Extract the filename without extension
         let path = Path::new(&self.dataset);
-        let dataset_name = get_file_stem(path);
+        let scaled_path = path.sibling("scaled");
 
-        save_dataset(
-            dataset,
-            "SCALED DATASET",
-            self.plot,
-            path.with_file_name(format!("scaled-{}", dataset_name)),
-        )?;
+        let record: ScalerRecord = scaler.into();
 
-        save_scaler(
-            scaler,
-            path.with_file_name(format!("scaler-{}", dataset_name)),
-        )?;
+        let mut artifacts = Artifacts::from([
+            ("Scaled Dataset", dataset.save(&scaled_path)?),
+            ("Scaler", record.save(path.sibling("scaler"))?),
+        ]);
+
+        if self.plot
+            && let Some(plot) = plot_dataset(&dataset, &scaled_path)?
+        {
+            artifacts.add("Visualization", plot);
+        }
+
+        saved(&artifacts);
 
         Ok(())
     }

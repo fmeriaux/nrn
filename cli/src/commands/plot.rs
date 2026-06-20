@@ -1,10 +1,9 @@
-use crate::actions::{load_dataset, load_history};
-use crate::console::bar;
-use crate::console::warning;
-use crate::console::{ANIMATION_ICON, RUN_ICON, saved_at};
+use crate::display::{Artifacts, bar, loaded, saved, warning};
 use clap::Args;
 use indicatif::ProgressIterator;
 use nrn::charts::RenderConfig;
+use nrn::data::Dataset;
+use nrn::io::checkpoint::CheckpointArchive;
 use nrn::io::gif::save_gif_from_rgb;
 use nrn::io::png::save_rgb;
 use std::error::Error;
@@ -37,7 +36,14 @@ pub struct PlotArgs {
 
 impl PlotArgs {
     pub fn run(self) -> Result<(), Box<dyn Error>> {
-        let archive = load_history(&self.run_dir)?;
+        let archive = CheckpointArchive::load(&self.run_dir)?;
+
+        if archive.len() <= 2 {
+            return Err("Training run must contain more than two checkpoints to plot.".into());
+        }
+
+        loaded(&archive);
+
         let history = archive.evaluation_history()?;
         let render_cfg = RenderConfig::new(self.width as u32, self.height as u32);
 
@@ -45,52 +51,52 @@ impl PlotArgs {
 
         let frame = history.draw(&render_cfg)?;
 
-        saved_at(
-            RUN_ICON,
-            "TRAINING CURVES",
+        let mut artifacts = Artifacts::from([(
+            "Training Curves",
             save_rgb(frame, &self.run_dir, width, height)?,
-        );
+        )]);
 
         if let Some(dataset) = self.dataset {
-            let dataset = load_dataset(&dataset)?;
+            let dataset = Dataset::load(&dataset)?;
+            loaded(&dataset);
 
             if dataset.n_features() != 2 {
-                warning(
-                    "Decision boundary visualization is only available for datasets with exactly two features",
+                warning!(
+                    "Decision boundary visualization is only available for datasets with exactly two features"
                 );
-                return Ok(());
-            }
+            } else {
+                let n = archive.len();
+                let interval = n / n.min(self.frames.into());
 
-            let n = archive.len();
-            let interval = n / n.min(self.frames.into());
+                let progress = bar(n, "Generating decision boundary animation");
 
-            let progress = bar(n, "Generating decision boundary animation");
+                let mut decision_frames = Vec::new();
 
-            let mut decision_frames = Vec::new();
+                for step in (0..n).progress_with(progress) {
+                    let step_number = step + 1;
 
-            for step in (0..n).progress_with(progress) {
-                let step_number = step + 1;
-
-                if step_number == 1 || step_number % interval == 0 || step_number == n {
-                    // Load one model at a time — no full checkpoint array in memory.
-                    let model = archive.model_at(step)?;
-                    let rgb_frame = model.draw_decision_boundary(&dataset, &render_cfg)?;
-                    decision_frames.push(rgb_frame);
+                    if step_number == 1 || step_number % interval == 0 || step_number == n {
+                        // Load one model at a time — no full checkpoint array in memory.
+                        let model = archive.model_at(step)?;
+                        let rgb_frame = model.draw_decision_boundary(&dataset, &render_cfg)?;
+                        decision_frames.push(rgb_frame);
+                    }
                 }
-            }
 
-            saved_at(
-                ANIMATION_ICON,
-                "DECISION BOUNDARY ANIMATION",
-                save_gif_from_rgb(
-                    decision_frames,
-                    self.width,
-                    self.height,
-                    self.delay,
-                    &self.run_dir,
-                )?,
-            );
+                artifacts.add(
+                    "Decision Boundary Animation",
+                    save_gif_from_rgb(
+                        decision_frames,
+                        self.width,
+                        self.height,
+                        self.delay,
+                        &self.run_dir,
+                    )?,
+                );
+            }
         }
+
+        saved(&artifacts);
 
         Ok(())
     }
