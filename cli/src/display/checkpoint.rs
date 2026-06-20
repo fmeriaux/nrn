@@ -1,8 +1,19 @@
 use super::{Describe, Named, rows};
-use nrn::io::checkpoint::CheckpointArchive;
+use crate::path::PathExt;
+use nrn::io::checkpoint::{CheckpointArchive, CheckpointRecorder};
 
 impl Named for CheckpointArchive {
     const NAME: &'static str = "TRAINING RUN";
+}
+
+impl Named for CheckpointRecorder {
+    const NAME: &'static str = CheckpointArchive::NAME;
+}
+
+impl Describe for CheckpointRecorder {
+    fn describe(&self) -> String {
+        self.dir().to_relative().display().to_string()
+    }
 }
 
 impl Describe for CheckpointArchive {

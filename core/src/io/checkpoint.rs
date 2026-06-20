@@ -73,27 +73,6 @@ pub(super) struct CheckpointRef {
     pub(super) dir: PathBuf,
 }
 
-/// Scans `dir` for `checkpoint-*` subdirectories, sorted by their numeric epoch
-/// (not lexically, so 10+ checkpoints sort correctly). Reads no other files.
-pub(super) fn scan_checkpoints(dir: &Path) -> Result<Vec<CheckpointRef>> {
-    let mut checkpoints: Vec<CheckpointRef> = fs::read_dir(dir)?
-        .filter_map(StdResult::ok)
-        .filter_map(|entry| {
-            let path = entry.path();
-            let name = path.file_name()?.to_str()?;
-            if path.is_dir() {
-                let epoch = name.strip_prefix("checkpoint-")?.parse::<usize>().ok()?;
-                Some(CheckpointRef { epoch, dir: path })
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    checkpoints.sort_by_key(|s| s.epoch);
-    Ok(checkpoints)
-}
-
 /// Writes model checkpoints to a directory.
 ///
 /// Each call to [`write`](CheckpointRecorder::write) creates a subdirectory
@@ -112,6 +91,11 @@ impl CheckpointRecorder {
     /// [`TrainingRun::recorder`](crate::io::run::TrainingRun::recorder).
     pub(super) fn new(dir: PathBuf) -> Self {
         CheckpointRecorder { dir }
+    }
+
+    /// The directory checkpoints are written into.
+    pub fn dir(&self) -> &Path {
+        &self.dir
     }
 
     /// Writes `checkpoint-{epoch:06}/` containing the model weights, evaluations,
@@ -165,16 +149,38 @@ impl TrainerCallback for CheckpointRecorder {
 /// [`model_at`](CheckpointArchive::model_at) or
 /// [`evaluation_history`](CheckpointArchive::evaluation_history) is called.
 pub struct CheckpointArchive {
+    dir: PathBuf,
     entries: Vec<CheckpointRef>,
 }
 
 impl CheckpointArchive {
-    /// Scans `dir` for `checkpoint-*` subdirectories, sorted by epoch.
+    /// Opens the archive at `dir`, scanning its `checkpoint-*` subdirectories
+    /// (sorted by numeric epoch, not lexically, so 10+ checkpoints sort
+    /// correctly). Reads no other files.
     pub fn load<P: AsRef<Path>>(dir: P) -> Result<Self> {
         let dir = Path::combine_safe_with_cwd(dir)?;
-        Ok(CheckpointArchive {
-            entries: scan_checkpoints(&dir)?,
-        })
+
+        let mut entries: Vec<CheckpointRef> = fs::read_dir(&dir)?
+            .filter_map(StdResult::ok)
+            .filter_map(|entry| {
+                let path = entry.path();
+                let name = path.file_name()?.to_str()?;
+                if path.is_dir() {
+                    let epoch = name.strip_prefix("checkpoint-")?.parse::<usize>().ok()?;
+                    Some(CheckpointRef { epoch, dir: path })
+                } else {
+                    None
+                }
+            })
+            .collect();
+        entries.sort_by_key(|s| s.epoch);
+
+        Ok(CheckpointArchive { dir, entries })
+    }
+
+    /// The scanned checkpoint references, ordered by epoch.
+    pub(super) fn entries(&self) -> &[CheckpointRef] {
+        &self.entries
     }
 
     /// Returns the number of checkpoints found.
@@ -191,6 +197,22 @@ impl CheckpointArchive {
     /// scanned directory name (zero I/O).
     pub fn epoch_at(&self, index: usize) -> Option<usize> {
         self.entries.get(index).map(|s| s.epoch)
+    }
+
+    /// Resolves an optional checkpoint selection to a concrete index: an explicit
+    /// `index` (bounds-checked) or, when `None`, the most recent checkpoint.
+    /// Errors if the archive holds no checkpoints.
+    pub fn resolve_index(&self, index: Option<usize>) -> Result<usize> {
+        if self.entries.is_empty() {
+            return Err(Error::new(
+                InvalidData,
+                format!("no checkpoints found in '{}'", self.dir.display()),
+            ));
+        }
+        match index {
+            Some(index) => self.entry_at(index).map(|_| index),
+            None => Ok(self.entries.len() - 1),
+        }
     }
 
     /// Returns the checkpoint entry at `index`, or an error if out of range.
@@ -303,6 +325,18 @@ mod tests {
     fn sample_model() -> NeuralNetwork {
         let specs = NeuronLayerSpec::network_for(vec![3], &*RELU, 2);
         NeuralNetwork::initialization(2, &specs, 0)
+    }
+
+    fn write_checkpoint(recorder: &CheckpointRecorder, epoch: usize) {
+        recorder
+            .write(
+                &sample_model(),
+                &sample_optimizer(),
+                &sample_scheduler(),
+                &make_eval(0.0, false),
+                epoch,
+            )
+            .unwrap();
     }
 
     fn make_eval(loss: f32, with_validation: bool) -> EvaluationSet {
@@ -455,6 +489,59 @@ mod tests {
 
         assert!(archive.is_empty());
         assert_eq!(archive.len(), 0);
+    }
+
+    #[test]
+    fn resolve_index_on_empty_archive_errors() {
+        let dir = temp_dir("resolve_empty");
+        let archive = CheckpointArchive::load(&dir).unwrap();
+        let err = archive.resolve_index(None).unwrap_err().to_string();
+        cleanup(&dir);
+
+        assert!(err.contains("no checkpoints"), "got: {err}");
+    }
+
+    #[test]
+    fn resolve_index_defaults_to_last_checkpoint() {
+        let dir = temp_dir("resolve_last");
+        let recorder = create_run(&dir, "ds", false);
+        for epoch in [0, 5, 10] {
+            write_checkpoint(&recorder, epoch);
+        }
+
+        let archive = CheckpointArchive::load(&dir).unwrap();
+        let idx = archive.resolve_index(None).unwrap();
+        cleanup(&dir);
+
+        assert_eq!(idx, 2);
+    }
+
+    #[test]
+    fn resolve_index_keeps_valid_explicit_index() {
+        let dir = temp_dir("resolve_explicit");
+        let recorder = create_run(&dir, "ds", false);
+        for epoch in [0, 5] {
+            write_checkpoint(&recorder, epoch);
+        }
+
+        let archive = CheckpointArchive::load(&dir).unwrap();
+        let idx = archive.resolve_index(Some(1)).unwrap();
+        cleanup(&dir);
+
+        assert_eq!(idx, 1);
+    }
+
+    #[test]
+    fn resolve_index_out_of_range_errors() {
+        let dir = temp_dir("resolve_oob");
+        let recorder = create_run(&dir, "ds", false);
+        write_checkpoint(&recorder, 0);
+
+        let archive = CheckpointArchive::load(&dir).unwrap();
+        let err = archive.resolve_index(Some(99)).unwrap_err().to_string();
+        cleanup(&dir);
+
+        assert!(err.contains("out of range"), "got: {err}");
     }
 
     #[test]

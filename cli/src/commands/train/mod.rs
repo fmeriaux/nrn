@@ -1,7 +1,7 @@
 mod args;
 mod callbacks;
 
-use crate::display::{initialized, loaded, recording_at, warning};
+use crate::display::{initialized, loaded, recording, warning};
 use crate::path::PathExt;
 use args::{ResumeOverrides, TrainArgs};
 use callbacks::{ConsoleMonitor, ModelSaver};
@@ -15,7 +15,7 @@ use nrn::training::{Callbacks, FatalDivergence, HyperParameters};
 use std::error::Error;
 use std::fmt;
 use std::io::{Error as IoError, ErrorKind};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 // ─── TrainCommand ─────────────────────────────────────────────────────────────
 
@@ -110,7 +110,7 @@ impl StartArgs {
             let recorder = TrainingRun::create(&run_dir, &meta, self.overwrite)
                 .map_err(overwrite_hint)?
                 .recorder();
-            recording_at("TRAINING RUN", &run_dir);
+            recording(&recorder);
             Some(recorder)
         } else {
             None
@@ -162,23 +162,7 @@ impl ResumeArgs {
         let hyperparameters = HyperParameters::try_from(record)?;
 
         let archive = run.archive()?;
-        if archive.is_empty() {
-            return Err(ResumeError::NoCheckpoints(run_dir.to_path_buf()).into());
-        }
-
-        let checkpoint_idx = match self.from {
-            Some(idx) => {
-                if idx >= archive.len() {
-                    return Err(ResumeError::CheckpointOutOfRange {
-                        index: idx,
-                        available: archive.len(),
-                    }
-                    .into());
-                }
-                idx
-            }
-            None => archive.len() - 1,
-        };
+        let checkpoint_idx = archive.resolve_index(self.from)?;
 
         let model = archive.model_at(checkpoint_idx)?;
         loaded(&model);
@@ -195,8 +179,9 @@ impl ResumeArgs {
             if trimmed > 0 {
                 warning!("Removed {trimmed} checkpoint(s) after epoch {from_epoch}");
             }
-            recording_at("TRAINING RUN", run_dir);
-            Some(run.recorder())
+            let recorder = run.recorder();
+            recording(&recorder);
+            Some(recorder)
         } else {
             None
         };
@@ -213,35 +198,6 @@ impl ResumeArgs {
         Ok(())
     }
 }
-
-/// Errors raised while validating a resume request against a run's checkpoints.
-#[derive(Debug)]
-enum ResumeError {
-    /// The run directory holds no checkpoints to resume from.
-    NoCheckpoints(PathBuf),
-    /// The requested checkpoint index is past the last checkpoint.
-    CheckpointOutOfRange { index: usize, available: usize },
-}
-
-impl fmt::Display for ResumeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ResumeError::NoCheckpoints(dir) => {
-                write!(
-                    f,
-                    "no checkpoints found in '{}'; cannot resume",
-                    dir.display()
-                )
-            }
-            ResumeError::CheckpointOutOfRange { index, available } => write!(
-                f,
-                "checkpoint index {index} out of range (run has {available} checkpoints)"
-            ),
-        }
-    }
-}
-
-impl Error for ResumeError {}
 
 /// Reported when training ends in an unrecovered divergence, with actionable hints.
 #[derive(Debug)]

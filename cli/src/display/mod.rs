@@ -22,10 +22,8 @@ pub(crate) use hyperparameters::HyperParametersView;
 pub(crate) use icons::*;
 pub(crate) use progress::{bar, styled_bar};
 
-use crate::path::PathExt;
 use console::Emoji;
 use std::fmt::Display;
-use std::path::Path;
 
 // ─── Entity descriptions ────────────────────────────────────────────────────
 
@@ -131,14 +129,14 @@ pub(crate) fn saved(artifacts: &Artifacts) {
 
 // ─── File event verbs ───────────────────────────────────────────────────────
 
-/// A record event: the record icon, the entity `name`, and the directory path.
-pub(crate) fn recording_at<P: AsRef<Path>>(name: &str, at: P) {
+/// A record event: the record icon, the entity's NAME, and its description.
+pub(crate) fn recording<E: Named + Describe>(entity: &E) {
     action(
         RECORD_ICON,
         format!(
             "Recording {} at {}",
-            theme::title(name),
-            theme::value(at.as_ref().to_relative().display())
+            theme::title(E::NAME),
+            theme::value(entity.describe())
         ),
     );
 }
