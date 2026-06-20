@@ -472,7 +472,7 @@ To resume from a training checkpoint (continues history, restores the exact epoc
 
 ```sh
 nrn train resume training-model-scaled-digits --epochs 1000
-# Resume from a specific snapshot instead of the last one:
+# Resume from the checkpoint recorded at a specific epoch instead of the last one:
 nrn train resume training-model-scaled-digits --from 50 --epochs 1000
 ```
 

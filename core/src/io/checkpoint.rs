@@ -199,20 +199,34 @@ impl CheckpointArchive {
         self.entries.get(index).map(|s| s.epoch)
     }
 
-    /// Resolves an optional checkpoint selection to a concrete index: an explicit
-    /// `index` (bounds-checked) or, when `None`, the most recent checkpoint.
-    /// Errors if the archive holds no checkpoints.
-    pub fn resolve_index(&self, index: Option<usize>) -> Result<usize> {
-        if self.entries.is_empty() {
+    /// Resolves an optional checkpoint selection to a concrete index: the
+    /// checkpoint recorded at `epoch`, or — when `None` — the most recent
+    /// checkpoint. Errors if the archive holds no checkpoints, or if no
+    /// checkpoint was recorded at `epoch`.
+    pub fn resolve_epoch(&self, epoch: Option<usize>) -> Result<usize> {
+        let Some(last) = self.entries.len().checked_sub(1) else {
             return Err(Error::new(
                 InvalidData,
                 format!("no checkpoints found in '{}'", self.dir.display()),
             ));
-        }
-        match index {
-            Some(index) => self.entry_at(index).map(|_| index),
-            None => Ok(self.entries.len() - 1),
-        }
+        };
+        let Some(epoch) = epoch else {
+            return Ok(last);
+        };
+        // Entries are sorted by epoch, so a binary search locates the match.
+        self.entries
+            .binary_search_by_key(&epoch, |entry| entry.epoch)
+            .map_err(|_| {
+                Error::new(
+                    InvalidData,
+                    format!(
+                        "no checkpoint recorded at epoch {epoch} in '{}' (recorded epochs: {}..={})",
+                        self.dir.display(),
+                        self.entries[0].epoch,
+                        self.entries[last].epoch,
+                    ),
+                )
+            })
     }
 
     /// Returns the checkpoint entry at `index`, or an error if out of range.
@@ -492,17 +506,17 @@ mod tests {
     }
 
     #[test]
-    fn resolve_index_on_empty_archive_errors() {
+    fn resolve_epoch_on_empty_archive_errors() {
         let dir = temp_dir("resolve_empty");
         let archive = CheckpointArchive::load(&dir).unwrap();
-        let err = archive.resolve_index(None).unwrap_err().to_string();
+        let err = archive.resolve_epoch(None).unwrap_err().to_string();
         cleanup(&dir);
 
         assert!(err.contains("no checkpoints"), "got: {err}");
     }
 
     #[test]
-    fn resolve_index_defaults_to_last_checkpoint() {
+    fn resolve_epoch_defaults_to_last_checkpoint() {
         let dir = temp_dir("resolve_last");
         let recorder = create_run(&dir, "ds", false);
         for epoch in [0, 5, 10] {
@@ -510,38 +524,46 @@ mod tests {
         }
 
         let archive = CheckpointArchive::load(&dir).unwrap();
-        let idx = archive.resolve_index(None).unwrap();
+        let idx = archive.resolve_epoch(None).unwrap();
         cleanup(&dir);
 
         assert_eq!(idx, 2);
     }
 
     #[test]
-    fn resolve_index_keeps_valid_explicit_index() {
-        let dir = temp_dir("resolve_explicit");
+    fn resolve_epoch_finds_matching_checkpoint() {
+        let dir = temp_dir("resolve_match");
         let recorder = create_run(&dir, "ds", false);
-        for epoch in [0, 5] {
+        for epoch in [0, 5, 10] {
             write_checkpoint(&recorder, epoch);
         }
 
         let archive = CheckpointArchive::load(&dir).unwrap();
-        let idx = archive.resolve_index(Some(1)).unwrap();
+        // Epoch 5 is the second checkpoint (index 1), not at index 5.
+        let idx = archive.resolve_epoch(Some(5)).unwrap();
         cleanup(&dir);
 
         assert_eq!(idx, 1);
     }
 
     #[test]
-    fn resolve_index_out_of_range_errors() {
-        let dir = temp_dir("resolve_oob");
+    fn resolve_epoch_without_checkpoint_errors() {
+        let dir = temp_dir("resolve_unknown");
         let recorder = create_run(&dir, "ds", false);
-        write_checkpoint(&recorder, 0);
+        for epoch in [0, 5] {
+            write_checkpoint(&recorder, epoch);
+        }
 
         let archive = CheckpointArchive::load(&dir).unwrap();
-        let err = archive.resolve_index(Some(99)).unwrap_err().to_string();
+        // Epoch 3 falls between checkpoints, so no checkpoint matches it.
+        let err = archive.resolve_epoch(Some(3)).unwrap_err().to_string();
         cleanup(&dir);
 
-        assert!(err.contains("out of range"), "got: {err}");
+        assert!(
+            err.contains("no checkpoint recorded at epoch 3"),
+            "got: {err}"
+        );
+        assert!(err.contains("0..=5"), "got: {err}");
     }
 
     #[test]

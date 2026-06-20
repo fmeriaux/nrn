@@ -138,7 +138,7 @@ pub struct ResumeArgs {
     /// Training run directory to resume from
     run_dir: String,
 
-    /// Checkpoint index to resume from (default: last checkpoint)
+    /// Epoch to resume from; must match a recorded checkpoint (default: last checkpoint)
     #[arg(long)]
     from: Option<usize>,
 
@@ -162,14 +162,14 @@ impl ResumeArgs {
         let hyperparameters = HyperParameters::try_from(record)?;
 
         let archive = run.archive()?;
-        let checkpoint_idx = archive.resolve_index(self.from)?;
+        let checkpoint_idx = archive.resolve_epoch(self.from)?;
 
         let model = archive.model_at(checkpoint_idx)?;
         loaded(&model);
 
         let from_epoch = archive
             .epoch_at(checkpoint_idx)
-            .expect("checkpoint_idx was just validated against archive.len()");
+            .expect("checkpoint_idx was just resolved against the archive");
 
         let scheduler_state = archive.scheduler_at(checkpoint_idx)?;
         let optimizer_state = archive.optimizer_at(checkpoint_idx)?;
