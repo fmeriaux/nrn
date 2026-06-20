@@ -8,11 +8,15 @@ use nrn::evaluation::{Evaluation, EvaluationSet};
 const LOSS_HEADER: &str = "loss";
 const ACC_HEADER: &str = "accuracy";
 
+impl Named for ModelSplit {
+    const NAME: &'static str = "SAMPLES";
+}
+
 /// The realized per-split sample counts.
 impl Describe for ModelSplit {
     fn describe(&self) -> String {
         format!(
-            "Samples · Train={} · Val={} · Test={}",
+            "Train={} · Val={} · Test={}",
             theme::value(self.train_size()),
             theme::value(self.validation_size()),
             theme::value(self.test_size()),

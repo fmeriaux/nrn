@@ -1,4 +1,4 @@
-use super::{Describe, Named, rows};
+use super::{Describe, Named, rows, theme};
 use crate::path::PathExt;
 use nrn::io::checkpoint::{CheckpointArchive, CheckpointRecorder};
 
@@ -12,7 +12,7 @@ impl Named for CheckpointRecorder {
 
 impl Describe for CheckpointRecorder {
     fn describe(&self) -> String {
-        self.dir().to_relative().display().to_string()
+        theme::value(self.dir().to_relative().display())
     }
 }
 

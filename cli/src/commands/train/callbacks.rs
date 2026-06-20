@@ -4,7 +4,7 @@
 //! into a `callbacks/` submodule if this file grows.
 
 use crate::display::{
-    Artifacts, Describe, HyperParametersView, completed, evaluated, saved, show, styled_bar, trace,
+    Artifacts, HyperParametersView, completed, completed_with, evaluated, saved, show, styled_bar,
     warning,
 };
 use indicatif::ProgressBar;
@@ -71,7 +71,7 @@ impl TrainerCallback for ConsoleMonitor {
 
         self.bar.suspend(|| {
             show(&view);
-            trace(&split.describe());
+            show(split);
         });
 
         Ok(())
@@ -96,17 +96,17 @@ impl TrainerCallback for ConsoleMonitor {
                 completed!("Training completed");
             }
             TrainingOutcome::EarlyStopped { restored } => {
-                completed!("Early stopping triggered at epoch {epoch}");
-                if restored {
-                    trace("Restored the best model observed during training");
-                }
+                completed_with!(
+                    restored.then_some("restored best model"),
+                    "Early stopping at epoch {epoch}"
+                );
             }
             TrainingOutcome::Diverged { recovered: true } => {
                 warning!(
                     "Model diverged at epoch {epoch} (NaN/Inf); recovered best model from early stopping."
                 );
             }
-            TrainingOutcome::Diverged { recovered: false } => {}
+            _ => {}
         }
 
         if let Some(eval) = eval {

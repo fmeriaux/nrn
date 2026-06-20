@@ -84,11 +84,10 @@ pub(crate) fn action(icon: Emoji, message: impl Display) {
     println!("{} {}\n", theme::icon(icon), message);
 }
 
-/// Pairs a styled `title` header with an entity's `description`: a single-line
-/// description collapses onto the title as `title · description`; a multi-line
-/// description follows on its own lines.
-fn titled(title: &str, description: String) -> String {
-    let title = theme::title(title);
+/// Places an already-styled `title` header with an entity's `description`: a
+/// single-line description collapses onto the title as `title · description`; a
+/// multi-line description follows on its own lines.
+fn titled(title: String, description: String) -> String {
     if description.contains('\n') {
         format!("{title}\n{description}")
     } else {
@@ -101,7 +100,10 @@ fn titled(title: &str, description: String) -> String {
 fn reported<E: Named + Describe>(icon: Emoji, verb: &str, entity: &E) {
     action(
         icon,
-        titled(&format!("{} {verb}", E::NAME), entity.describe()),
+        titled(
+            theme::title(format!("{} {verb}", E::NAME)),
+            entity.describe(),
+        ),
     );
 }
 
@@ -119,7 +121,7 @@ pub(crate) fn initialized<E: Named + Describe>(entity: &E) {
 
 /// An `icon` line heading the entity's NAME with its description.
 fn headed<E: Named + Describe>(icon: Emoji, entity: &E) {
-    action(icon, titled(E::NAME, entity.describe()));
+    action(icon, titled(theme::title(E::NAME), entity.describe()));
 }
 
 /// The trace icon, the entity's NAME, then its description.
@@ -137,16 +139,14 @@ pub(crate) fn saved(artifacts: &Artifacts) {
     headed(SAVE_ICON, artifacts);
 }
 
-// ─── File event verbs ───────────────────────────────────────────────────────
-
-/// A record event: the record icon, the entity's NAME, and its description.
+/// The record icon, then a violet `RECORDING NAME` active header and its
+/// description.
 pub(crate) fn recording<E: Named + Describe>(entity: &E) {
     action(
         RECORD_ICON,
-        format!(
-            "Recording {} at {}",
-            theme::title(E::NAME),
-            theme::value(entity.describe())
+        titled(
+            theme::active(format!("RECORDING {}", E::NAME)),
+            entity.describe(),
         ),
     );
 }
@@ -162,6 +162,18 @@ pub(crate) fn trace(message: &str) {
 #[doc(hidden)]
 pub(crate) fn emit_completed(message: &str) {
     action(SUCCESS_ICON, theme::success(message));
+}
+
+/// Backing implementation for the [`completed_with!`] macro: a success status
+/// line with a dim `· caption` set apart from the green headline — a secondary
+/// fact about the same event. Prefer the macro at call sites.
+#[doc(hidden)]
+pub(crate) fn emit_completed_with(message: &str, caption: Option<&str>) {
+    let mut line = theme::success(message);
+    if let Some(caption) = caption {
+        line.push_str(&format!(" {}", theme::caption(format!("· {caption}"))));
+    }
+    action(SUCCESS_ICON, line);
 }
 
 /// Backing implementation for the [`warning!`] macro: a styled `Warning:` line
@@ -193,6 +205,15 @@ macro_rules! completed {
     ($($arg:tt)*) => { $crate::display::emit_completed(&::std::format!($($arg)*)) };
 }
 
+/// Emit a success status line with a dim `· caption` detail set apart from the
+/// green headline. The `caption` (an `Option<&str>`) comes first; the remaining
+/// `format!`-style arguments build the headline.
+macro_rules! completed_with {
+    ($caption:expr, $($arg:tt)*) => {
+        $crate::display::emit_completed_with(&::std::format!($($arg)*), $caption)
+    };
+}
+
 /// Emit a styled `Warning:` line to stderr, taking `format!`-style arguments.
 macro_rules! warning {
     ($($arg:tt)*) => { $crate::display::emit_warning(&::std::format!($($arg)*)) };
@@ -203,4 +224,4 @@ macro_rules! error {
     ($($arg:tt)*) => { $crate::display::emit_error(&::std::format!($($arg)*)) };
 }
 
-pub(crate) use {completed, error, warning};
+pub(crate) use {completed, completed_with, error, warning};
