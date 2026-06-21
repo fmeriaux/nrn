@@ -70,7 +70,7 @@ fn draw_data_with(
                 }
 
                 if let Some(predictor) = predictor {
-                    let decision_boundary = predictor.decision_boundary(&mins, &maxs, 800, 0.001);
+                    let decision_boundary = predictor.decision_boundary(&mins, &maxs, 800);
                     let color = RED_900.to_rgba().filled();
 
                     chart.draw_series(
