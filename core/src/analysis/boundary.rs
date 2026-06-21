@@ -112,9 +112,10 @@ fn edge_crossing(a: ArrayView1<f32>, b: ArrayView1<f32>) -> Option<f32> {
     if wa == wb {
         return None;
     }
+    // `a[wa] >= a[wb]` and `b[wb] >= b[wa]` (each winner leads its own column), and the
+    // winners differ, so the margins span zero with a strictly positive denominator.
     let (ma, mb) = (a[wa] - a[wb], b[wa] - b[wb]);
-    let denom = ma - mb;
-    Some(if denom == 0.0 { 0.5 } else { ma / denom })
+    Some(ma / (ma - mb))
 }
 
 /// The index of the largest element, picking the first on ties.
