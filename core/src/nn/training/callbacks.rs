@@ -60,7 +60,8 @@ pub trait TrainerCallback {
     }
 
     /// Called once when training ends. `model` and `eval` are the final model and
-    /// evaluation, or `None` on a fatal divergence (nothing safe to persist or evaluate).
+    /// evaluation, or `None` on a fatal divergence (nothing safe to persist or
+    /// evaluate).
     fn on_train_end(
         &mut self,
         _outcome: TrainingOutcome,

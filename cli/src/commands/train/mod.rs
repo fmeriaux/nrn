@@ -101,11 +101,14 @@ impl StartArgs {
             }
         };
 
+        let data = hyperparameters.prepare(dataset.to_model_dataset(), None);
+
         let recorder = if hyperparameters.checkpoint_interval() > 0 {
             let meta = TrainingMeta {
                 dataset: dataset_name,
                 model: model_name.clone(),
                 hyperparams: HyperParametersRecord::from(&hyperparameters),
+                scaler: data.scaler().cloned().map(Into::into),
             };
             let recorder = TrainingRun::create(&run_dir, &meta, self.overwrite)
                 .map_err(overwrite_hint)?
@@ -118,11 +121,15 @@ impl StartArgs {
 
         let callbacks = Callbacks::empty()
             .with(ConsoleMonitor::new(hyperparameters.clone(), None))
-            .with(ModelSaver::new(&run_dir, &model_name))
+            .with(ModelSaver::new(
+                &run_dir,
+                &model_name,
+                data.scaler().cloned(),
+            ))
             .with_opt(recorder);
 
         hyperparameters
-            .build(model, dataset.to_model_dataset(), callbacks)
+            .build(model, data, callbacks)
             .train()?
             .into_result()
             .map_err(DivergedRun::from)?;
@@ -156,6 +163,7 @@ impl ResumeArgs {
         loaded(&dataset);
 
         let previous = HyperParameters::try_from(meta.hyperparams.clone())?;
+        let scaler = meta.scaler.clone().map(Into::into);
 
         let mut record = meta.hyperparams.clone();
         self.overrides.apply(&mut record);
@@ -186,12 +194,18 @@ impl ResumeArgs {
             None
         };
 
+        let data = hyperparameters.prepare(dataset.to_model_dataset(), scaler);
+
         let callbacks = Callbacks::empty()
             .with(ConsoleMonitor::new(hyperparameters.clone(), Some(previous)))
-            .with(ModelSaver::new(run_dir, &meta.model))
+            .with(ModelSaver::new(
+                run_dir,
+                &meta.model,
+                data.scaler().cloned(),
+            ))
             .with_opt(recorder);
 
-        let mut trainer = hyperparameters.build(model, dataset.to_model_dataset(), callbacks);
+        let mut trainer = hyperparameters.build(model, data, callbacks);
         trainer.restore(from_epoch, optimizer_state, scheduler_state)?;
         trainer.train()?.into_result().map_err(DivergedRun::from)?;
 

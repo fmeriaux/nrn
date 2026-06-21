@@ -5,6 +5,7 @@
 //! construction of multi-layer perceptron and similar models.
 
 use crate::activations::{Activation, SIGMOID, SOFTMAX};
+use crate::data::scalers::{Scaler, ScalerMethod};
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
 use ndarray_rand::rand::RngCore;
 use ndarray_rand::rand::SeedableRng;
@@ -268,6 +269,41 @@ impl NeuralNetwork {
     pub fn predict_single(&self, input: ArrayView1<f32>) -> Array1<f32> {
         let inputs = input.insert_axis(Axis(1));
         self.predict(inputs).column(0).to_owned()
+    }
+}
+
+/// A trained [`NeuralNetwork`] paired with the scaler fitted alongside it.
+#[derive(Clone, Debug)]
+pub struct Predictor {
+    /// The trained network.
+    pub network: NeuralNetwork,
+    /// The scaler applied to raw inputs before prediction, when one is present.
+    pub scaler: Option<ScalerMethod>,
+}
+
+impl Predictor {
+    /// Pairs a network with an optional scaler.
+    pub fn new(network: NeuralNetwork, scaler: Option<ScalerMethod>) -> Self {
+        Self { network, scaler }
+    }
+
+    /// Predicts on a single raw input vector, applying the scaler first when present.
+    pub fn predict_single(&self, input: ArrayView1<f32>) -> Array1<f32> {
+        let mut input = input.to_owned();
+        if let Some(scaler) = &self.scaler {
+            scaler.apply_single_inplace(input.view_mut());
+        }
+        self.network.predict_single(input.view())
+    }
+
+    /// Predicts on a batch of raw inputs `(features, samples)`, applying the scaler
+    /// first when present.
+    pub fn predict(&self, inputs: ArrayView2<f32>) -> Array2<f32> {
+        let mut inputs = inputs.to_owned();
+        if let Some(scaler) = &self.scaler {
+            scaler.apply_inplace(inputs.view_mut().reversed_axes());
+        }
+        self.network.predict(inputs.view())
     }
 }
 

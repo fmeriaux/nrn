@@ -3,6 +3,7 @@
 //! compared against its previous setting, the changed lines annotated `▲ was …`.
 
 use super::{Describe, Named, column_width, row};
+use nrn::data::scalers::ScalerKind;
 use nrn::training::{
     EarlyStoppingConfig, GradientClipping, HyperParameters, LossConfig, OptimizerConfig,
     SchedulerConfig,
@@ -25,6 +26,7 @@ const ROWS: &[Row] = &[
     ("Split", |h| {
         format!("val {} · test {}", h.val_ratio(), h.test_ratio())
     }),
+    ("Scaling", |h| scaling_value(h.scaler())),
     ("Checkpoints", |h| {
         checkpoints_value(h.checkpoint_interval())
     }),
@@ -88,6 +90,13 @@ fn clipping_value(clipping: &GradientClipping) -> String {
         GradientClipping::None => "none".to_string(),
         GradientClipping::Norm { max_norm } => format!("norm · max {max_norm}"),
         GradientClipping::Value { min, max } => format!("value · min {min} · max {max}"),
+    }
+}
+
+fn scaling_value(scaler: Option<ScalerKind>) -> String {
+    match scaler {
+        Some(kind) => kind.name().to_string(),
+        None => "none".to_string(),
     }
 }
 

@@ -23,7 +23,7 @@ fn xor_converges_to_low_loss() {
 
     let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![8]), 2, &*SIGMOID).unwrap();
 
-    let report = HyperParameters::from_values(
+    let hyperparameters = HyperParameters::from_values(
         10_000,
         0,
         None,
@@ -36,15 +36,18 @@ fn xor_converges_to_low_loss() {
         0.0,
         0.5,
         42,
+        None,
     )
-    .unwrap()
-    .build(
-        NeuralNetwork::initialization(2, &specs, 42),
-        xor_dataset(),
-        Callbacks::new(vec![]),
-    )
-    .train()
     .unwrap();
+    let data = hyperparameters.prepare(xor_dataset(), None);
+    let report = hyperparameters
+        .build(
+            NeuralNetwork::initialization(2, &specs, 42),
+            data,
+            Callbacks::new(vec![]),
+        )
+        .train()
+        .unwrap();
 
     let loss = report.final_evaluation.unwrap().train.loss;
     assert!(loss < 0.05, "XOR did not converge: final loss = {loss:.4}");
@@ -66,7 +69,7 @@ fn xor_converges_with_mini_batch() {
 
     let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![8]), 2, &*SIGMOID).unwrap();
 
-    let report = HyperParameters::from_values(
+    let hyperparameters = HyperParameters::from_values(
         8_000,
         0,
         Some(2),
@@ -79,15 +82,18 @@ fn xor_converges_with_mini_batch() {
         0.0,
         0.5,
         42,
+        None,
     )
-    .unwrap()
-    .build(
-        NeuralNetwork::initialization(2, &specs, 42),
-        xor_dataset(),
-        Callbacks::new(vec![]),
-    )
-    .train()
     .unwrap();
+    let data = hyperparameters.prepare(xor_dataset(), None);
+    let report = hyperparameters
+        .build(
+            NeuralNetwork::initialization(2, &specs, 42),
+            data,
+            Callbacks::new(vec![]),
+        )
+        .train()
+        .unwrap();
 
     let loss = report.final_evaluation.unwrap().train.loss;
     assert!(
@@ -118,7 +124,7 @@ fn three_class_converges_to_low_loss() {
     // (He init sets biases to zero, so relu([0,0]) = 0 and its gradient is dead at epoch 0).
     let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![8]), 3, &*SIGMOID).unwrap();
 
-    let report = HyperParameters::from_values(
+    let hyperparameters = HyperParameters::from_values(
         5_000,
         0,
         None,
@@ -131,15 +137,18 @@ fn three_class_converges_to_low_loss() {
         0.0,
         0.5,
         42,
+        None,
     )
-    .unwrap()
-    .build(
-        NeuralNetwork::initialization(2, &specs, 42),
-        three_class_dataset(),
-        Callbacks::new(vec![]),
-    )
-    .train()
     .unwrap();
+    let data = hyperparameters.prepare(three_class_dataset(), None);
+    let report = hyperparameters
+        .build(
+            NeuralNetwork::initialization(2, &specs, 42),
+            data,
+            Callbacks::new(vec![]),
+        )
+        .train()
+        .unwrap();
 
     let loss = report.final_evaluation.unwrap().train.loss;
     assert!(

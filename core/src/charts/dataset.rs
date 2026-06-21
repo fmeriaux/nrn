@@ -1,7 +1,7 @@
 use crate::analysis::decision_boundary;
 use crate::charts::{RenderConfig, add_padding, draw_chart, draw_with};
 use crate::data::Dataset;
-use crate::model::NeuralNetwork;
+use crate::model::Predictor;
 use plotters::element::Circle;
 use plotters::prelude::full_palette::RED_900;
 use plotters::prelude::*;
@@ -15,8 +15,8 @@ impl Dataset {
     }
 }
 
-impl NeuralNetwork {
-    /// Draws the decision boundary of the neural network over the provided dataset.
+impl Predictor {
+    /// Draws the decision boundary of the predictor over the provided dataset.
     /// The dataset must have exactly two features.
     /// Returns the plot as a vector of bytes in RGB format.
     pub fn draw_decision_boundary(
@@ -29,10 +29,10 @@ impl NeuralNetwork {
 }
 
 /// Draws a scatter plot of the features with labels.
-/// If a model is provided, it also draws the decision boundary.
+/// If a predictor is provided, it also draws the decision boundary.
 fn draw_data_with(
     dataset: &Dataset,
-    model: Option<&NeuralNetwork>,
+    predictor: Option<&Predictor>,
     cfg: &RenderConfig,
     show_legend: bool,
 ) -> Result<Vec<u8>, Box<dyn Error>> {
@@ -70,8 +70,8 @@ fn draw_data_with(
                         .legend(move |(x, y)| Circle::new((x, y), 2, color));
                 }
 
-                if let Some(model) = model {
-                    let decision_boundary = decision_boundary(&mins, &maxs, model, 800, 0.001);
+                if let Some(predictor) = predictor {
+                    let decision_boundary = decision_boundary(&mins, &maxs, predictor, 800, 0.001);
                     let color = RED_900.to_rgba().filled();
 
                     chart.draw_series(

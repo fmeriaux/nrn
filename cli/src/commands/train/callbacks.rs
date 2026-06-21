@@ -9,8 +9,9 @@ use crate::display::{
 };
 use indicatif::ProgressBar;
 use nrn::data::ModelSplit;
+use nrn::data::scalers::ScalerMethod;
 use nrn::evaluation::EvaluationSet;
-use nrn::model::NeuralNetwork;
+use nrn::model::{NeuralNetwork, Predictor};
 use nrn::optimizers::Optimizer;
 use nrn::schedulers::Scheduler;
 use nrn::training::{CallbackResult, HyperParameters, TrainerCallback, TrainingOutcome};
@@ -119,19 +120,21 @@ impl TrainerCallback for ConsoleMonitor {
 
 // ─── ModelSaver ─────────────────────────────────────────────────────────────
 
-/// Saves the final model to disk once training ends, unless the run diverged
-/// without recovery (in which case `model` is `None`).
+/// Saves the final predictor (model plus the run's scaler) to disk once training
+/// ends, unless the run diverged without recovery (in which case `model` is `None`).
 pub struct ModelSaver {
     path: PathBuf,
+    scaler: Option<ScalerMethod>,
 }
 
 impl ModelSaver {
-    /// Saves the final model beside `run_dir`, in a file named `model_name`.
+    /// Saves the final predictor beside `run_dir`, in a directory named `model_name`.
     /// Start and resume both construct the saver here, so the model can't land
     /// in two different places.
-    pub fn new(run_dir: &Path, model_name: &str) -> Self {
+    pub fn new(run_dir: &Path, model_name: &str, scaler: Option<ScalerMethod>) -> Self {
         Self {
             path: run_dir.parent().unwrap_or(Path::new(".")).join(model_name),
+            scaler,
         }
     }
 }
@@ -145,10 +148,8 @@ impl TrainerCallback for ModelSaver {
         _epoch: usize,
     ) -> CallbackResult {
         if let Some(model) = model {
-            saved(&Artifacts::single(
-                "Neural Network",
-                model.save(&self.path)?,
-            ));
+            let predictor = Predictor::new(model.clone(), self.scaler.clone());
+            saved(&Artifacts::single("Model", predictor.save(&self.path)?));
         }
         Ok(())
     }

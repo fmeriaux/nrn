@@ -24,6 +24,7 @@ use ndarray::{Array1, ArrayView2, ArrayViewMut2, Axis};
 /// # Usage
 /// Create a new scaler using [`MinMaxScaler::new`] or [`MinMaxScaler::default`].
 /// Use [`MinMaxScaler::fit`] to compute min/max from training data, then [`MinMaxScaler::apply`] or [`MinMaxScaler::apply_inplace`] to transform data.
+#[derive(Clone, Debug)]
 pub struct MinMaxScaler {
     /// Minimum value for each feature (computed during `fit`).
     pub min: Array1<f32>,

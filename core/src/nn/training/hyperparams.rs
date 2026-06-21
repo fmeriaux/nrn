@@ -1,7 +1,9 @@
 use super::callbacks::Callbacks;
 use super::early_stopping::{EarlyStoppingConfig, EarlyStoppingConfigError};
+use super::preprocessing::TrainingData;
 use super::trainer::Trainer;
 use crate::data::ModelDataset;
+use crate::data::scalers::{ScalerKind, ScalerMethod};
 use crate::gradients::{GradientClipping, GradientClippingError};
 use crate::learning_rate::{LearningRate, LearningRateError};
 use crate::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
@@ -131,6 +133,9 @@ pub struct HyperParameters {
     /// convention) the model's weight initialization at the call site. Part of the
     /// run's identity so a run is always reproducible and the seed is recorded.
     seed: u64,
+    /// Input scaling applied during [`build`](HyperParameters::build); `None`
+    /// leaves the inputs untouched. The scaler is fitted on the train split only.
+    scaler: Option<ScalerKind>,
 }
 
 /// The single error type for constructing a [`HyperParameters`] spec, whether
@@ -248,6 +253,7 @@ impl HyperParameters {
         val_ratio: f32,
         test_ratio: f32,
         seed: u64,
+        scaler: Option<ScalerKind>,
     ) -> Result<Self, HyperParametersError> {
         if epochs < 1 {
             return Err(HyperParametersError::ZeroEpochs);
@@ -285,6 +291,7 @@ impl HyperParameters {
             val_ratio,
             test_ratio,
             seed,
+            scaler,
         })
     }
 
@@ -314,6 +321,7 @@ impl HyperParameters {
         val_ratio: f32,
         test_ratio: f32,
         seed: u64,
+        scaler: Option<ScalerKind>,
     ) -> Result<Self, HyperParametersError> {
         HyperParameters::new(
             epochs,
@@ -328,6 +336,7 @@ impl HyperParameters {
             val_ratio,
             test_ratio,
             seed,
+            scaler,
         )
     }
 
@@ -379,22 +388,29 @@ impl HyperParameters {
         self.seed
     }
 
-    /// Instantiates the runtime [`Trainer`] from this specification, binding it
-    /// to the `model` and `callbacks`. This is the one place declarative configs
-    /// become concrete objects: the optimizer/scheduler/loss are instantiated, and
-    /// `dataset` is split into train/validation/test using this spec's own
-    /// `val_ratio`/`test_ratio` (validated in [`new`](HyperParameters::new), so the
-    /// split is always well-formed).
+    pub fn scaler(&self) -> Option<ScalerKind> {
+        self.scaler
+    }
+
+    /// Prepares `dataset` for training: splits it into train/validation/test using
+    /// this spec's `val_ratio`/`test_ratio` (validated in [`new`](Self::new), so the
+    /// split is always well-formed), then scales it. An explicit `scaler` is applied
+    /// unchanged; otherwise this spec's [`scaler`](Self::scaler) kind is fitted on
+    /// the train split.
+    pub fn prepare(&self, dataset: ModelDataset, scaler: Option<ScalerMethod>) -> TrainingData {
+        let split = dataset.split(self.val_ratio, self.test_ratio);
+        let scaler = scaler.or_else(|| self.scaler.map(|kind| split.train.fit_scaler(kind)));
+        TrainingData::new(split, scaler)
+    }
+
+    /// Instantiates the runtime [`Trainer`] from this specification, binding it to
+    /// the `model`, the prepared [`TrainingData`], and `callbacks`. This is the one
+    /// place declarative configs become concrete objects: the optimizer, scheduler,
+    /// and loss are instantiated.
     ///
     /// The trainer starts from epoch 0; to resume a run, call
     /// [`Trainer::restore`](crate::training::Trainer::restore) on the result.
-    pub fn build(
-        self,
-        model: NeuralNetwork,
-        dataset: ModelDataset,
-        callbacks: Callbacks,
-    ) -> Trainer {
-        let split = dataset.split(self.val_ratio, self.test_ratio);
+    pub fn build(self, model: NeuralNetwork, data: TrainingData, callbacks: Callbacks) -> Trainer {
         let optimizer = self.optimizer.instantiate(self.lr);
         let scheduler = self
             .scheduler
@@ -405,7 +421,7 @@ impl HyperParameters {
         Trainer {
             model,
             callbacks,
-            split,
+            split: data.split,
             loss,
             optimizer,
             scheduler,
@@ -447,6 +463,7 @@ mod tests {
             val_ratio,
             test_ratio,
             0,
+            None,
         )
     }
 
@@ -645,5 +662,67 @@ mod tests {
             HyperParametersError::from(err).to_string(),
             "early stopping patience must be greater than zero"
         );
+    }
+
+    /// A two-feature dataset whose values grow with the sample index, so MinMax
+    /// scaling has a non-trivial effect.
+    fn ramp_dataset() -> crate::data::Dataset {
+        use ndarray::{Array1, Array2};
+        let features = Array2::from_shape_fn((10, 2), |(i, _)| i as f32);
+        let labels = Array1::from_shape_fn(10, |i| (i % 2) as f32);
+        crate::data::Dataset::new(features, labels, None).unwrap()
+    }
+
+    fn spec_with_scaler(scaler: Option<ScalerKind>) -> HyperParameters {
+        HyperParameters::from_values(
+            5,
+            1,
+            None,
+            0.01,
+            OptimizerConfig::Adam,
+            SchedulerConfig::Constant,
+            GradientClipping::None,
+            LossConfig::CrossEntropy,
+            None,
+            0.2,
+            0.2,
+            0,
+            scaler,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn prepare_fits_the_configured_scaler_on_the_train_split() {
+        let hp = spec_with_scaler(Some(ScalerKind::MinMax));
+        let data = hp.prepare(ramp_dataset().to_model_dataset(), None);
+
+        // A scaler was fitted from the spec's kind, and applying it lands the train
+        // inputs in [0, 1] — the signature of the MinMax kind that was configured.
+        assert!(data.scaler().is_some());
+        assert!(
+            data.split
+                .train
+                .inputs
+                .iter()
+                .all(|&v| (-1e-5..=1.0 + 1e-5).contains(&v))
+        );
+    }
+
+    #[test]
+    fn prepare_reuses_an_explicit_scaler_without_refitting() {
+        use crate::data::scalers::MinMaxScaler;
+        use ndarray::array;
+
+        // A scaler fitted on a far wider range than the data; reused verbatim it
+        // keeps every input well below 0.5 (refitting on the train split would not).
+        let supplied = ScalerMethod::MinMax(
+            MinMaxScaler::default().fit(array![[0.0, 0.0], [100.0, 100.0]].view()),
+        );
+
+        let hp = spec_with_scaler(None);
+        let data = hp.prepare(ramp_dataset().to_model_dataset(), Some(supplied));
+
+        assert!(data.split.train.inputs.iter().all(|&v| v < 0.5));
     }
 }

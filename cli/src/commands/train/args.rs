@@ -1,4 +1,5 @@
 use clap::*;
+use nrn::data::scalers::ScalerKind;
 use nrn::io::hyperparams::{
     ClippingRecord, EarlyStoppingRecord, HyperParametersRecord, SchedulerRecord,
 };
@@ -20,6 +21,21 @@ enum SchedulerType {
     Constant,
     Cosine,
     Step,
+}
+
+#[derive(ValueEnum, Debug, Copy, Clone)]
+enum ScaleType {
+    MinMax,
+    ZScore,
+}
+
+impl From<ScaleType> for ScalerKind {
+    fn from(scale: ScaleType) -> Self {
+        match scale {
+            ScaleType::MinMax => ScalerKind::MinMax,
+            ScaleType::ZScore => ScalerKind::ZScore,
+        }
+    }
 }
 
 // ─── Shared hyperparameters ───────────────────────────────────────────────────
@@ -98,6 +114,10 @@ pub struct TrainArgs {
     #[arg(long)]
     batch_size: Option<usize>,
 
+    /// Input scaler fitted on the train split and applied to all splits (omit for none)
+    #[arg(long, value_enum)]
+    scale: Option<ScaleType>,
+
     /// Seed for weight initialization and mini-batch shuffling (omit for a random,
     /// reported seed). Recorded so the run is reproducible and resumable.
     #[arg(long)]
@@ -175,6 +195,7 @@ impl TryFrom<&TrainArgs> for HyperParameters {
             args.val_ratio,
             args.test_ratio,
             args.seed.unwrap_or_else(ndarray_rand::rand::random),
+            args.scale.map(Into::into),
         )
     }
 }
@@ -465,6 +486,28 @@ mod tests {
     }
 
     #[test]
+    fn scale_maps_to_the_matching_scaler_kind() {
+        assert_eq!(
+            HyperParameters::try_from(&train_args(&[]))
+                .unwrap()
+                .scaler(),
+            None
+        );
+        assert_eq!(
+            HyperParameters::try_from(&train_args(&["--scale", "min-max"]))
+                .unwrap()
+                .scaler(),
+            Some(ScalerKind::MinMax)
+        );
+        assert_eq!(
+            HyperParameters::try_from(&train_args(&["--scale", "z-score"]))
+                .unwrap()
+                .scaler(),
+            Some(ScalerKind::ZScore)
+        );
+    }
+
+    #[test]
     fn hyperparameters_surface_validation_errors() {
         // Validation/test ratios summing past 1.0 is a cross-field invariant violation.
         let args = train_args(&["--val-ratio", "0.8", "--test-ratio", "0.8"]);
@@ -499,6 +542,7 @@ mod tests {
             test_ratio: 0.1,
             loss: nrn::io::hyperparams::LossRecord::CrossEntropy,
             seed: 42,
+            scaler: None,
         }
     }
 

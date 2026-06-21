@@ -14,7 +14,7 @@ use nrn::io::hyperparams::{
 use nrn::io::run::{TrainingMeta, TrainingRun};
 use nrn::io::scalers::ScalerRecord;
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
-use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec};
+use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec, Predictor};
 use nrn::optimizers::Adam;
 use nrn::schedulers::ConstantScheduler;
 use nrn::training::{GradientClipping, TrainerCallback};
@@ -41,6 +41,7 @@ fn sample_hyperparams() -> HyperParametersRecord {
         test_ratio: 0.1,
         loss: LossRecord::CrossEntropy,
         seed: 0,
+        scaler: None,
     }
 }
 
@@ -93,6 +94,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
             dataset: "test_dataset".to_string(),
             model: "model-test_dataset".to_string(),
             hyperparams: sample_hyperparams(),
+            scaler: None,
         },
         false,
     )
@@ -163,6 +165,47 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let inputs_path = dir.join("inputs");
     save_inputs(&inputs_path, &inputs).unwrap();
     assert_eq!(inputs, load_inputs(&inputs_path).unwrap());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn sample_network() -> NeuralNetwork {
+    let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![4]), 2, &*RELU).unwrap();
+    NeuralNetwork::initialization(2, &specs, 0)
+}
+
+#[test]
+fn predictor_with_scaler_roundtrips_through_directory() {
+    let dir = temp_dir().join("predictor_scaled");
+    let input = array![0.3, 0.7];
+
+    let features = array![[0.0, 0.0], [1.0, 1.0]];
+    let scaler = ScalerMethod::MinMax(MinMaxScaler::default().fit(features.view()));
+    let predictor = Predictor::new(sample_network(), Some(scaler));
+    let expected = predictor.predict_single(input.view());
+
+    predictor.save(&dir).unwrap();
+    let reloaded = Predictor::load(&dir).unwrap();
+
+    assert!(reloaded.scaler.is_some());
+    assert_eq!(expected, reloaded.predict_single(input.view()));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn predictor_without_scaler_roundtrips_with_none() {
+    let dir = temp_dir().join("predictor_unscaled");
+    let input = array![0.3, 0.7];
+
+    let predictor = Predictor::new(sample_network(), None);
+    let expected = predictor.predict_single(input.view());
+
+    predictor.save(&dir).unwrap();
+    let reloaded = Predictor::load(&dir).unwrap();
+
+    assert!(reloaded.scaler.is_none());
+    assert_eq!(expected, reloaded.predict_single(input.view()));
 
     let _ = std::fs::remove_dir_all(&dir);
 }

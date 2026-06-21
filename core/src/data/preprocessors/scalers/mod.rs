@@ -4,7 +4,7 @@ mod z_score;
 pub use min_max::MinMaxScaler;
 pub use z_score::ZScoreScaler;
 
-use ndarray::{ArrayViewMut1, ArrayViewMut2, Axis};
+use ndarray::{ArrayView2, ArrayViewMut1, ArrayViewMut2, Axis};
 
 /// Scaling transforms the input data to a specific range or distribution,
 /// which often improves the performance and convergence of models.
@@ -62,9 +62,40 @@ pub trait Scaler: Send + Sync {
 /// scaler.apply_inplace(data.view_mut());
 /// assert!(data.iter().all(|&v| v >= 0.0 && v <= 1.0 + 1e-5));
 /// ```
+#[derive(Clone, Debug)]
 pub enum ScalerMethod {
     MinMax(MinMaxScaler),
     ZScore(ZScoreScaler),
+}
+
+/// Declarative choice of scaling method, selected before any data is seen.
+///
+/// Where [`ScalerMethod`] carries the parameters of a *fitted* scaler,
+/// `ScalerKind` names only the method; [`fit`](ScalerKind::fit) turns it into a
+/// fitted [`ScalerMethod`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScalerKind {
+    MinMax,
+    ZScore,
+}
+
+impl ScalerKind {
+    /// Fits the chosen scaler on `data` (samples along rows, features along
+    /// columns), returning the fitted method.
+    pub fn fit(self, data: ArrayView2<f32>) -> ScalerMethod {
+        match self {
+            ScalerKind::MinMax => ScalerMethod::MinMax(MinMaxScaler::default().fit(data)),
+            ScalerKind::ZScore => ScalerMethod::ZScore(ZScoreScaler::default().fit(data)),
+        }
+    }
+
+    /// The canonical name of this scaling method.
+    pub fn name(self) -> &'static str {
+        match self {
+            ScalerKind::MinMax => MinMaxScaler::default().name(),
+            ScalerKind::ZScore => ZScoreScaler::default().name(),
+        }
+    }
 }
 
 /// Delegates the `Scaler` trait methods to the specific scaler implementations.
@@ -115,6 +146,18 @@ mod tests {
         let mut to_scale = data.clone();
         method.apply_inplace(to_scale.view_mut());
         assert!(to_scale.iter().all(|&v| (0.0..=1.0 + 1e-5).contains(&v)));
+    }
+
+    #[test]
+    fn kind_names_and_fits_each_method() {
+        let data = array![[0.0, 0.0], [10.0, 10.0]];
+
+        assert_eq!(ScalerKind::MinMax.name(), "min-max");
+        assert_eq!(ScalerKind::ZScore.name(), "z-score");
+
+        // The fitted method reports the inner scaler's name, confirming the variant.
+        assert_eq!(ScalerKind::MinMax.fit(data.view()).name(), "min-max");
+        assert_eq!(ScalerKind::ZScore.fit(data.view()).name(), "z-score");
     }
 
     #[test]
