@@ -121,7 +121,11 @@ impl StartArgs {
 
         let callbacks = Callbacks::empty()
             .with(ConsoleMonitor::new(hyperparameters.clone(), None))
-            .with(ModelSaver::new(&run_dir, &model_name))
+            .with(ModelSaver::new(
+                &run_dir,
+                &model_name,
+                data.scaler().cloned(),
+            ))
             .with_opt(recorder);
 
         hyperparameters
@@ -190,12 +194,17 @@ impl ResumeArgs {
             None
         };
 
+        let data = hyperparameters.prepare(dataset.to_model_dataset(), scaler);
+
         let callbacks = Callbacks::empty()
             .with(ConsoleMonitor::new(hyperparameters.clone(), Some(previous)))
-            .with(ModelSaver::new(run_dir, &meta.model))
+            .with(ModelSaver::new(
+                run_dir,
+                &meta.model,
+                data.scaler().cloned(),
+            ))
             .with_opt(recorder);
 
-        let data = hyperparameters.prepare(dataset.to_model_dataset(), scaler);
         let mut trainer = hyperparameters.build(model, data, callbacks);
         trainer.restore(from_epoch, optimizer_state, scheduler_state)?;
         trainer.train()?.into_result().map_err(DivergedRun::from)?;

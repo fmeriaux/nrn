@@ -432,7 +432,6 @@ impl HyperParameters {
             early_stopping: self.early_stopping,
             epoch_start: 0,
             seed: self.seed,
-            scaler: data.scaler,
         }
     }
 }

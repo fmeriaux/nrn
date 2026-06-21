@@ -5,7 +5,6 @@ use super::evaluator::Evaluator;
 use super::outcome::TrainingOutcome;
 use crate::accuracies::accuracy_for;
 use crate::data::ModelSplit;
-use crate::data::scalers::ScalerMethod;
 use crate::evaluation::EvaluationSet;
 use crate::gradients::GradientClipping;
 use crate::loss_functions::LossFunction;
@@ -78,7 +77,6 @@ pub struct Trainer {
     pub(super) early_stopping: Option<EarlyStoppingConfig>,
     pub(super) epoch_start: usize,
     pub(super) seed: u64,
-    pub(super) scaler: Option<ScalerMethod>,
 }
 
 impl Trainer {
@@ -191,7 +189,6 @@ impl Trainer {
         self.callbacks.on_train_end(
             outcome,
             final_model,
-            self.scaler.as_ref(),
             final_evaluation.as_ref(),
             final_epoch,
         )?;
@@ -355,7 +352,6 @@ mod tests {
             &mut self,
             outcome: TrainingOutcome,
             model: Option<&NeuralNetwork>,
-            _scaler: Option<&ScalerMethod>,
             _eval: Option<&EvaluationSet>,
             _epoch: usize,
         ) -> CallbackResult {
@@ -393,7 +389,6 @@ mod tests {
             &mut self,
             _outcome: TrainingOutcome,
             _model: Option<&NeuralNetwork>,
-            _scaler: Option<&ScalerMethod>,
             _eval: Option<&EvaluationSet>,
             _epoch: usize,
         ) -> CallbackResult {

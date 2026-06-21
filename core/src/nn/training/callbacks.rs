@@ -1,6 +1,5 @@
 use super::outcome::TrainingOutcome;
 use crate::data::ModelSplit;
-use crate::data::scalers::ScalerMethod;
 use crate::evaluation::EvaluationSet;
 use crate::model::NeuralNetwork;
 use crate::optimizers::Optimizer;
@@ -62,12 +61,11 @@ pub trait TrainerCallback {
 
     /// Called once when training ends. `model` and `eval` are the final model and
     /// evaluation, or `None` on a fatal divergence (nothing safe to persist or
-    /// evaluate). `scaler` is the run-level scaler, when one was applied.
+    /// evaluate).
     fn on_train_end(
         &mut self,
         _outcome: TrainingOutcome,
         _model: Option<&NeuralNetwork>,
-        _scaler: Option<&ScalerMethod>,
         _eval: Option<&EvaluationSet>,
         _epoch: usize,
     ) -> CallbackResult {
@@ -147,11 +145,10 @@ impl TrainerCallback for Callbacks {
         &mut self,
         outcome: TrainingOutcome,
         model: Option<&NeuralNetwork>,
-        scaler: Option<&ScalerMethod>,
         eval: Option<&EvaluationSet>,
         epoch: usize,
     ) -> CallbackResult {
-        self.propagate(|cb| cb.on_train_end(outcome, model, scaler, eval, epoch))
+        self.propagate(|cb| cb.on_train_end(outcome, model, eval, epoch))
     }
 }
 
@@ -227,7 +224,6 @@ mod tests {
                 .on_train_end(
                     TrainingOutcome::Completed,
                     Some(&model),
-                    None,
                     Some(&sample_eval()),
                     0
                 )
