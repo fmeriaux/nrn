@@ -4,10 +4,9 @@
 
 use ndarray::array;
 use nrn::activations::RELU;
-use nrn::data::Dataset;
 use nrn::data::scalers::{MinMaxScaler, Scaler, ScalerMethod};
+use nrn::data::{Dataset, Instance};
 use nrn::evaluation::{Evaluation, EvaluationSet};
-use nrn::io::data::{load_inputs, save_inputs};
 use nrn::io::hyperparams::{
     ClippingRecord, HyperParametersRecord, LossRecord, OptimizerRecord, SchedulerRecord,
 };
@@ -160,11 +159,11 @@ fn full_pipeline_roundtrips_through_safetensors() {
     assert!(!last_optimizer_state.tensors.is_empty());
     assert!(last_optimizer_state.metadata.contains_key("time_step"));
 
-    // --- Inputs (single-vector prediction file) -------------------------
-    let inputs = array![0.0, 1.0];
-    let inputs_path = dir.join("inputs");
-    save_inputs(&inputs_path, &inputs).unwrap();
-    assert_eq!(inputs, load_inputs(&inputs_path).unwrap());
+    // --- Instance (single-vector prediction file) -----------------------
+    let instance = Instance::new(array![0.0, 1.0]);
+    let instance_path = dir.join("instance");
+    instance.save(&instance_path).unwrap();
+    assert_eq!(instance, Instance::load(&instance_path).unwrap());
 
     let _ = std::fs::remove_dir_all(&dir);
 }

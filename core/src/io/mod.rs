@@ -4,6 +4,7 @@ pub mod classes;
 pub mod data;
 pub mod gif;
 pub mod hyperparams;
+pub mod instance;
 pub mod json;
 pub mod model;
 pub mod optimizer;
