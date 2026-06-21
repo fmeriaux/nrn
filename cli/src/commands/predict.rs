@@ -13,22 +13,19 @@ pub struct PredictArgs {
 
     /// Instance file to predict on; when omitted, the features are read from stdin
     #[arg(short, long)]
-    input: Option<String>,
+    instance: Option<String>,
 }
 
 impl PredictArgs {
     pub fn run(self) -> Result<(), Box<dyn Error>> {
         let predictor = Predictor::load(&self.model)?;
-        loaded(&predictor.network);
-        if let Some(scaler) = &predictor.scaler {
-            loaded(scaler);
-        }
+        loaded(&predictor);
 
         let input_size = predictor.network.input_size();
 
-        let instance = match self.input {
-            Some(input_file) => {
-                let instance = Instance::load(&input_file)?;
+        let instance = match self.instance {
+            Some(instance_file) => {
+                let instance = Instance::load(&instance_file)?;
                 loaded(&instance);
                 instance
             }
@@ -72,6 +69,8 @@ fn read_instance(input_size: usize) -> Result<Instance, Box<dyn Error>> {
             Err(err) => error!("{err}"),
         }
     }
+
+    println!();
 
     Ok(Instance::new(Array1::from_vec(values)))
 }

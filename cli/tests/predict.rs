@@ -94,7 +94,7 @@ fn reads_an_instance_from_a_file() {
         .unwrap();
 
     nrn(tmp.path())
-        .args(["predict", "model", "--input", "sample"])
+        .args(["predict", "model", "--instance", "sample"])
         .assert()
         .success()
         .stdout(contains("INSTANCE LOADED"))
@@ -110,7 +110,7 @@ fn errors_when_instance_dimension_mismatches_model() {
         .unwrap();
 
     nrn(tmp.path())
-        .args(["predict", "model", "--input", "sample"])
+        .args(["predict", "model", "--instance", "sample"])
         .assert()
         .failure()
         .stderr(contains("expects 2"));
@@ -126,7 +126,8 @@ fn loads_and_applies_a_scaler_sidecar() {
         .write_stdin("0.3\n0.7\n")
         .assert()
         .success()
-        .stdout(contains("SCALER LOADED"))
+        .stdout(contains("PREDICTOR LOADED"))
+        .stdout(contains("min-max"))
         .stdout(contains("CLASSIFICATION"));
 }
 
@@ -146,7 +147,7 @@ fn errors_when_the_input_file_is_missing() {
     write_predictor(tmp.path(), 2, None);
 
     nrn(tmp.path())
-        .args(["predict", "model", "--input", "missing"])
+        .args(["predict", "model", "--instance", "missing"])
         .assert()
         .failure();
 }

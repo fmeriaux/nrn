@@ -17,8 +17,8 @@ mod hyperparameters;
 mod icons;
 mod instance;
 mod model;
+mod predictor;
 mod progress;
-mod scaler;
 mod theme;
 
 pub(crate) use artifacts::Artifacts;
@@ -28,6 +28,7 @@ pub(crate) use progress::{bar, styled_bar};
 
 use console::Emoji;
 use std::fmt::Display;
+use std::io::{Write, stdout};
 
 // ─── Entity descriptions ────────────────────────────────────────────────────
 
@@ -159,9 +160,16 @@ pub(crate) fn trace(message: &str) {
     action(TRACE_ICON, message);
 }
 
-/// The inline prompt for the `index`-th interactive input value.
+/// The inline prompt for the `index`-th feature value, leaving the cursor on the
+/// same line so the typed value follows it.
 pub(crate) fn prompt(index: usize) {
-    println!("{}[{}]:", theme::title("Input"), theme::value(index));
+    print!(
+        "{} {} {} ",
+        theme::title("Feature"),
+        theme::value(index),
+        theme::leader("▸")
+    );
+    let _ = stdout().flush();
 }
 
 /// Backing implementation for the [`completed!`] macro: a success-icon status
