@@ -4,6 +4,7 @@ pub mod early_stopping;
 pub mod evaluator;
 pub mod hyperparams;
 pub mod outcome;
+pub mod preprocessing;
 pub mod trainer;
 
 pub use crate::gradients::{GradientClipping, GradientClippingError, Gradients};
@@ -16,4 +17,5 @@ pub use hyperparams::{
     HyperParameters, HyperParametersError, LossConfig, OptimizerConfig, SchedulerConfig,
 };
 pub use outcome::TrainingOutcome;
+pub use preprocessing::TrainingData;
 pub use trainer::{FatalDivergence, Trainer, TrainingReport};

@@ -88,14 +88,12 @@ fn train_creates_run_dir_and_plot_generates_png_and_gif() {
 
     let run_arg = format!("training-model-{ds_name}");
 
-    // Plot training curves → PNG.
+    // Plot emits the training curves (PNG) and, for the 2D dataset recorded in
+    // the run's meta.json, the decision boundary animation (GIF).
     nrn(dir, &["plot", &run_arg]).success();
 
     let png = dir.join(format!("training-model-{ds_name}.png"));
     assert!(png.exists(), "expected PNG at {png:?}");
-
-    // Plot with decision boundary → GIF.
-    nrn(dir, &["plot", &run_arg, "--dataset", ds_name]).success();
 
     let gif = dir.join(format!("training-model-{ds_name}.gif"));
     assert!(gif.exists(), "expected GIF at {gif:?}");
@@ -285,7 +283,9 @@ fn no_duplicate_checkpoint_when_early_stop_fires_on_interval_boundary() {
 }
 
 fn model_exists(dir: &Path, ds_name: &str) -> bool {
-    dir.join(format!("model-{ds_name}.safetensors")).exists()
+    dir.join(format!("model-{ds_name}"))
+        .join("model.safetensors")
+        .exists()
 }
 
 #[test]

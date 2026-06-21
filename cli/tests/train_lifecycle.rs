@@ -74,7 +74,7 @@ fn continues_from_saved_model_without_checkpoints() {
     let dir = tmp.path();
     let ds = synth_ring(dir, "5", "20");
 
-    // First run saves model-<ds>.safetensors.
+    // First run saves the model-<ds>/ directory holding model.safetensors.
     nrn(
         dir,
         &[
@@ -91,7 +91,11 @@ fn continues_from_saved_model_without_checkpoints() {
         ],
     )
     .success();
-    assert!(dir.join(format!("model-{ds}.safetensors")).exists());
+    assert!(
+        dir.join(format!("model-{ds}"))
+            .join("model.safetensors")
+            .exists()
+    );
 
     // Continue from that model with checkpoints disabled (interval 0 → no recorder).
     nrn(
@@ -101,7 +105,7 @@ fn continues_from_saved_model_without_checkpoints() {
             "start",
             &ds,
             "--model",
-            &format!("model-{ds}"),
+            &format!("model-{ds}/model"),
             "--epochs",
             "2",
             "--checkpoint-interval",
@@ -110,6 +114,44 @@ fn continues_from_saved_model_without_checkpoints() {
         ],
     )
     .success();
+}
+
+#[test]
+fn scaling_persists_a_sidecar_and_survives_resume() {
+    // --scale flows the fitted scaler through the whole run: a scaler.json sidecar
+    // beside the model, the scaler recorded once in meta.json, and resume reusing
+    // it (the run must still complete).
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let ds = synth_ring(dir, "11", "20");
+    let run_arg = format!("training-model-{ds}");
+
+    nrn(
+        dir,
+        &[
+            "train",
+            "start",
+            "--seed",
+            "42",
+            &ds,
+            "--scale",
+            "min-max",
+            "--epochs",
+            "2",
+            "--checkpoint-interval",
+            "1",
+            "--no-clip",
+        ],
+    )
+    .success();
+
+    // Sidecar written beside the model weights, and the scaler recorded in meta.json.
+    assert!(dir.join(format!("model-{ds}")).join("scaler.json").exists());
+    let meta = fs::read_to_string(dir.join(&run_arg).join("meta.json")).unwrap();
+    assert!(meta.contains("MinMax"));
+
+    // Resume reuses the scaler from meta.json (no refit) and completes.
+    nrn(dir, &["train", "resume", &run_arg, "--epochs", "1"]).success();
 }
 
 #[test]

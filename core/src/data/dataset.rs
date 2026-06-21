@@ -1,5 +1,5 @@
 use crate::data::origin::DatasetOrigin;
-use crate::data::scalers::Scaler;
+use crate::data::scalers::{Scaler, ScalerKind, ScalerMethod};
 use ndarray::{Array1, Array2, Axis, s};
 use ndarray_rand::rand::Rng;
 use ndarray_rand::rand::prelude::SliceRandom;
@@ -237,12 +237,6 @@ impl Dataset {
         (mins, maxs)
     }
 
-    /// Applies the specified scaling method to the training and test datasets.
-    /// The transformation is done in-place.
-    pub fn scale_inplace(&mut self, scaler: &dyn Scaler) {
-        scaler.apply_inplace(self.features.view_mut());
-    }
-
     /// Transforms the dataset into a shape suitable for model input and output.
     ///
     /// # Returns
@@ -352,6 +346,20 @@ impl ModelDataset {
         })
     }
 
+    /// Fits a scaler of the given `kind` on these inputs. `inputs` is
+    /// `(features, samples)` whereas fitting expects `(samples, features)`, so the
+    /// view is transposed for the call.
+    pub fn fit_scaler(&self, kind: ScalerKind) -> ScalerMethod {
+        kind.fit(self.inputs.t())
+    }
+
+    /// Applies a scaler to the inputs in-place. `inputs` is `(features, samples)`
+    /// whereas the scaler expects `(samples, features)`, so the view is transposed
+    /// for the call.
+    pub fn scale_inplace(&mut self, scaler: &dyn Scaler) {
+        scaler.apply_inplace(self.inputs.view_mut().reversed_axes());
+    }
+
     /// Splits the model dataset into training, validation, and testing sets based on the provided ratios.
     ///
     /// # Parameters
@@ -422,12 +430,22 @@ impl ModelSplit {
     pub fn test_size(&self) -> usize {
         self.test.inputs.ncols()
     }
+
+    /// Applies `scaler` in-place to every split. The scaler is fitted on the
+    /// train split alone; transforming all splits keeps validation and test
+    /// inputs on the same scale the model is trained on.
+    pub fn scale_inplace(&mut self, scaler: &dyn Scaler) {
+        self.train.scale_inplace(scaler);
+        if let Some(validation) = self.validation.as_mut() {
+            validation.scale_inplace(scaler);
+        }
+        self.test.scale_inplace(scaler);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::scalers::MinMaxScaler;
     use ndarray::{Array1, Array2, array};
     use ndarray_rand::rand::SeedableRng;
     use ndarray_rand::rand::prelude::StdRng;
@@ -566,12 +584,17 @@ mod tests {
     #[test]
     fn split_without_validation_yields_no_validation_set() {
         // val_ratio 0.0 → the validation split is None.
-        let inputs = Array2::zeros((2, 100));
+        let inputs = Array2::from_shape_fn((2, 100), |(_, j)| j as f32);
         let targets = Array2::zeros((1, 100));
-        let split = ModelDataset { inputs, targets }.split(0.0, 0.2);
+        let mut split = ModelDataset { inputs, targets }.split(0.0, 0.2);
         assert!(split.validation.is_none());
         assert_eq!(split.train_size(), 80);
         assert_eq!(split.test_size(), 20);
+
+        // Scaling skips the absent validation split without panicking.
+        let scaler = split.train.fit_scaler(ScalerKind::MinMax);
+        split.scale_inplace(&scaler);
+        assert!(split.train.inputs.iter().all(|&v| v.is_finite()));
     }
 
     #[test]
@@ -637,17 +660,47 @@ mod tests {
     }
 
     #[test]
-    fn scale_inplace_applies_scaler_to_features() {
-        let mut dataset =
+    fn fit_scaler_then_scale_inplace_normalizes_model_inputs() {
+        let dataset =
             Dataset::new(array![[0.0, 0.0], [10.0, 20.0]], array![0.0f32, 1.0], None).unwrap();
-        let scaler = MinMaxScaler::default().fit(dataset.features().view());
-        dataset.scale_inplace(&scaler);
+        let mut model = dataset.to_model_dataset();
+
+        // Fit on the column-major inputs and apply back in place.
+        let scaler = model.fit_scaler(ScalerKind::MinMax);
+        model.scale_inplace(&scaler);
+
         assert!(
-            dataset
-                .features()
+            model
+                .inputs
                 .iter()
                 .all(|&v| (0.0..=1.0 + 1e-5).contains(&v))
         );
+    }
+
+    #[test]
+    fn split_scale_inplace_scales_every_split() {
+        // 10 samples, two features on different scales; split keeps a validation
+        // set so all three branches of `ModelSplit::scale_inplace` are exercised.
+        let features = Array2::from_shape_fn((10, 2), |(i, j)| {
+            (i as f32) * if j == 0 { 1.0 } else { 5.0 }
+        });
+        let labels = Array1::from_shape_fn(10, |i| (i % 2) as f32);
+        let dataset = Dataset::new(features, labels, None).unwrap();
+
+        let mut split = dataset.to_model_dataset().split(0.2, 0.2);
+        let scaler = split.train.fit_scaler(ScalerKind::MinMax);
+        split.scale_inplace(&scaler);
+
+        for part in [
+            Some(&split.train),
+            split.validation.as_ref(),
+            Some(&split.test),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            assert!(part.inputs.iter().all(|&v| v.is_finite()));
+        }
     }
 
     #[test]

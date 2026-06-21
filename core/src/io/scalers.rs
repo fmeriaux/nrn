@@ -5,21 +5,21 @@ use serde::{Deserialize, Serialize};
 use std::io::Result;
 use std::path::{Path, PathBuf};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "type", content = "params")]
 pub enum ScalerRecord {
     MinMax(MinMaxRecord),
     ZScore(ZScoreRecord),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct MinMaxRecord {
     pub min: Array1<f32>,
     pub max: Array1<f32>,
     pub range: (f32, f32),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ZScoreRecord {
     pub mean: Array1<f32>,
     pub std_dev: Array1<f32>,
@@ -64,5 +64,28 @@ impl ScalerRecord {
 
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         json::load(path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::array;
+
+    #[test]
+    fn record_converts_both_ways_for_each_method() {
+        let data = array![[0.0, 0.0], [10.0, 20.0]];
+        for method in [
+            ScalerMethod::MinMax(MinMaxScaler::default().fit(data.view())),
+            ScalerMethod::ZScore(ZScoreScaler::default().fit(data.view())),
+        ] {
+            let record = ScalerRecord::from(method.clone());
+            // Round-tripping through the serializable record preserves the params:
+            // converting back yields a record equal to the first.
+            assert_eq!(
+                ScalerRecord::from(ScalerMethod::from(record.clone())),
+                record
+            );
+        }
     }
 }

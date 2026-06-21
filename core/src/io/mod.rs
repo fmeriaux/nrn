@@ -9,6 +9,7 @@ pub mod model;
 pub mod optimizer;
 pub mod path;
 pub mod png;
+pub mod predictor;
 pub mod run;
 pub mod scalers;
 pub mod scheduler;

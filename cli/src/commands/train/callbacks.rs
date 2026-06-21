@@ -9,8 +9,9 @@ use crate::display::{
 };
 use indicatif::ProgressBar;
 use nrn::data::ModelSplit;
+use nrn::data::scalers::ScalerMethod;
 use nrn::evaluation::EvaluationSet;
-use nrn::model::NeuralNetwork;
+use nrn::model::{NeuralNetwork, Predictor};
 use nrn::optimizers::Optimizer;
 use nrn::schedulers::Scheduler;
 use nrn::training::{CallbackResult, HyperParameters, TrainerCallback, TrainingOutcome};
@@ -86,6 +87,7 @@ impl TrainerCallback for ConsoleMonitor {
         &mut self,
         outcome: TrainingOutcome,
         _model: Option<&NeuralNetwork>,
+        _scaler: Option<&ScalerMethod>,
         eval: Option<&EvaluationSet>,
         epoch: usize,
     ) -> CallbackResult {
@@ -119,14 +121,14 @@ impl TrainerCallback for ConsoleMonitor {
 
 // ─── ModelSaver ─────────────────────────────────────────────────────────────
 
-/// Saves the final model to disk once training ends, unless the run diverged
+/// Saves the final predictor to disk once training ends, unless the run diverged
 /// without recovery (in which case `model` is `None`).
 pub struct ModelSaver {
     path: PathBuf,
 }
 
 impl ModelSaver {
-    /// Saves the final model beside `run_dir`, in a file named `model_name`.
+    /// Saves the final predictor beside `run_dir`, in a directory named `model_name`.
     /// Start and resume both construct the saver here, so the model can't land
     /// in two different places.
     pub fn new(run_dir: &Path, model_name: &str) -> Self {
@@ -141,14 +143,13 @@ impl TrainerCallback for ModelSaver {
         &mut self,
         _outcome: TrainingOutcome,
         model: Option<&NeuralNetwork>,
+        scaler: Option<&ScalerMethod>,
         _eval: Option<&EvaluationSet>,
         _epoch: usize,
     ) -> CallbackResult {
         if let Some(model) = model {
-            saved(&Artifacts::single(
-                "Neural Network",
-                model.save(&self.path)?,
-            ));
+            let predictor = Predictor::new(model.clone(), scaler.cloned());
+            saved(&Artifacts::single("Model", predictor.save(&self.path)?));
         }
         Ok(())
     }

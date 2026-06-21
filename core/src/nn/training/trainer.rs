@@ -5,6 +5,7 @@ use super::evaluator::Evaluator;
 use super::outcome::TrainingOutcome;
 use crate::accuracies::accuracy_for;
 use crate::data::ModelSplit;
+use crate::data::scalers::ScalerMethod;
 use crate::evaluation::EvaluationSet;
 use crate::gradients::GradientClipping;
 use crate::loss_functions::LossFunction;
@@ -77,6 +78,7 @@ pub struct Trainer {
     pub(super) early_stopping: Option<EarlyStoppingConfig>,
     pub(super) epoch_start: usize,
     pub(super) seed: u64,
+    pub(super) scaler: Option<ScalerMethod>,
 }
 
 impl Trainer {
@@ -189,6 +191,7 @@ impl Trainer {
         self.callbacks.on_train_end(
             outcome,
             final_model,
+            self.scaler.as_ref(),
             final_evaluation.as_ref(),
             final_epoch,
         )?;
@@ -292,6 +295,7 @@ mod tests {
             val_ratio,
             0.1,
             0,
+            None,
         )
         .unwrap()
     }
@@ -351,6 +355,7 @@ mod tests {
             &mut self,
             outcome: TrainingOutcome,
             model: Option<&NeuralNetwork>,
+            _scaler: Option<&ScalerMethod>,
             _eval: Option<&EvaluationSet>,
             _epoch: usize,
         ) -> CallbackResult {
@@ -388,6 +393,7 @@ mod tests {
             &mut self,
             _outcome: TrainingOutcome,
             _model: Option<&NeuralNetwork>,
+            _scaler: Option<&ScalerMethod>,
             _eval: Option<&EvaluationSet>,
             _epoch: usize,
         ) -> CallbackResult {
@@ -438,9 +444,10 @@ mod tests {
     }
 
     fn trainer(hyperparameters: HyperParameters, counts: Rc<RefCell<Counts>>) -> Trainer {
+        let data = hyperparameters.prepare(sample_dataset(), None);
         hyperparameters.build(
             sample_model(),
-            sample_dataset(),
+            data,
             Callbacks::new(vec![Box::new(CountingCallback(counts))]),
         )
     }
@@ -452,9 +459,11 @@ mod tests {
         checkpoint_interval: usize,
         callback: impl TrainerCallback + 'static,
     ) -> Trainer {
-        sample_hyperparameters(epochs, checkpoint_interval, 0.01, None, 0.0).build(
+        let hyperparameters = sample_hyperparameters(epochs, checkpoint_interval, 0.01, None, 0.0);
+        let data = hyperparameters.prepare(sample_dataset(), None);
+        hyperparameters.build(
             sample_model(),
-            sample_dataset(),
+            data,
             Callbacks::new(vec![Box::new(callback)]),
         )
     }
@@ -696,13 +705,15 @@ mod tests {
             0.1,
             0.1,
             0,
+            None,
         )
         .unwrap();
 
         let counts = Rc::new(RefCell::new(Counts::default()));
+        let data = hyperparameters.prepare(sample_dataset(), None);
         let mut trainer = hyperparameters.build(
             sample_model(),
-            sample_dataset(),
+            data,
             Callbacks::new(vec![Box::new(CountingCallback(counts.clone()))]),
         );
 
@@ -741,11 +752,12 @@ mod tests {
             0.1,
             0.1,
             0,
+            None,
         )
         .unwrap();
 
-        let mut trainer =
-            hyperparameters.build(sample_model(), sample_dataset(), Callbacks::empty());
+        let data = hyperparameters.prepare(sample_dataset(), None);
+        let mut trainer = hyperparameters.build(sample_model(), data, Callbacks::empty());
 
         // Stateless SGD / constant scheduler ignore the provided state (default no-ops).
         let optimizer_state = Some(OptimizerState {
@@ -781,11 +793,12 @@ mod tests {
             0.1,
             0.1,
             0,
+            None,
         )
         .unwrap();
 
-        let mut trainer =
-            hyperparameters.build(sample_model(), sample_dataset(), Callbacks::empty());
+        let data = hyperparameters.prepare(sample_dataset(), None);
+        let mut trainer = hyperparameters.build(sample_model(), data, Callbacks::empty());
 
         trainer
             .restore(4, None, Some(SchedulerState { current_step: 2 }))
@@ -800,11 +813,9 @@ mod tests {
         use std::collections::HashMap;
 
         // Adam optimizer (from `sample_hyperparameters`).
-        let mut trainer = sample_hyperparameters(1, 0, 0.01, None, 0.0).build(
-            sample_model(),
-            sample_dataset(),
-            Callbacks::empty(),
-        );
+        let hyperparameters = sample_hyperparameters(1, 0, 0.01, None, 0.0);
+        let data = hyperparameters.prepare(sample_dataset(), None);
+        let mut trainer = hyperparameters.build(sample_model(), data, Callbacks::empty());
 
         // Missing `time_step` metadata makes Adam's restore fail; the trainer
         // surfaces it as a callback error.

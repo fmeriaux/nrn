@@ -1,3 +1,4 @@
+use crate::data::scalers::ScalerKind;
 use crate::gradients::{GradientClipping, GradientClippingError};
 use crate::training::{
     EarlyStoppingConfig, EarlyStoppingConfigError, HyperParameters, HyperParametersError,
@@ -155,6 +156,32 @@ impl From<&LossRecord> for LossConfig {
     }
 }
 
+/// Mirrors [`ScalerKind`] for serialization.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(tag = "type", content = "params")]
+pub enum ScalerKindRecord {
+    MinMax,
+    ZScore,
+}
+
+impl From<ScalerKind> for ScalerKindRecord {
+    fn from(kind: ScalerKind) -> Self {
+        match kind {
+            ScalerKind::MinMax => ScalerKindRecord::MinMax,
+            ScalerKind::ZScore => ScalerKindRecord::ZScore,
+        }
+    }
+}
+
+impl From<&ScalerKindRecord> for ScalerKind {
+    fn from(record: &ScalerKindRecord) -> Self {
+        match record {
+            ScalerKindRecord::MinMax => ScalerKind::MinMax,
+            ScalerKindRecord::ZScore => ScalerKind::ZScore,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct EarlyStoppingRecord {
     pub patience: usize,
@@ -201,6 +228,7 @@ pub struct HyperParametersRecord {
     pub test_ratio: f32,
     pub loss: LossRecord,
     pub seed: u64,
+    pub scaler: Option<ScalerKindRecord>,
 }
 
 impl From<&HyperParameters> for HyperParametersRecord {
@@ -218,6 +246,7 @@ impl From<&HyperParameters> for HyperParametersRecord {
             test_ratio: hyperparameters.test_ratio(),
             loss: hyperparameters.loss().into(),
             seed: hyperparameters.seed(),
+            scaler: hyperparameters.scaler().map(Into::into),
         }
     }
 }
@@ -252,6 +281,7 @@ impl TryFrom<HyperParametersRecord> for HyperParameters {
             record.val_ratio,
             record.test_ratio,
             record.seed,
+            record.scaler.as_ref().map(Into::into),
         )
     }
 }
@@ -276,6 +306,7 @@ impl HyperParametersRecord {
             test_ratio: 0.1,
             loss: LossRecord::CrossEntropy,
             seed: 42,
+            scaler: Some(ScalerKindRecord::MinMax),
         }
     }
 }
@@ -349,6 +380,14 @@ mod tests {
             let record = ClippingRecord::from(&clipping);
             let back = GradientClipping::try_from(&record).unwrap();
             assert_eq!(ClippingRecord::from(&back), record);
+        }
+    }
+
+    #[test]
+    fn scaler_kind_record_converts_both_ways() {
+        for kind in [ScalerKind::MinMax, ScalerKind::ZScore] {
+            let record = ScalerKindRecord::from(kind);
+            assert_eq!(ScalerKind::from(&record), kind);
         }
     }
 

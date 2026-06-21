@@ -16,7 +16,7 @@
 //! Note: This module only computes coordinate points. For visualization, the computed points
 //! can be used with external plotting libraries.
 
-use crate::model::NeuralNetwork;
+use crate::model::Predictor;
 use ndarray::{Array2, Axis};
 
 /// Computes decision boundary points for a trained neural network with custom tolerance.
@@ -28,13 +28,14 @@ use ndarray::{Array2, Axis};
 ///
 /// * `mins` - Minimum values for each input dimension
 /// * `maxs` - Maximum values for each input dimension
-/// * `model` - Trained neural network to analyze
+/// * `predictor` - Trained predictor (network plus optional scaler) to analyze
 /// * `resolution` - Number of grid points per dimension (higher = more precise boundary)
 /// * `tolerance` - Acceptable deviation from decision threshold (e.g., 0.001 for high precision)
 ///
 /// # Returns
 ///
-/// An `Array2<f32>` where each row represents a point on the decision boundary.
+/// An `Array2<f32>` where each row represents a point on the decision boundary, in raw
+/// (unscaled) input coordinates.
 ///
 /// # Classification Behavior
 ///
@@ -44,7 +45,7 @@ use ndarray::{Array2, Axis};
 pub fn decision_boundary(
     mins: &[f32],
     maxs: &[f32],
-    model: &NeuralNetwork,
+    predictor: &Predictor,
     resolution: usize,
     tolerance: f32,
 ) -> Array2<f32> {
@@ -70,7 +71,7 @@ pub fn decision_boundary(
     );
 
     let (grid_points, inputs) = make_grid_and_inputs(mins, maxs, resolution);
-    let predictions = model.predict(inputs.view());
+    let predictions = predictor.predict(inputs.view());
 
     let n_outputs = predictions.nrows();
 
@@ -212,7 +213,7 @@ fn generate_points_recursive(
 mod tests {
     use super::*;
     use crate::activations::{SIGMOID, SOFTMAX};
-    use crate::model::NeuronLayer;
+    use crate::model::{NeuralNetwork, NeuronLayer};
     use ndarray::array;
 
     #[test]
@@ -234,28 +235,34 @@ mod tests {
         assert_eq!(inputs.shape(), &[2, 9]);
     }
 
-    /// A 2-input → 1-output sigmoid network. With weights [1, 0] and zero bias,
+    /// A 2-input → 1-output sigmoid predictor. With weights [1, 0] and zero bias,
     /// the prediction is `sigmoid(x0)`, which equals exactly 0.5 when x0 == 0.
-    fn binary_model() -> NeuralNetwork {
-        NeuralNetwork {
-            layers: vec![NeuronLayer {
-                weights: array![[1.0, 0.0]],
-                biases: array![0.0],
-                activation: SIGMOID.clone(),
-            }],
-        }
+    fn binary_model() -> Predictor {
+        Predictor::new(
+            NeuralNetwork {
+                layers: vec![NeuronLayer {
+                    weights: array![[1.0, 0.0]],
+                    biases: array![0.0],
+                    activation: SIGMOID.clone(),
+                }],
+            },
+            None,
+        )
     }
 
-    /// A 2-input → 3-output softmax network with symmetric weights for two of the
+    /// A 2-input → 3-output softmax predictor with symmetric weights for two of the
     /// classes, so a tie (equal top-two probabilities) occurs along x0 == 0.
-    fn multiclass_model() -> NeuralNetwork {
-        NeuralNetwork {
-            layers: vec![NeuronLayer {
-                weights: array![[1.0, 0.0], [-1.0, 0.0], [0.0, 0.0]],
-                biases: array![0.0, 0.0, -10.0],
-                activation: SOFTMAX.clone(),
-            }],
-        }
+    fn multiclass_model() -> Predictor {
+        Predictor::new(
+            NeuralNetwork {
+                layers: vec![NeuronLayer {
+                    weights: array![[1.0, 0.0], [-1.0, 0.0], [0.0, 0.0]],
+                    biases: array![0.0, 0.0, -10.0],
+                    activation: SOFTMAX.clone(),
+                }],
+            },
+            None,
+        )
     }
 
     #[test]
@@ -274,6 +281,30 @@ mod tests {
         assert!(boundary.nrows() > 0);
         assert_eq!(boundary.ncols(), 2);
         assert!(boundary.column(0).iter().all(|&x| x.abs() < 1e-5));
+    }
+
+    #[test]
+    fn scaler_shifts_the_boundary_into_raw_coordinates() {
+        use crate::data::scalers::{MinMaxScaler, ScalerMethod};
+
+        // Network: sigmoid(scaled_x0 - 0.5) == 0.5 when scaled_x0 == 0.5.
+        let network = NeuralNetwork {
+            layers: vec![NeuronLayer {
+                weights: array![[1.0, 0.0]],
+                biases: array![-0.5],
+                activation: SIGMOID.clone(),
+            }],
+        };
+        // MinMax fitted on raw x0 ∈ [0, 2]: scaled 0.5 maps back to raw 1.0.
+        let scaler = ScalerMethod::MinMax(
+            MinMaxScaler::default().fit(array![[0.0, 0.0], [2.0, 2.0]].view()),
+        );
+        let predictor = Predictor::new(network, Some(scaler));
+
+        // Grid x0 ∈ {-1, 0, 1, 2, 3}; the boundary sits on raw x0 == 1.0.
+        let boundary = decision_boundary(&[-1.0, -1.0], &[3.0, 3.0], &predictor, 5, 1e-3);
+        assert!(boundary.nrows() > 0);
+        assert!(boundary.column(0).iter().all(|&x| (x - 1.0).abs() < 1e-5));
     }
 
     #[test]

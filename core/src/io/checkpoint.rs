@@ -329,6 +329,7 @@ mod tests {
                 dataset: dataset.to_string(),
                 model: format!("model-{dataset}"),
                 hyperparams: HyperParametersRecord::sample(),
+                scaler: None,
             },
             overwrite,
         )

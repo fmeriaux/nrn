@@ -3,26 +3,25 @@ use clap::Args;
 use indicatif::ProgressIterator;
 use nrn::charts::RenderConfig;
 use nrn::data::Dataset;
-use nrn::io::checkpoint::CheckpointArchive;
+use nrn::data::scalers::ScalerMethod;
 use nrn::io::gif::save_gif_from_rgb;
 use nrn::io::png::save_rgb;
+use nrn::io::run::TrainingRun;
+use nrn::model::Predictor;
 use std::error::Error;
+use std::path::Path;
 
 #[derive(Args, Debug)]
 pub struct PlotArgs {
     /// Path to the training run directory
     run_dir: String,
 
-    /// Name of the dataset used for training for decision boundary visualization (only for 2D datasets)
-    #[arg(short, long)]
-    dataset: Option<String>,
-
     /// Specify the number of frames for the decision boundary animation
-    #[arg(short, long, default_value_t = 20, requires = "dataset", value_parser = clap::value_parser!(u8).range(2..=201))]
+    #[arg(short, long, default_value_t = 20, value_parser = clap::value_parser!(u8).range(2..=201))]
     frames: u8,
 
     /// Specify the delay between frames in the decision boundary animation (in milliseconds)
-    #[arg(long, default_value_t = 50, requires = "dataset", value_parser = clap::value_parser!(u16).range(10..=1000))]
+    #[arg(long, default_value_t = 50, value_parser = clap::value_parser!(u16).range(10..=1000))]
     delay: u16,
 
     /// Specify the width of the plot in pixels
@@ -36,7 +35,8 @@ pub struct PlotArgs {
 
 impl PlotArgs {
     pub fn run(self) -> Result<(), Box<dyn Error>> {
-        let archive = CheckpointArchive::load(&self.run_dir)?;
+        let run = TrainingRun::open(&self.run_dir)?;
+        let archive = run.archive()?;
 
         if archive.len() <= 2 {
             return Err("Training run must contain more than two checkpoints to plot.".into());
@@ -56,44 +56,51 @@ impl PlotArgs {
             save_rgb(frame, &self.run_dir, width, height)?,
         )]);
 
-        if let Some(dataset) = self.dataset {
-            let dataset = Dataset::load(&dataset)?;
-            loaded(&dataset);
+        // The run records its dataset (a sibling of the run directory) and scaler.
+        let meta = run.meta();
+        let dataset_path = Path::new(&self.run_dir)
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(&meta.dataset);
+        let dataset = Dataset::load(&dataset_path)?;
+        loaded(&dataset);
 
-            if dataset.n_features() != 2 {
-                warning!(
-                    "Decision boundary visualization is only available for datasets with exactly two features"
-                );
-            } else {
-                let n = archive.len();
-                let interval = n / n.min(self.frames.into());
+        if dataset.n_features() != 2 {
+            warning!(
+                "Decision boundary visualization is only available for datasets with exactly two features"
+            );
+        } else {
+            let scaler: Option<ScalerMethod> = meta.scaler.clone().map(Into::into);
 
-                let progress = bar(n, "Generating decision boundary animation");
+            let n = archive.len();
+            let interval = n / n.min(self.frames.into());
 
-                let mut decision_frames = Vec::new();
+            let progress = bar(n, "Generating decision boundary animation");
 
-                for step in (0..n).progress_with(progress) {
-                    let step_number = step + 1;
+            let mut decision_frames = Vec::new();
 
-                    if step_number == 1 || step_number % interval == 0 || step_number == n {
-                        // Load one model at a time — no full checkpoint array in memory.
-                        let model = archive.model_at(step)?;
-                        let rgb_frame = model.draw_decision_boundary(&dataset, &render_cfg)?;
-                        decision_frames.push(rgb_frame);
-                    }
+            for step in (0..n).progress_with(progress) {
+                let step_number = step + 1;
+
+                if step_number == 1 || step_number % interval == 0 || step_number == n {
+                    // Load one model at a time — no full checkpoint array in memory.
+                    let model = archive.model_at(step)?;
+                    let predictor = Predictor::new(model, scaler.clone());
+                    let rgb_frame = predictor.draw_decision_boundary(&dataset, &render_cfg)?;
+                    decision_frames.push(rgb_frame);
                 }
-
-                artifacts.add(
-                    "Decision Boundary Animation",
-                    save_gif_from_rgb(
-                        decision_frames,
-                        self.width,
-                        self.height,
-                        self.delay,
-                        &self.run_dir,
-                    )?,
-                );
             }
+
+            artifacts.add(
+                "Decision Boundary Animation",
+                save_gif_from_rgb(
+                    decision_frames,
+                    self.width,
+                    self.height,
+                    self.delay,
+                    &self.run_dir,
+                )?,
+            );
         }
 
         saved(&artifacts);

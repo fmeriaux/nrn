@@ -17,8 +17,6 @@ pub enum Command {
     Synth(SynthArgs),
     /// Encode data to a representative format
     Encode(EncodeArgs),
-    /// Scale the dataset features
-    Scale(ScaleArgs),
     /// Train a model on the dataset
     #[command(subcommand)]
     Train(TrainCommand),
@@ -35,8 +33,6 @@ impl Command {
             Synth(args) => args.run(),
             // 🖼️ / 📄 DATASET ENCODING
             Encode(args) => args.run(),
-            // 📊 DATASET SCALING
-            Scale(args) => args.run(),
             // 🧠 NEURAL NETWORK TRAINING
             Train(args) => args.run(),
             // 🔮 PREDICTION

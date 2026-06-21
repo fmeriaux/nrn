@@ -2,6 +2,7 @@ use crate::io::checkpoint::{CheckpointArchive, CheckpointRecorder};
 use crate::io::hyperparams::HyperParametersRecord;
 use crate::io::json;
 use crate::io::path::PathExt;
+use crate::io::scalers::ScalerRecord;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::ErrorKind::AlreadyExists;
@@ -18,6 +19,9 @@ pub struct TrainingMeta {
     pub model: String,
     /// Hyperparameters the run was configured with.
     pub hyperparams: HyperParametersRecord,
+    /// Run-level scaler fitted on the train split, immutable across the run.
+    /// `None` when the run applies no scaling.
+    pub scaler: Option<ScalerRecord>,
 }
 
 /// A handle to a training run directory: its location and run-level metadata.
@@ -121,6 +125,7 @@ mod tests {
             dataset: dataset.to_string(),
             model: format!("model-{dataset}"),
             hyperparams: HyperParametersRecord::sample(),
+            scaler: None,
         }
     }
 
@@ -140,6 +145,27 @@ mod tests {
         cleanup(&dir);
 
         assert_eq!(loaded.meta().dataset, "my_dataset");
+    }
+
+    #[test]
+    fn meta_json_roundtrips_the_scaler() {
+        use crate::data::scalers::{MinMaxScaler, ScalerMethod};
+        use ndarray::array;
+
+        let dir = temp_dir("meta_scaler");
+        let scaler = ScalerMethod::MinMax(
+            MinMaxScaler::default().fit(array![[0.0, 0.0], [1.0, 1.0]].view()),
+        );
+        let meta = TrainingMeta {
+            scaler: Some(scaler.into()),
+            ..meta("ds")
+        };
+        TrainingRun::create(&dir, &meta, false).unwrap();
+
+        let loaded = TrainingRun::open(&dir).unwrap();
+        cleanup(&dir);
+
+        assert_eq!(loaded.meta().scaler, meta.scaler);
     }
 
     #[test]

@@ -27,6 +27,7 @@ use ndarray::{Array1, ArrayView2, ArrayViewMut2, Axis};
 ///
 /// This scaler fits the mean and standard deviation per feature (column),
 /// and applies the transformation: `(x - mean) / std_dev`.
+#[derive(Clone, Debug)]
 pub struct ZScoreScaler {
     /// Mean value for each feature (computed during `fit`).
     pub mean: Array1<f32>,
