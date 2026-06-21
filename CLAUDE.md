@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Educational from-scratch neural network implementation in Rust (edition 2024, MSRV 1.88 — the
 code relies on let-chains). Implements feedforward networks (SLP and MLP) with a CLI for the full
-ML workflow: data generation → scaling → training → visualization → prediction.
+ML workflow: data generation/encoding → training (with optional scaling) → visualization → prediction.
 
 ## Commands
 
@@ -39,10 +39,11 @@ Two crates:
 
 - **`core/`** (crate `nrn`) — neural-network library, no binary. Optional features:
   - `io`: safetensors/JSON/image I/O (`safetensors`, `serde`, `serde_json`, `image`, `png`, `gif`)
-  - `charts`: plotting (`plotters`)
+  - `raster`: image rendering (`plotters`)
+  - `console`: terminal rendering (`textplots`, `rgb`)
   The `nn` module is re-exported flat at the crate root (`pub use nn::*`), so library types live at
   e.g. `nrn::model`, `nrn::training`, `nrn::evaluation_history` — not under `nrn::nn::`.
-- **`cli/`** (crate `nrn-cli`) — `nrn` binary over `core` with `features = ["io", "charts"]`, `clap` for args.
+- **`cli/`** (crate `nrn-cli`) — `nrn` binary over `core` with `features = ["io", "raster", "console"]`, `clap` for args.
 
 ## Core architecture
 
@@ -86,21 +87,30 @@ of the scikit-learn convention). `Dataset` (row-major, `(samples, features)`) co
 
 - **`dataset.rs`** — `Dataset` (raw) → `ModelDataset` (column-major). `batches()` shuffles and chunks
   for mini-batch SGD; `split()` produces `ModelSplit` (train/val/test) from pre-shuffled data.
-- **`preprocessors/scalers/`** — `Scaler` trait (`MinMax`, `ZScore`); `ScalerMethod` enum dispatches
-  for CLI/serialization. Params serialized to JSON for reuse at prediction time.
+- **`preprocessors/scalers/`** — `Scaler` trait (`MinMax`, `ZScore`); `ScalerKind` names the method,
+  `ScalerKind::fit` turns it into a fitted `ScalerMethod` (the dispatch enum carrying parameters).
+  Params serialized to JSON for reuse at prediction time.
 - **`preprocessors/vectorizers/`** — image → feature-vector flattening (behind `io`).
 - **`synth/`** — synthetic generators (`uniform`, `ring`).
 
 ### Analysis (`core/src/analysis/`)
 
-- **`boundary.rs`** — `decision_boundary()` samples a grid over the input bounds and returns points
-  near the threshold (binary ≈ 0.5; multi-class: top two class probabilities near-equal). Pure.
+- **`boundary.rs`** — `Predictor::decision_boundary(mins, maxs, resolution)` marches a grid over the
+  input bounds and emits interpolated points where the predicted class flips (binary crossing of 0.5;
+  multi-class argmax change). Pure; `resolution` controls smoothness/cost, not correctness (no tolerance).
 
-### Charts (`core/src/charts/`, behind `charts` feature)
+### Plot (`core/src/plot/`)
 
-`plotters`-based rendering to in-memory RGB buffers. `RenderConfig` holds dimensions/fonts/padding;
-`evaluation_history.rs` draws training curves, `dataset.rs` draws scatter + decision boundary. Pure rendering —
-the caller persists the bytes.
+A backend-neutral figure IR with feature-gated renderers, in three stages:
+
+- **`scene.rs`** (always compiled) — the pure IR: `Figure` (vertically stacked `Panel`s), `Series`
+  (`Line` / `Points`), `Color` (tab10 palette + role constants). No rendering commitment.
+- **`build.rs`** (always compiled) — derives figures from domain objects: `Dataset::figure`,
+  `Predictor::boundary_figure`, `EvaluationHistory::figure` (each with a `*_with_padding` override;
+  the default padding lives here). `n_features != 2` becomes an `Err`.
+- **`image.rs`** (`raster`, `plotters`) → `Figure::to_image` produces a `RasterImage` /
+  `RasterAnimation`; **`console.rs`** (`console`, `textplots`) → `Figure::to_console` produces a
+  `String`. Pure rendering — the caller persists the bytes (`io`) or prints the text.
 
 ### I/O (`core/src/io/`, behind `io` feature)
 
@@ -120,11 +130,14 @@ back. Each `checkpoint-{epoch:06}/` is written by a `CheckpointRecorder` (the `T
 ### CLI (`cli/src/`)
 
 - **`cli.rs`** — top-level `clap` command enum dispatching to subcommands.
-- **`commands/`** — one module per subcommand (`synth`, `encode`, `scale`, `predict`, `plot`), plus the
-  `train/` group (`train start` / `train resume`). The CLI's job is to parse args into a core
-  `HyperParameters` spec (via `TryFrom`, in `train/args.rs`) and run it: `execute_training()` composes
-  the callbacks, calls `build(..)`, optionally `restore(..)`s for resume, then `train()`. The
+- **`commands/`** — one module per subcommand (`synth`, `encode`, `predict`, `plot`), plus the
+  `train/` group (`train start` / `train resume`). Scaling is a `train --scale` option (no separate
+  command): the scaler is fitted during training and bundled with the model, so `predict` loads a
+  composite `Predictor` (network + optional scaler) from a model directory. The CLI parses args into
+  a core `HyperParameters` spec (via `TryFrom`, in `train/args.rs`) and runs it: `execute_training()`
+  composes the callbacks, calls `build(..)`, optionally `restore(..)`s for resume, then `train()`. The
   console-facing callbacks (`ModelSaver`, `ConsoleMonitor` with its progress bar) are `TrainerCallback`
-  impls under `train/`.
-- **`actions.rs`** — shared load/save helpers for models, datasets, and scalers.
-- **`console.rs`** — display helpers: status icons, `Summary`, formatted output used across commands.
+  impls under `train/`. `synth` previews a 2-feature dataset inline via the console renderer.
+- **`display/`** — console rendering: the `Describe`/`Named` entity traits, status icons/verbs,
+  `Artifacts`, and `terminal.rs` (figure `preview` sized to the terminal). Loading/saving goes through
+  core `.load()` / `.save()` methods on the types (`Dataset::load`, `Predictor::load`, `dataset.save`, …).
