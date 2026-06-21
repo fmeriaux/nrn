@@ -1,4 +1,3 @@
-use crate::analysis::decision_boundary;
 use crate::charts::{RenderConfig, add_padding, draw_chart, draw_with};
 use crate::data::Dataset;
 use crate::model::Predictor;
@@ -71,7 +70,7 @@ fn draw_data_with(
                 }
 
                 if let Some(predictor) = predictor {
-                    let decision_boundary = decision_boundary(&mins, &maxs, predictor, 800, 0.001);
+                    let decision_boundary = predictor.decision_boundary(&mins, &maxs, 800, 0.001);
                     let color = RED_900.to_rgba().filled();
 
                     chart.draw_series(

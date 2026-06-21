@@ -19,81 +19,82 @@
 use crate::model::Predictor;
 use ndarray::{Array2, Axis};
 
-/// Computes decision boundary points for a trained neural network with custom tolerance.
-///
-/// This function generates a grid of points within the specified bounds and identifies
-/// points where the model's prediction lies near decision boundaries.
-///
-/// # Arguments
-///
-/// * `mins` - Minimum values for each input dimension
-/// * `maxs` - Maximum values for each input dimension
-/// * `predictor` - Trained predictor (network plus optional scaler) to analyze
-/// * `resolution` - Number of grid points per dimension (higher = more precise boundary)
-/// * `tolerance` - Acceptable deviation from decision threshold (e.g., 0.001 for high precision)
-///
-/// # Returns
-///
-/// An `Array2<f32>` where each row represents a point on the decision boundary, in raw
-/// (unscaled) input coordinates.
-///
-/// # Classification Behavior
-///
-/// - **Binary**: Points where `|prediction - 0.5| < tolerance`
-/// - **Multi-class**: Points where `|max_prob - second_max_prob| < tolerance`
-///
-pub fn decision_boundary(
-    mins: &[f32],
-    maxs: &[f32],
-    predictor: &Predictor,
-    resolution: usize,
-    tolerance: f32,
-) -> Array2<f32> {
-    assert!(
-        resolution >= 2,
-        "Resolution must be at least 2 for meaningful boundary analysis. Got: {}",
-        resolution
-    );
+impl Predictor {
+    /// Computes decision boundary points within the given bounds at the given tolerance.
+    ///
+    /// Generates a grid of points within the specified bounds and identifies those where
+    /// the prediction lies near a decision boundary.
+    ///
+    /// # Arguments
+    ///
+    /// * `mins` - Minimum values for each input dimension
+    /// * `maxs` - Maximum values for each input dimension
+    /// * `resolution` - Number of grid points per dimension (higher = more precise boundary)
+    /// * `tolerance` - Acceptable deviation from decision threshold (e.g., 0.001 for high precision)
+    ///
+    /// # Returns
+    ///
+    /// An `Array2<f32>` where each row represents a point on the decision boundary, in raw
+    /// (unscaled) input coordinates.
+    ///
+    /// # Classification Behavior
+    ///
+    /// - **Binary**: Points where `|prediction - 0.5| < tolerance`
+    /// - **Multi-class**: Points where `|max_prob - second_max_prob| < tolerance`
+    ///
+    pub fn decision_boundary(
+        &self,
+        mins: &[f32],
+        maxs: &[f32],
+        resolution: usize,
+        tolerance: f32,
+    ) -> Array2<f32> {
+        assert!(
+            resolution >= 2,
+            "Resolution must be at least 2 for meaningful boundary analysis. Got: {}",
+            resolution
+        );
 
-    assert_eq!(
-        mins.len(),
-        maxs.len(),
-        "Mins and maxs must have the same length"
-    );
+        assert_eq!(
+            mins.len(),
+            maxs.len(),
+            "Mins and maxs must have the same length"
+        );
 
-    if mins.is_empty() {
-        return Array2::zeros((0, 0));
+        if mins.is_empty() {
+            return Array2::zeros((0, 0));
+        }
+
+        assert!(
+            mins.iter().zip(maxs.iter()).all(|(&min, &max)| min < max),
+            "Each min value must be less than the corresponding max value"
+        );
+
+        let (grid_points, inputs) = make_grid_and_inputs(mins, maxs, resolution);
+        let predictions = self.predict(inputs.view());
+
+        let n_outputs = predictions.nrows();
+
+        let boundary_indices: Vec<usize> = grid_points
+            .outer_iter()
+            .enumerate()
+            .filter(|(i, _)| {
+                let pred = predictions.column(*i);
+                if n_outputs == 1 {
+                    // Binary classification: threshold at 0.5
+                    (pred[0] - 0.5).abs() < tolerance
+                } else {
+                    // Multi-class classification: difference between top two classes
+                    let mut probabilities: Vec<f32> = pred.to_vec();
+                    probabilities.sort_by(|a, b| b.total_cmp(a));
+                    (probabilities[0] - probabilities[1]).abs() < tolerance
+                }
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        grid_points.select(Axis(0), &boundary_indices)
     }
-
-    assert!(
-        mins.iter().zip(maxs.iter()).all(|(&min, &max)| min < max),
-        "Each min value must be less than the corresponding max value"
-    );
-
-    let (grid_points, inputs) = make_grid_and_inputs(mins, maxs, resolution);
-    let predictions = predictor.predict(inputs.view());
-
-    let n_outputs = predictions.nrows();
-
-    let boundary_indices: Vec<usize> = grid_points
-        .outer_iter()
-        .enumerate()
-        .filter(|(i, _)| {
-            let pred = predictions.column(*i);
-            if n_outputs == 1 {
-                // Binary classification: threshold at 0.5
-                (pred[0] - 0.5).abs() < tolerance
-            } else {
-                // Multi-class classification: difference between top two classes
-                let mut probabilities: Vec<f32> = pred.to_vec();
-                probabilities.sort_by(|a, b| b.total_cmp(a));
-                (probabilities[0] - probabilities[1]).abs() < tolerance
-            }
-        })
-        .map(|(i, _)| i)
-        .collect();
-
-    grid_points.select(Axis(0), &boundary_indices)
 }
 
 /// Creates a grid of points and corresponding inputs for neural network evaluation.
@@ -268,7 +269,7 @@ mod tests {
     #[test]
     fn binary_boundary_returns_points_near_threshold() {
         // Odd resolution includes x0 == 0, where sigmoid(x0) == 0.5 exactly.
-        let boundary = decision_boundary(&[-1.0, -1.0], &[1.0, 1.0], &binary_model(), 5, 1e-3);
+        let boundary = binary_model().decision_boundary(&[-1.0, -1.0], &[1.0, 1.0], 5, 1e-3);
         assert!(boundary.nrows() > 0);
         assert_eq!(boundary.ncols(), 2);
         // Every returned point sits on the x0 == 0 line.
@@ -277,7 +278,7 @@ mod tests {
 
     #[test]
     fn multiclass_boundary_returns_points_on_the_tie_line() {
-        let boundary = decision_boundary(&[-2.0, -2.0], &[2.0, 2.0], &multiclass_model(), 5, 1e-2);
+        let boundary = multiclass_model().decision_boundary(&[-2.0, -2.0], &[2.0, 2.0], 5, 1e-2);
         assert!(boundary.nrows() > 0);
         assert_eq!(boundary.ncols(), 2);
         assert!(boundary.column(0).iter().all(|&x| x.abs() < 1e-5));
@@ -302,32 +303,32 @@ mod tests {
         let predictor = Predictor::new(network, Some(scaler));
 
         // Grid x0 ∈ {-1, 0, 1, 2, 3}; the boundary sits on raw x0 == 1.0.
-        let boundary = decision_boundary(&[-1.0, -1.0], &[3.0, 3.0], &predictor, 5, 1e-3);
+        let boundary = predictor.decision_boundary(&[-1.0, -1.0], &[3.0, 3.0], 5, 1e-3);
         assert!(boundary.nrows() > 0);
         assert!(boundary.column(0).iter().all(|&x| (x - 1.0).abs() < 1e-5));
     }
 
     #[test]
     fn empty_bounds_return_empty_array() {
-        let boundary = decision_boundary(&[], &[], &binary_model(), 5, 1e-3);
+        let boundary = binary_model().decision_boundary(&[], &[], 5, 1e-3);
         assert_eq!(boundary.shape(), &[0, 0]);
     }
 
     #[test]
     #[should_panic(expected = "Resolution must be at least 2")]
     fn resolution_below_two_panics() {
-        decision_boundary(&[0.0], &[1.0], &binary_model(), 1, 1e-3);
+        binary_model().decision_boundary(&[0.0], &[1.0], 1, 1e-3);
     }
 
     #[test]
     #[should_panic(expected = "Mins and maxs must have the same length")]
     fn mismatched_bounds_length_panics() {
-        decision_boundary(&[0.0, 0.0], &[1.0], &binary_model(), 3, 1e-3);
+        binary_model().decision_boundary(&[0.0, 0.0], &[1.0], 3, 1e-3);
     }
 
     #[test]
     #[should_panic(expected = "Each min value must be less than")]
     fn min_not_below_max_panics() {
-        decision_boundary(&[1.0, 0.0], &[1.0, 1.0], &binary_model(), 3, 1e-3);
+        binary_model().decision_boundary(&[1.0, 0.0], &[1.0, 1.0], 3, 1e-3);
     }
 }
