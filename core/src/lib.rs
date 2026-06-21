@@ -3,8 +3,7 @@ pub use nn::*;
 
 pub mod analysis;
 pub mod data;
+pub mod plot;
 
-#[cfg(feature = "charts")]
-pub mod charts;
 #[cfg(feature = "io")]
 pub mod io;

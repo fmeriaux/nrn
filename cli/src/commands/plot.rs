@@ -1,13 +1,14 @@
+use crate::actions::DEFAULT_PADDING_FACTOR;
 use crate::display::{Artifacts, bar, loaded, saved, warning};
 use clap::Args;
 use indicatif::ProgressIterator;
-use nrn::charts::RenderConfig;
 use nrn::data::Dataset;
 use nrn::data::scalers::ScalerMethod;
 use nrn::io::gif::save_gif_from_rgb;
 use nrn::io::png::save_rgb;
 use nrn::io::run::TrainingRun;
 use nrn::model::Predictor;
+use nrn::plot::ImageConfig;
 use std::error::Error;
 use std::path::Path;
 
@@ -45,11 +46,12 @@ impl PlotArgs {
         loaded(&archive);
 
         let history = archive.evaluation_history()?;
-        let render_cfg = RenderConfig::new(self.width as u32, self.height as u32);
-
         let (width, height) = (self.width as u32, self.height as u32);
+        let render_cfg = ImageConfig::new(width, height);
 
-        let frame = history.draw(&render_cfg)?;
+        let frame = history
+            .figure(DEFAULT_PADDING_FACTOR)?
+            .to_image(&render_cfg)?;
 
         let mut artifacts = Artifacts::from([(
             "Training Curves",
@@ -86,8 +88,14 @@ impl PlotArgs {
                     // Load one model at a time — no full checkpoint array in memory.
                     let model = archive.model_at(step)?;
                     let predictor = Predictor::new(model, scaler.clone());
-                    let rgb_frame = predictor.draw_decision_boundary(&dataset, &render_cfg)?;
-                    decision_frames.push(rgb_frame);
+                    // Resolution tracks the output width: one boundary grid line per pixel
+                    // column is ample for a crisp curve at any figure size.
+                    let figure = predictor.boundary_figure(
+                        &dataset,
+                        width as usize,
+                        DEFAULT_PADDING_FACTOR,
+                    )?;
+                    decision_frames.push(figure.to_image(&render_cfg)?);
                 }
             }
 
