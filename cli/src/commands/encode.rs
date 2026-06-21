@@ -6,10 +6,9 @@ use console::style;
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::prelude::StdRng;
 use nrn::data::vectorizers::{ImageEncoder, VectorEncoder};
-use nrn::data::{Dataset, DatasetOrigin};
+use nrn::data::{Dataset, DatasetOrigin, Instance};
 use nrn::io::bytes::secure_read;
 use nrn::io::classes::extract_classes;
-use nrn::io::data::save_inputs;
 use std::error::Error;
 use std::fs::read_dir;
 use std::path::Path;
@@ -167,7 +166,7 @@ impl ImgArgs {
 
         let image = encoder.encode(&secure_read(Path::new(&self.input))?)?;
 
-        save_inputs(&self.output, &image)?;
+        Instance::from(image).save(&self.output)?;
 
         println!("{}", style("Image encoded").bright().green());
 

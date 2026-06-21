@@ -10,10 +10,12 @@
 
 mod artifacts;
 mod checkpoint;
+mod classification;
 mod dataset;
 mod evaluation;
 mod hyperparameters;
 mod icons;
+mod instance;
 mod model;
 mod progress;
 mod scaler;
@@ -155,6 +157,11 @@ pub(crate) fn recording<E: Named + Describe>(entity: &E) {
 
 pub(crate) fn trace(message: &str) {
     action(TRACE_ICON, message);
+}
+
+/// The inline prompt for the `index`-th interactive input value.
+pub(crate) fn prompt(index: usize) {
+    println!("{}[{}]:", theme::title("Input"), theme::value(index));
 }
 
 /// Backing implementation for the [`completed!`] macro: a success-icon status

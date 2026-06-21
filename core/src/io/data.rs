@@ -1,6 +1,5 @@
 use crate::data::{Dataset, DatasetOrigin};
 use crate::io::tensors;
-use ndarray::Array1;
 use safetensors::SafeTensors;
 use std::collections::HashMap;
 use std::io::ErrorKind::InvalidData;
@@ -24,18 +23,6 @@ const ORIGIN_SOURCE: &str = "source";
 const ORIGIN_SEED: &str = "seed";
 const KIND_SYNTHETIC: &str = "synthetic";
 const KIND_ENCODED: &str = "encoded";
-
-pub fn save_inputs<P: AsRef<Path>>(path: P, inputs: &Array1<f32>) -> Result<()> {
-    let entries = vec![("inputs".to_string(), tensors::tensor(inputs))];
-    tensors::save(path, entries, HashMap::new())?;
-    Ok(())
-}
-
-pub fn load_inputs<P: AsRef<Path>>(path: P) -> Result<Array1<f32>> {
-    let bytes = tensors::load(path)?;
-    let st = SafeTensors::deserialize(&bytes).map_err(invalid)?;
-    tensors::read_array1("inputs", &st)
-}
 
 fn origin_into_metadata(origin: &DatasetOrigin) -> HashMap<String, String> {
     match origin {
@@ -95,7 +82,6 @@ impl Dataset {
 
 #[cfg(test)]
 mod tests {
-    use super::{load_inputs, save_inputs};
     use crate::data::{Dataset, DatasetOrigin};
     use ndarray::{Array2, array};
     use std::path::{Path, PathBuf};
@@ -163,18 +149,6 @@ mod tests {
     }
 
     #[test]
-    fn inputs_save_load_roundtrip() {
-        let inputs = array![0.1, -0.2, 3.5, 42.0];
-
-        let path = temp_path("inputs");
-        save_inputs(&path, &inputs).unwrap();
-        let loaded = load_inputs(&path).unwrap();
-        cleanup(&path);
-
-        assert_eq!(inputs, loaded);
-    }
-
-    #[test]
     fn malformed_or_unknown_origin_metadata_degrades_to_no_origin() {
         // A recorded origin is best-effort: an unknown discriminant or a missing /
         // unparseable field drops the origin rather than failing the load.
@@ -233,7 +207,6 @@ mod tests {
         .unwrap();
 
         assert!(Dataset::load(&path).is_err());
-        assert!(load_inputs(&path).is_err());
 
         cleanup(&path);
     }
