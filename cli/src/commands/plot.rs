@@ -4,11 +4,9 @@ use clap::Args;
 use indicatif::ProgressIterator;
 use nrn::data::Dataset;
 use nrn::data::scalers::ScalerMethod;
-use nrn::io::gif::save_gif_from_rgb;
-use nrn::io::png::save_rgb;
 use nrn::io::run::TrainingRun;
 use nrn::model::Predictor;
-use nrn::plot::ImageConfig;
+use nrn::plot::{ImageConfig, RasterAnimation};
 use std::error::Error;
 use std::path::Path;
 
@@ -53,10 +51,7 @@ impl PlotArgs {
             .figure(DEFAULT_PADDING_FACTOR)?
             .to_image(&render_cfg)?;
 
-        let mut artifacts = Artifacts::from([(
-            "Training Curves",
-            save_rgb(frame, &self.run_dir, width, height)?,
-        )]);
+        let mut artifacts = Artifacts::from([("Training Curves", frame.save(&self.run_dir)?)]);
 
         // The run records its dataset (a sibling of the run directory) and scaler.
         let meta = run.meta();
@@ -101,13 +96,11 @@ impl PlotArgs {
 
             artifacts.add(
                 "Decision Boundary Animation",
-                save_gif_from_rgb(
-                    decision_frames,
-                    self.width,
-                    self.height,
-                    self.delay,
-                    &self.run_dir,
-                )?,
+                RasterAnimation {
+                    frames: decision_frames,
+                    frame_delay: self.delay,
+                }
+                .save(&self.run_dir)?,
             );
         }
 

@@ -1,6 +1,5 @@
 use crate::display::*;
 use nrn::data::Dataset;
-use nrn::io::png::save_rgb;
 use nrn::plot::ImageConfig;
 use std::error::Error;
 use std::path::{Path, PathBuf};
@@ -21,7 +20,7 @@ pub(crate) fn plot_dataset<P: AsRef<Path>>(
 
     let cfg = ImageConfig::default();
     let figure = dataset.figure(DEFAULT_PADDING_FACTOR)?;
-    let saved = save_rgb(figure.to_image(&cfg)?, path, cfg.width, cfg.height)?;
+    let saved = figure.to_image(&cfg)?.save(path)?;
 
     Ok(Some(saved))
 }

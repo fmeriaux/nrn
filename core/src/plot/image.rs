@@ -46,14 +46,31 @@ impl ImageConfig<'_> {
     }
 }
 
+/// A rendered RGB image: a row-major buffer of `width × height` 8-bit RGB triples.
+pub struct RasterImage {
+    /// Row-major RGB pixel data, three bytes per pixel.
+    pub bytes: Vec<u8>,
+    /// Image width in pixels.
+    pub width: u32,
+    /// Image height in pixels.
+    pub height: u32,
+}
+
+/// A sequence of equally sized rendered frames forming a looping animation.
+pub struct RasterAnimation {
+    /// The frames in display order.
+    pub frames: Vec<RasterImage>,
+    /// Delay between frames in milliseconds.
+    pub frame_delay: u16,
+}
+
 impl Figure {
-    /// Rasterizes the figure to a `width × height` RGB byte buffer, stacking its panels
-    /// vertically in order.
-    pub fn to_image(&self, cfg: &ImageConfig) -> Result<Vec<u8>, Box<dyn Error>> {
-        let mut buffer = vec![255u8; (cfg.width * cfg.height * 3) as usize];
+    /// Rasterizes the figure to a [`RasterImage`], stacking its panels vertically in order.
+    pub fn to_image(&self, cfg: &ImageConfig) -> Result<RasterImage, Box<dyn Error>> {
+        let mut bytes = vec![255u8; (cfg.width * cfg.height * 3) as usize];
         {
-            let root = BitMapBackend::with_buffer(&mut buffer, (cfg.width, cfg.height))
-                .into_drawing_area();
+            let root =
+                BitMapBackend::with_buffer(&mut bytes, (cfg.width, cfg.height)).into_drawing_area();
             root.fill(&WHITE)?;
 
             let regions = root.split_evenly((self.panels.len(), 1));
@@ -64,7 +81,11 @@ impl Figure {
             root.present()?;
         }
 
-        Ok(buffer)
+        Ok(RasterImage {
+            bytes,
+            width: cfg.width,
+            height: cfg.height,
+        })
     }
 }
 
@@ -183,8 +204,9 @@ mod tests {
         };
 
         let cfg = ImageConfig::new(200, 150);
-        let buffer = figure.to_image(&cfg).unwrap();
-        assert_eq!(pixel_count(&buffer), 200 * 150);
+        let image = figure.to_image(&cfg).unwrap();
+        assert_eq!((image.width, image.height), (200, 150));
+        assert_eq!(pixel_count(&image.bytes), 200 * 150);
     }
 
     #[test]
@@ -218,8 +240,8 @@ mod tests {
         };
 
         let cfg = ImageConfig::default();
-        let buffer = figure.to_image(&cfg).unwrap();
-        assert_eq!(pixel_count(&buffer), (cfg.width * cfg.height) as usize);
+        let image = figure.to_image(&cfg).unwrap();
+        assert_eq!(pixel_count(&image.bytes), (cfg.width * cfg.height) as usize);
     }
 
     #[test]
@@ -235,15 +257,15 @@ mod tests {
             panels: vec![panel(), panel()],
         };
 
-        let buffer = figure.to_image(&ImageConfig::new(120, 120)).unwrap();
-        assert_eq!(pixel_count(&buffer), 120 * 120);
+        let image = figure.to_image(&ImageConfig::new(120, 120)).unwrap();
+        assert_eq!(pixel_count(&image.bytes), 120 * 120);
     }
 
     #[test]
     fn to_image_of_an_empty_figure_is_blank() {
         let figure = Figure { panels: Vec::new() };
-        let buffer = figure.to_image(&ImageConfig::new(64, 64)).unwrap();
+        let image = figure.to_image(&ImageConfig::new(64, 64)).unwrap();
         // No panels drawn: every pixel stays white.
-        assert!(buffer.iter().all(|&byte| byte == 255));
+        assert!(image.bytes.iter().all(|&byte| byte == 255));
     }
 }
