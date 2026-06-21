@@ -2,7 +2,6 @@ use crate::cli::CliArgs;
 use crate::display::error;
 use clap::Parser;
 
-mod actions;
 mod cli;
 mod commands;
 mod display;

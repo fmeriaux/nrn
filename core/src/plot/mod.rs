@@ -13,3 +13,8 @@ pub use scene::*;
 mod image;
 #[cfg(feature = "raster")]
 pub use image::*;
+
+#[cfg(feature = "console")]
+mod console;
+#[cfg(feature = "console")]
+pub use console::*;

@@ -9,12 +9,23 @@ use crate::model::Predictor;
 use crate::plot::scene::{Color, Figure, Panel, Series, add_padding};
 use std::error::Error;
 
+/// Fraction of each axis range added as whitespace around a figure's axes.
+const DEFAULT_PADDING_FACTOR: f32 = 0.05;
+
 impl Dataset {
-    /// A scatter figure of the dataset's two features, one color per class.
+    /// A scatter figure of the dataset's two features, with default axis padding.
     ///
     /// # Errors
     /// When the dataset does not have exactly two features.
-    pub fn figure(&self, padding_factor: f32) -> Result<Figure, Box<dyn Error>> {
+    pub fn figure(&self) -> Result<Figure, Box<dyn Error>> {
+        self.figure_with_padding(DEFAULT_PADDING_FACTOR)
+    }
+
+    /// A scatter figure widening each axis by `padding_factor` of its range.
+    ///
+    /// # Errors
+    /// When the dataset does not have exactly two features.
+    pub fn figure_with_padding(&self, padding_factor: f32) -> Result<Figure, Box<dyn Error>> {
         Ok(Figure {
             panels: vec![scatter_panel(self, None, padding_factor, true)?],
         })
@@ -22,14 +33,28 @@ impl Dataset {
 }
 
 impl Predictor {
-    /// A scatter figure of the dataset overlaid with this predictor's decision boundary.
+    /// A scatter figure overlaid with this predictor's decision boundary, with
+    /// default axis padding.
+    ///
+    /// # Errors
+    /// When the dataset does not have exactly two features.
+    pub fn boundary_figure(
+        &self,
+        dataset: &Dataset,
+        resolution: usize,
+    ) -> Result<Figure, Box<dyn Error>> {
+        self.boundary_figure_with_padding(dataset, resolution, DEFAULT_PADDING_FACTOR)
+    }
+
+    /// A scatter figure overlaid with this predictor's decision boundary,
+    /// widening each axis by `padding_factor` of its range.
     ///
     /// `resolution` is the number of grid points per axis used to trace the boundary;
     /// higher values yield a smoother curve at a quadratic cost in forward passes.
     ///
     /// # Errors
     /// When the dataset does not have exactly two features.
-    pub fn boundary_figure(
+    pub fn boundary_figure_with_padding(
         &self,
         dataset: &Dataset,
         resolution: usize,
@@ -47,11 +72,21 @@ impl Predictor {
 }
 
 impl EvaluationHistory {
-    /// A two-panel figure: training loss (top) and accuracy (bottom) over epochs.
+    /// A two-panel figure of training loss and accuracy over epochs, with
+    /// default axis padding.
     ///
     /// # Errors
     /// When the history is empty.
-    pub fn figure(&self, padding_factor: f32) -> Result<Figure, Box<dyn Error>> {
+    pub fn figure(&self) -> Result<Figure, Box<dyn Error>> {
+        self.figure_with_padding(DEFAULT_PADDING_FACTOR)
+    }
+
+    /// A two-panel figure: training loss (top) and accuracy (bottom) over epochs,
+    /// widening each value axis by `padding_factor` of its range.
+    ///
+    /// # Errors
+    /// When the history is empty.
+    pub fn figure_with_padding(&self, padding_factor: f32) -> Result<Figure, Box<dyn Error>> {
         let epochs = self.epochs();
         let ((loss, accuracy), last_epoch) = self
             .loss_range()
@@ -238,7 +273,7 @@ mod tests {
 
     #[test]
     fn dataset_figure_has_one_panel_per_class_with_a_legend() {
-        let figure = two_feature_dataset().figure(0.05).unwrap();
+        let figure = two_feature_dataset().figure().unwrap();
         assert_eq!(figure.panels.len(), 1);
         let panel = &figure.panels[0];
         assert!(panel.show_legend);
@@ -254,16 +289,23 @@ mod tests {
 
     #[test]
     fn dataset_figure_rejects_non_two_feature_data() {
-        let error = one_feature_dataset().figure(0.05).unwrap_err();
+        let error = one_feature_dataset().figure().unwrap_err();
         assert!(error.to_string().contains("exactly two features"));
+    }
+
+    #[test]
+    fn figure_with_padding_widens_the_axes() {
+        let dataset = two_feature_dataset();
+        let default = dataset.figure().unwrap();
+        let wide = dataset.figure_with_padding(0.5).unwrap();
+        // A larger factor pushes the lower x bound further out.
+        assert!(wide.panels[0].x_range.0 < default.panels[0].x_range.0);
     }
 
     #[test]
     fn boundary_figure_adds_an_unlabeled_overlay_without_a_legend() {
         let dataset = two_feature_dataset();
-        let figure = binary_predictor()
-            .boundary_figure(&dataset, 10, 0.05)
-            .unwrap();
+        let figure = binary_predictor().boundary_figure(&dataset, 10).unwrap();
         let panel = &figure.panels[0];
         assert!(!panel.show_legend);
         // Two class series plus the boundary overlay.
@@ -283,7 +325,7 @@ mod tests {
     fn boundary_figure_rejects_non_two_feature_data() {
         let dataset = one_feature_dataset();
         let error = binary_predictor()
-            .boundary_figure(&dataset, 10, 0.05)
+            .boundary_figure(&dataset, 10)
             .unwrap_err();
         assert!(error.to_string().contains("exactly two features"));
     }
@@ -291,7 +333,7 @@ mod tests {
     #[test]
     fn history_figure_has_loss_and_accuracy_panels() {
         let history = EvaluationHistory::new(vec![checkpoint(0), checkpoint(1)]);
-        let figure = history.figure(0.05).unwrap();
+        let figure = history.figure().unwrap();
         assert_eq!(figure.panels.len(), 2);
         assert_eq!(figure.panels[0].title, "Training Loss Over Epochs");
         assert_eq!(
@@ -323,13 +365,13 @@ mod tests {
             },
         };
         let history = EvaluationHistory::new(vec![without_validation]);
-        let figure = history.figure(0.05).unwrap();
+        let figure = history.figure().unwrap();
         assert_eq!(figure.panels[0].series.len(), 2);
     }
 
     #[test]
     fn history_figure_rejects_empty_history() {
-        let error = EvaluationHistory::new(Vec::new()).figure(0.05).unwrap_err();
+        let error = EvaluationHistory::new(Vec::new()).figure().unwrap_err();
         assert!(error.to_string().contains("No data to plot"));
     }
 }

@@ -1,4 +1,3 @@
-use crate::actions::DEFAULT_PADDING_FACTOR;
 use crate::display::{Artifacts, bar, loaded, saved, warning};
 use clap::Args;
 use indicatif::ProgressIterator;
@@ -47,9 +46,7 @@ impl PlotArgs {
         let (width, height) = (self.width as u32, self.height as u32);
         let render_cfg = ImageConfig::new(width, height);
 
-        let frame = history
-            .figure(DEFAULT_PADDING_FACTOR)?
-            .to_image(&render_cfg)?;
+        let frame = history.figure()?.to_image(&render_cfg)?;
 
         let mut artifacts = Artifacts::from([("Training Curves", frame.save(&self.run_dir)?)]);
 
@@ -85,11 +82,7 @@ impl PlotArgs {
                     let predictor = Predictor::new(model, scaler.clone());
                     // Resolution tracks the output width: one boundary grid line per pixel
                     // column is ample for a crisp curve at any figure size.
-                    let figure = predictor.boundary_figure(
-                        &dataset,
-                        width as usize,
-                        DEFAULT_PADDING_FACTOR,
-                    )?;
+                    let figure = predictor.boundary_figure(&dataset, width as usize)?;
                     decision_frames.push(figure.to_image(&render_cfg)?);
                 }
             }

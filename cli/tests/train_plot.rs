@@ -568,8 +568,8 @@ fn divergence_with_early_stopping_recovers_best_model() {
 #[test]
 fn synth_warns_on_uneven_clusters_and_plots_scatter() {
     // 21 samples across 2 clusters → 1 dropped (uneven division warning, stderr).
-    // The dataset id reflects the *generated* count, and --plot renders the
-    // 2-feature scatter to a PNG beside it.
+    // The dataset id reflects the *generated* count, and a 2-feature dataset
+    // gets an inline scatter preview printed to stdout.
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
@@ -586,7 +586,6 @@ fn synth_warns_on_uneven_clusters_and_plots_scatter() {
             "2",
             "--samples",
             "21",
-            "--plot",
         ])
         .output()
         .unwrap();
@@ -598,14 +597,16 @@ fn synth_warns_on_uneven_clusters_and_plots_scatter() {
         "expected an uneven-cluster warning on stderr: {stderr}"
     );
 
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("Scatter Plot of Dataset Features"),
+        "expected an inline scatter preview on stdout: {stdout}"
+    );
+
     let ds_name = "ring-seed1-c2-f2-n20";
     assert!(
         dir.join(format!("{ds_name}.safetensors")).exists(),
         "expected dataset named after the generated count"
-    );
-    assert!(
-        dir.join(format!("{ds_name}.png")).exists(),
-        "expected --plot to render a scatter PNG"
     );
 }
 
