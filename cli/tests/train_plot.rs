@@ -243,6 +243,84 @@ fn plot_run_console_prints_curves_and_boundary_without_files() {
 }
 
 #[test]
+fn plot_run_console_animation_replays_the_boundary_frames() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    nrn(
+        dir,
+        &[
+            "synth",
+            "--min",
+            "0",
+            "--max",
+            "10",
+            "--seed",
+            "42",
+            "--distribution",
+            "ring",
+            "--clusters",
+            "2",
+            "--samples",
+            "20",
+        ],
+    )
+    .success();
+
+    let ds_name = "ring-seed42-c2-f2-n20";
+    nrn(
+        dir,
+        &[
+            "train",
+            "start",
+            "--seed",
+            "42",
+            ds_name,
+            "--epochs",
+            "20",
+            "--checkpoint-interval",
+            "5",
+            "--no-clip",
+        ],
+    )
+    .success();
+
+    let run_arg = format!("training-model-{ds_name}");
+
+    // Console + --animate: each frame is a full boundary scatter redrawn in place,
+    // so the title prints once per frame. A small frame count and delay keep it
+    // fast. Seeing it more than once is what separates the animation from a still.
+    let out = Command::cargo_bin("nrn")
+        .unwrap()
+        .current_dir(dir)
+        .args([
+            "plot",
+            "run",
+            &run_arg,
+            "--animate",
+            "--frames",
+            "3",
+            "--delay",
+            "10",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let frames = stdout.matches("Scatter Plot of Dataset Features").count();
+    assert!(
+        frames >= 2,
+        "expected the boundary to be redrawn for several frames, saw {frames}: {stdout}"
+    );
+    assert!(
+        !dir.join(format!("boundary-training-model-{ds_name}.gif"))
+            .exists(),
+        "the console animation must not write a GIF"
+    );
+}
+
+#[test]
 fn plot_dataset_renders_console_and_image() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
@@ -421,6 +499,74 @@ fn plot_run_succeeds_at_the_two_checkpoint_minimum() {
 }
 
 #[test]
+fn plot_run_rejects_a_single_checkpoint() {
+    // A run plot interpolates between checkpoints, so a lone one cannot be drawn.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    nrn(
+        dir,
+        &[
+            "synth",
+            "--min",
+            "0",
+            "--max",
+            "10",
+            "--seed",
+            "13",
+            "--distribution",
+            "ring",
+            "--clusters",
+            "2",
+            "--samples",
+            "20",
+        ],
+    )
+    .success();
+
+    let ds_name = "ring-seed13-c2-f2-n20";
+    nrn(
+        dir,
+        &[
+            "train",
+            "start",
+            "--seed",
+            "42",
+            ds_name,
+            "--epochs",
+            "2",
+            "--checkpoint-interval",
+            "1",
+            "--no-clip",
+        ],
+    )
+    .success();
+
+    let run_arg = format!("training-model-{ds_name}");
+    let run_dir = dir.join(&run_arg);
+
+    // Strip the trajectory down to its first checkpoint, leaving a single point.
+    let mut checkpoints: Vec<_> = fs::read_dir(&run_dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("checkpoint-"))
+        })
+        .collect();
+    checkpoints.sort();
+    for path in checkpoints.iter().skip(1) {
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    nrn(dir, &["plot", "run", &run_arg])
+        .failure()
+        .stderr(contains("at least two checkpoints"));
+}
+
+#[test]
 fn early_stopping_writes_final_checkpoint() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
@@ -573,6 +719,9 @@ fn model_exists(dir: &Path, ds_name: &str) -> bool {
 
 #[test]
 fn start_prints_recap_without_overrides() {
+    // A fresh run shows no `was` override markers. The non-default scheduler,
+    // clipping, batch and early-stopping settings also exercise those recap
+    // value branches, including `--no-restore-best-model`.
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
@@ -611,7 +760,15 @@ fn start_prints_recap_without_overrides() {
             "2",
             "--checkpoint-interval",
             "1",
-            "--no-clip",
+            "--scheduler",
+            "cosine",
+            "--clip-value",
+            "0.5",
+            "--batch-size",
+            "8",
+            "--early-stopping",
+            "3",
+            "--no-restore-best-model",
         ])
         .output()
         .unwrap();
@@ -625,6 +782,26 @@ fn start_prints_recap_without_overrides() {
     assert!(
         !stdout.contains("was"),
         "a fresh run must not show any override marker: {stdout}"
+    );
+    // The chosen non-default values render their respective recap branches.
+    assert!(
+        stdout.contains("cosine annealing"),
+        "expected the cosine scheduler label: {stdout}"
+    );
+    assert!(
+        stdout.contains("value · min"),
+        "expected the value-clipping label: {stdout}"
+    );
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line.contains("Batches") && line.contains('8')),
+        "expected the mini-batch size on the Batches row: {stdout}"
+    );
+    // `--no-restore-best-model` renders the patience-only early-stopping label.
+    assert!(
+        stdout.contains("patience 3") && !stdout.contains("restore best"),
+        "expected early stopping without the restore-best suffix: {stdout}"
     );
 }
 

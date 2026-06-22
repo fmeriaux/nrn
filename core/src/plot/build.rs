@@ -26,9 +26,12 @@ impl Dataset {
     /// # Errors
     /// When the dataset does not have exactly two features.
     pub fn figure_with_padding(&self, padding_factor: f32) -> Result<Figure, Box<dyn Error>> {
-        Ok(Figure {
-            panels: vec![scatter_panel(self, None, padding_factor, true)?],
-        })
+        Ok(Figure::spatial(vec![scatter_panel(
+            self,
+            None,
+            padding_factor,
+            true,
+        )?]))
     }
 }
 
@@ -60,14 +63,12 @@ impl Predictor {
         resolution: usize,
         padding_factor: f32,
     ) -> Result<Figure, Box<dyn Error>> {
-        Ok(Figure {
-            panels: vec![scatter_panel(
-                dataset,
-                Some((self, resolution)),
-                padding_factor,
-                false,
-            )?],
-        })
+        Ok(Figure::spatial(vec![scatter_panel(
+            dataset,
+            Some((self, resolution)),
+            padding_factor,
+            false,
+        )?]))
     }
 }
 
@@ -133,9 +134,7 @@ impl EvaluationHistory {
             ),
         };
 
-        Ok(Figure {
-            panels: vec![loss_panel, accuracy_panel],
-        })
+        Ok(Figure::chart(vec![loss_panel, accuracy_panel]))
     }
 }
 
@@ -285,6 +284,21 @@ mod tests {
                 .iter()
                 .all(|series| matches!(series, Series::Points { label: Some(_), .. }))
         );
+    }
+
+    #[test]
+    fn spatial_figures_preserve_aspect_but_the_curves_chart_does_not() {
+        // Scatter and boundary axes are both feature space (shared units), so the
+        // aspect is preserved; loss/accuracy over epochs is an aspect-free chart.
+        assert!(two_feature_dataset().figure().unwrap().preserve_aspect);
+        assert!(
+            binary_predictor()
+                .boundary_figure(&two_feature_dataset(), 10)
+                .unwrap()
+                .preserve_aspect
+        );
+        let history = EvaluationHistory::new(vec![checkpoint(0), checkpoint(1)]);
+        assert!(!history.figure().unwrap().preserve_aspect);
     }
 
     #[test]

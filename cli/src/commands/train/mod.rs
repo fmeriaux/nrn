@@ -50,7 +50,7 @@ impl fmt::Display for DivergedRun {
         write!(
             f,
             "model diverged at epoch {} (NaN/Inf in weights). \
-             Try: --early-stopping with --restore-best-model, --scheduler cosine, \
+             Try: --early-stopping (restores the best model), --scheduler cosine, \
              a lower --lr, or stronger gradient clipping.",
             self.final_epoch
         )

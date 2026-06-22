@@ -38,21 +38,26 @@ pub(crate) fn play_frames(figures: &[Figure], delay: u16) {
 }
 
 /// A console canvas for an inline preview, falling back to a default when the
-/// terminal size or the figure's aspect can't be determined (e.g. piped output).
+/// terminal size can't be determined (e.g. piped output).
 fn preview_config(figure: &Figure) -> ConsoleConfig {
-    config_for(Term::stdout().size_checked(), figure.data_aspect())
+    let panels = figure.panels.len().max(1) as u16;
+    config_for(Term::stdout().size_checked(), figure.data_aspect(), panels)
 }
 
-/// Fits a preview to the figure's data aspect within half the terminal height
-/// and a readable width, so it stays glanceable instead of filling the screen.
-fn config_for(size: Option<(u16, u16)>, aspect: Option<f32>) -> ConsoleConfig {
-    match (size, aspect) {
-        (Some((rows, columns)), Some(aspect)) => {
-            let max_rows = (rows / 2).max(MIN_ROWS);
-            let max_columns = columns.saturating_sub(2).clamp(MIN_COLUMNS, MAX_COLUMNS);
-            ConsoleConfig::fitted(aspect, max_columns, max_rows)
-        }
-        _ => ConsoleConfig::default(),
+/// Sizes a preview within half the terminal height, split evenly across its
+/// `panels`, and a readable width: a spatial figure keeps its data `aspect`,
+/// while an aspect-free chart fills the budget.
+fn config_for(size: Option<(u16, u16)>, aspect: Option<f32>, panels: u16) -> ConsoleConfig {
+    let Some((rows, columns)) = size else {
+        return ConsoleConfig::default();
+    };
+
+    let max_rows = (rows / 2 / panels.max(1)).max(MIN_ROWS);
+    let max_columns = columns.saturating_sub(2).clamp(MIN_COLUMNS, MAX_COLUMNS);
+
+    match aspect {
+        Some(aspect) => ConsoleConfig::fitted(aspect, max_columns, max_rows),
+        None => ConsoleConfig::filling(max_columns, max_rows),
     }
 }
 
@@ -68,9 +73,9 @@ mod tests {
 
     #[test]
     fn a_square_domain_stays_square_and_capped_at_half_the_height() {
-        // 24 rows → at most 12 rows → 48 dots tall; a square aspect makes it
-        // 48 dots wide too, well within the width budget.
-        let cfg = config_for(Some((24, 80)), Some(1.0));
+        // 24 rows → at most 12 rows for a single panel → 48 dots tall; a square
+        // aspect makes it 48 dots wide too, well within the width budget.
+        let cfg = config_for(Some((24, 80)), Some(1.0), 1);
         assert_eq!((cfg.width(), cfg.height()), (48, 48));
     }
 
@@ -78,30 +83,36 @@ mod tests {
     fn a_wide_domain_is_capped_by_the_width_budget() {
         // A 4:1 domain would want 4× the height in width; the column cap holds
         // it to MAX_COLUMNS (60) → 120 dots, with height following the aspect.
-        let cfg = config_for(Some((24, 200)), Some(4.0));
+        let cfg = config_for(Some((24, 200)), Some(4.0), 1);
         assert_eq!(cfg.width(), 120);
         assert_eq!(cfg.height(), 30);
     }
 
     #[test]
+    fn the_height_budget_is_split_across_panels() {
+        // 40 rows → 20-row half budget, shared by two panels → 10 rows → 40 dots
+        // each, so the stacked figure still fits within half the terminal.
+        let cfg = config_for(Some((40, 80)), None, 2);
+        assert_eq!(cfg.height(), 40);
+    }
+
+    #[test]
+    fn a_chart_without_an_aspect_fills_the_width_budget() {
+        // No aspect to honour: the canvas fills the column budget (capped at
+        // MAX_COLUMNS 60 → 120 dots) instead of falling back to a default.
+        let cfg = config_for(Some((24, 200)), None, 1);
+        assert_eq!(cfg.width(), 120);
+    }
+
+    #[test]
     fn preview_floors_tiny_terminals() {
-        let cfg = config_for(Some((1, 1)), Some(1.0));
+        let cfg = config_for(Some((1, 1)), Some(1.0), 1);
         assert!(cfg.width() >= 32 && cfg.height() >= 3);
     }
 
     #[test]
     fn preview_defaults_without_a_known_size() {
-        let cfg = config_for(None, Some(1.0));
-        let default = ConsoleConfig::default();
-        assert_eq!(
-            (cfg.width(), cfg.height()),
-            (default.width(), default.height())
-        );
-    }
-
-    #[test]
-    fn preview_defaults_without_an_aspect() {
-        let cfg = config_for(Some((24, 80)), None);
+        let cfg = config_for(None, Some(1.0), 1);
         let default = ConsoleConfig::default();
         assert_eq!(
             (cfg.width(), cfg.height()),

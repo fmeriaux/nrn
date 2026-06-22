@@ -62,6 +62,15 @@ impl ConsoleConfig {
         }
     }
 
+    /// The largest canvas filling a budget of `max_cols` by `max_rows` character
+    /// cells, floored to the smallest size `textplots` accepts.
+    pub fn filling(max_cols: u16, max_rows: u16) -> Self {
+        Self {
+            width: (u32::from(max_cols) * 2).max(MIN_WIDTH),
+            height: (u32::from(max_rows) * 4).max(MIN_HEIGHT),
+        }
+    }
+
     /// The canvas width in dots.
     pub fn width(&self) -> u32 {
         self.width
@@ -74,16 +83,52 @@ impl ConsoleConfig {
 }
 
 impl Figure {
-    /// Renders the figure as text, stacking its panels top to bottom.
+    /// Renders the figure as text, stacking its panels top to bottom. Each panel
+    /// is titled, drawn, and — when it carries a legend — followed by a colored
+    /// key mapping each series color to its label.
     pub fn to_console(&self, cfg: &ConsoleConfig) -> String {
         let mut output = String::new();
         for panel in &self.panels {
             output.push_str(&panel.title);
             output.push('\n');
             output.push_str(&render_panel(panel, cfg));
+            if panel.show_legend
+                && let Some(legend) = legend_line(panel)
+            {
+                output.push_str(&legend);
+                output.push('\n');
+            }
         }
         output
     }
+}
+
+/// A one-line color key for a panel's labeled series — a swatch in each series'
+/// own color followed by its label — or `None` when no series carries a label.
+fn legend_line(panel: &Panel) -> Option<String> {
+    let entries: Vec<String> = panel
+        .series
+        .iter()
+        .filter_map(|series| {
+            let (color, label) = match series {
+                Series::Line { color, label, .. } | Series::Points { color, label, .. } => {
+                    (color, label.as_deref()?)
+                }
+            };
+            Some(format!("{} {label}", swatch(*color)))
+        })
+        .collect();
+
+    (!entries.is_empty()).then(|| entries.join("   "))
+}
+
+/// A filled circle in `color`, as a truecolor-escaped string matching the dots
+/// `textplots` draws for that series.
+fn swatch(color: SceneColor) -> String {
+    format!(
+        "\u{1b}[38;2;{};{};{}m\u{25cf}\u{1b}[0m",
+        color.red, color.green, color.blue
+    )
 }
 
 /// The `textplots` color for a scene color.
@@ -144,9 +189,7 @@ mod tests {
 
     #[test]
     fn to_console_renders_line_and_point_series_under_the_title() {
-        let figure = Figure {
-            panels: vec![line_panel()],
-        };
+        let figure = Figure::spatial(vec![line_panel()]);
         let text = figure.to_console(&ConsoleConfig::new(64, 32).unwrap());
         assert!(text.starts_with("Loss\n"));
         // The plotted series draw braille dots: non-blank cells past U+2800.
@@ -157,14 +200,34 @@ mod tests {
     }
 
     #[test]
+    fn to_console_appends_a_colored_legend_for_labeled_series() {
+        let figure = Figure::chart(vec![line_panel()]);
+        let text = figure.to_console(&ConsoleConfig::new(64, 32).unwrap());
+        // The labeled line shows up in the key, in its own truecolor swatch.
+        assert!(text.contains("\u{1b}[38;2;214;39;40m\u{25cf}\u{1b}[0m Train"));
+    }
+
+    #[test]
+    fn legend_omits_unlabeled_series_and_legend_free_panels() {
+        // line_panel carries one labeled line and one unlabeled point series.
+        let labeled = legend_line(&line_panel()).unwrap();
+        assert!(labeled.contains("Train"));
+        assert_eq!(labeled.matches('\u{25cf}').count(), 1);
+
+        // With the legend turned off, nothing is appended past the chart.
+        let mut hidden = line_panel();
+        hidden.show_legend = false;
+        let text = Figure::chart(vec![hidden]).to_console(&ConsoleConfig::new(64, 32).unwrap());
+        assert!(!text.contains("Train"));
+    }
+
+    #[test]
     fn to_console_stacks_every_panel_title() {
         let mut top = line_panel();
         top.title = "Top".to_string();
         let mut bottom = line_panel();
         bottom.title = "Bottom".to_string();
-        let figure = Figure {
-            panels: vec![top, bottom],
-        };
+        let figure = Figure::chart(vec![top, bottom]);
         let text = figure.to_console(&ConsoleConfig::default());
         assert!(text.contains("Top\n"));
         assert!(text.contains("Bottom\n"));
@@ -172,7 +235,7 @@ mod tests {
 
     #[test]
     fn to_console_of_an_empty_figure_is_empty() {
-        let figure = Figure { panels: Vec::new() };
+        let figure = Figure::chart(Vec::new());
         let text = figure.to_console(&ConsoleConfig::new(64, 32).unwrap());
         assert!(text.is_empty());
     }
@@ -193,6 +256,19 @@ mod tests {
     #[test]
     fn fitted_floors_to_the_minimum_canvas() {
         let cfg = ConsoleConfig::fitted(1.0, 1, 1);
+        assert!(cfg.width >= MIN_WIDTH && cfg.height >= MIN_HEIGHT);
+    }
+
+    #[test]
+    fn filling_uses_the_whole_cell_budget() {
+        // Two dots per column, four per row.
+        let cfg = ConsoleConfig::filling(40, 12);
+        assert_eq!((cfg.width, cfg.height), (80, 48));
+    }
+
+    #[test]
+    fn filling_floors_to_the_minimum_canvas() {
+        let cfg = ConsoleConfig::filling(1, 0);
         assert!(cfg.width >= MIN_WIDTH && cfg.height >= MIN_HEIGHT);
     }
 }

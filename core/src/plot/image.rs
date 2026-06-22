@@ -173,27 +173,25 @@ mod tests {
     fn to_image_draws_a_legend_for_labeled_line_and_point_series() {
         // A labeled line and a labeled scatter, with the legend on: both legend
         // markers (line and points) are rendered.
-        let figure = Figure {
-            panels: vec![Panel {
-                title: "Lines".to_string(),
-                x_range: (0.0, 10.0),
-                y_range: (0.0, 1.0),
-                show_legend: true,
-                series: vec![
-                    Series::Line {
-                        points: vec![(0.0, 0.0), (10.0, 1.0)],
-                        color: Color::TRAIN,
-                        label: Some("Train".to_string()),
-                    },
-                    Series::Points {
-                        points: vec![(2.0, 0.3), (8.0, 0.7)],
-                        color: Color::category(0),
-                        label: Some("Class 0".to_string()),
-                        radius: 2,
-                    },
-                ],
-            }],
-        };
+        let figure = Figure::spatial(vec![Panel {
+            title: "Lines".to_string(),
+            x_range: (0.0, 10.0),
+            y_range: (0.0, 1.0),
+            show_legend: true,
+            series: vec![
+                Series::Line {
+                    points: vec![(0.0, 0.0), (10.0, 1.0)],
+                    color: Color::TRAIN,
+                    label: Some("Train".to_string()),
+                },
+                Series::Points {
+                    points: vec![(2.0, 0.3), (8.0, 0.7)],
+                    color: Color::category(0),
+                    label: Some("Class 0".to_string()),
+                    radius: 2,
+                },
+            ],
+        }]);
 
         let cfg = ImageConfig::new(200, 150);
         let image = figure.to_image(&cfg).unwrap();
@@ -203,33 +201,31 @@ mod tests {
 
     #[test]
     fn to_image_renders_points_and_unlabeled_series_without_legend() {
-        let figure = Figure {
-            panels: vec![Panel {
-                title: "Scatter".to_string(),
-                x_range: (0.0, 1.0),
-                y_range: (0.0, 1.0),
-                show_legend: false,
-                series: vec![
-                    Series::Line {
-                        points: vec![(0.0, 0.0), (1.0, 1.0)],
-                        color: Color::TRAIN,
-                        label: None,
-                    },
-                    Series::Points {
-                        points: vec![(0.2, 0.2), (0.8, 0.8)],
-                        color: Color::category(0),
-                        label: Some("Class 0".to_string()),
-                        radius: 2,
-                    },
-                    Series::Points {
-                        points: vec![(0.5, 0.5)],
-                        color: Color::BOUNDARY,
-                        label: None,
-                        radius: 1,
-                    },
-                ],
-            }],
-        };
+        let figure = Figure::spatial(vec![Panel {
+            title: "Scatter".to_string(),
+            x_range: (0.0, 1.0),
+            y_range: (0.0, 1.0),
+            show_legend: false,
+            series: vec![
+                Series::Line {
+                    points: vec![(0.0, 0.0), (1.0, 1.0)],
+                    color: Color::TRAIN,
+                    label: None,
+                },
+                Series::Points {
+                    points: vec![(0.2, 0.2), (0.8, 0.8)],
+                    color: Color::category(0),
+                    label: Some("Class 0".to_string()),
+                    radius: 2,
+                },
+                Series::Points {
+                    points: vec![(0.5, 0.5)],
+                    color: Color::BOUNDARY,
+                    label: None,
+                    radius: 1,
+                },
+            ],
+        }]);
 
         let cfg = ImageConfig::default();
         let image = figure.to_image(&cfg).unwrap();
@@ -245,9 +241,7 @@ mod tests {
             show_legend: false,
             series: Vec::new(),
         };
-        let figure = Figure {
-            panels: vec![panel(), panel()],
-        };
+        let figure = Figure::spatial(vec![panel(), panel()]);
 
         let image = figure.to_image(&ImageConfig::new(120, 120)).unwrap();
         assert_eq!(pixel_count(&image.bytes), 120 * 120);
@@ -255,7 +249,7 @@ mod tests {
 
     #[test]
     fn to_image_of_an_empty_figure_is_blank() {
-        let figure = Figure { panels: Vec::new() };
+        let figure = Figure::spatial(Vec::new());
         let image = figure.to_image(&ImageConfig::new(64, 64)).unwrap();
         // No panels drawn: every pixel stays white.
         assert!(image.bytes.iter().all(|&byte| byte == 255));

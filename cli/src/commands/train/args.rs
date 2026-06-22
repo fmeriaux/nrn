@@ -107,9 +107,9 @@ pub struct TrainArgs {
     #[arg(long, default_value_t = 0)]
     early_stopping: usize,
 
-    /// Restore the best model when early stopping triggers
-    #[arg(long, requires = "early_stopping", default_value_t = true)]
-    restore_best_model: bool,
+    /// Disable restoring the best model when early stopping triggers
+    #[arg(long, requires = "early_stopping")]
+    no_restore_best_model: bool,
 
     /// Mini-batch size (omit for full-batch)
     #[arg(long)]
@@ -170,7 +170,7 @@ impl TryFrom<&TrainArgs> for GradientClipping {
 impl TrainArgs {
     /// The early-stopping config, or `None` when patience is zero (disabled).
     fn early_stopping(&self) -> Option<EarlyStoppingConfig> {
-        EarlyStoppingConfig::new(self.early_stopping, self.restore_best_model).ok()
+        EarlyStoppingConfig::new(self.early_stopping, !self.no_restore_best_model).ok()
     }
 }
 
@@ -473,6 +473,14 @@ mod tests {
             .expect("early stopping enabled");
         assert_eq!(config.patience(), 5);
         assert!(config.restore_best_model());
+    }
+
+    #[test]
+    fn no_restore_best_model_disables_restoration() {
+        let config = train_args(&["--early-stopping", "5", "--no-restore-best-model"])
+            .early_stopping()
+            .expect("early stopping enabled");
+        assert!(!config.restore_best_model());
     }
 
     #[test]

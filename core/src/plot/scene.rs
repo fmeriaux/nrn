@@ -94,11 +94,34 @@ impl Panel {
 #[derive(Debug)]
 pub struct Figure {
     pub panels: Vec<Panel>,
+    /// Whether renderers should preserve the data aspect ratio rather than fill
+    /// their canvas.
+    pub preserve_aspect: bool,
 }
 
 impl Figure {
-    /// The data aspect of the first panel, or `None` when the figure is empty.
+    /// A figure whose axes share units, so renderers preserve its data aspect.
+    pub fn spatial(panels: Vec<Panel>) -> Self {
+        Self {
+            panels,
+            preserve_aspect: true,
+        }
+    }
+
+    /// A figure whose axes are independent, so renderers fill their canvas.
+    pub fn chart(panels: Vec<Panel>) -> Self {
+        Self {
+            panels,
+            preserve_aspect: false,
+        }
+    }
+
+    /// The data aspect to preserve — the first panel's width-to-height ratio —
+    /// or `None` for a chart or an empty figure.
     pub fn data_aspect(&self) -> Option<f32> {
+        if !self.preserve_aspect {
+            return None;
+        }
         self.panels.first().map(Panel::data_aspect)
     }
 }
@@ -176,16 +199,24 @@ mod tests {
     }
 
     #[test]
-    fn figure_data_aspect_reads_the_first_panel() {
-        let figure = Figure {
-            panels: vec![panel((0.0, 6.0), (0.0, 2.0)), panel((0.0, 1.0), (0.0, 9.0))],
-        };
+    fn spatial_figure_data_aspect_reads_the_first_panel() {
+        let figure = Figure::spatial(vec![
+            panel((0.0, 6.0), (0.0, 2.0)),
+            panel((0.0, 1.0), (0.0, 9.0)),
+        ]);
         assert_eq!(figure.data_aspect(), Some(3.0));
     }
 
     #[test]
-    fn figure_data_aspect_is_none_when_empty() {
-        let figure = Figure { panels: Vec::new() };
+    fn chart_figure_has_no_data_aspect() {
+        // A chart's axes are independent, so there is no aspect to preserve even
+        // when its panels carry ranges.
+        let figure = Figure::chart(vec![panel((0.0, 6.0), (0.0, 2.0))]);
         assert_eq!(figure.data_aspect(), None);
+    }
+
+    #[test]
+    fn figure_data_aspect_is_none_when_empty() {
+        assert_eq!(Figure::spatial(Vec::new()).data_aspect(), None);
     }
 }

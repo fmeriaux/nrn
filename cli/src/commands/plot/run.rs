@@ -26,12 +26,13 @@ pub struct RunArgs {
     #[arg(long, default_value_t = false)]
     animate: bool,
 
-    /// Number of frames in the decision boundary animation
-    #[arg(short, long, default_value_t = 20, value_parser = clap::value_parser!(u8).range(2..=201))]
+    /// Number of frames in the decision boundary animation (capped at the number
+    /// of recorded checkpoints)
+    #[arg(short, long, default_value_t = 50, value_parser = clap::value_parser!(u8).range(2..=100))]
     frames: u8,
 
     /// Delay between animation frames (in milliseconds)
-    #[arg(long, default_value_t = 50, value_parser = clap::value_parser!(u16).range(10..=1000))]
+    #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u16).range(10..=1000))]
     delay: u16,
 
     #[command(flatten)]
@@ -48,6 +49,12 @@ impl RunArgs {
             return Err("a training run needs at least two checkpoints to plot".into());
         }
 
+        // Load everything up front so the status lines stay grouped above the
+        // rendered output rather than interrupting it (console format).
+        let meta = run.meta();
+        let dataset = Dataset::load(self.dataset_path(&meta.dataset))?;
+        loaded(&dataset);
+
         let mut artifacts = Artifacts::empty();
 
         // Training curves are always available from the recorded evaluations.
@@ -55,10 +62,6 @@ impl RunArgs {
         if let Some(path) = render(&curves, self.format, self.size, self.artifact("curves"))? {
             artifacts.add("Training Curves", path);
         }
-
-        let meta = run.meta();
-        let dataset = Dataset::load(self.dataset_path(&meta.dataset))?;
-        loaded(&dataset);
 
         if dataset.n_features() == 2 {
             let scaler: Option<ScalerMethod> = meta.scaler.clone().map(Into::into);
@@ -206,8 +209,8 @@ mod tests {
         let args = parse(&[]);
         assert_eq!(args.format, Format::Console);
         assert!(!args.animate);
-        assert_eq!(args.frames, 20);
-        assert_eq!(args.delay, 50);
+        assert_eq!(args.frames, 50);
+        assert_eq!(args.delay, 100);
     }
 
     #[test]

@@ -37,3 +37,34 @@ impl PathExt for Path {
         self.with_file_name(format!("{prefix}-{}", self.file_stem_string()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::PathExt;
+    use std::path::Path;
+
+    #[test]
+    fn file_stem_string_drops_the_directory_and_extension() {
+        assert_eq!(
+            Path::new("runs/data.safetensors").file_stem_string(),
+            "data"
+        );
+        assert_eq!(Path::new("model").file_stem_string(), "model");
+    }
+
+    #[test]
+    fn sibling_prefixes_the_stem_in_the_same_directory() {
+        assert_eq!(
+            Path::new("runs/data.safetensors").sibling("curves"),
+            Path::new("runs/curves-data")
+        );
+    }
+
+    #[test]
+    fn sibling_of_a_bare_name_has_no_directory() {
+        assert_eq!(
+            Path::new("run").sibling("boundary"),
+            Path::new("boundary-run")
+        );
+    }
+}
