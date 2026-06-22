@@ -2,10 +2,39 @@
 
 use console::Term;
 use nrn::plot::{ConsoleConfig, Figure};
+use std::thread::sleep;
+use std::time::Duration;
 
 /// Prints `figure` to stdout as an inline preview sized to the current terminal.
 pub(crate) fn preview(figure: &Figure) {
     println!("{}", figure.to_console(&preview_config(figure)));
+}
+
+/// Plays `frames` as an inline animation, redrawing each in place with `delay`
+/// milliseconds between them and leaving the final frame on screen. Frames are
+/// rendered to a console canvas sized to the current terminal.
+pub(crate) fn play_frames(figures: &[Figure], delay: u16) {
+    let Some(first) = figures.first() else {
+        return;
+    };
+
+    // One canvas size for every frame, so each redraw lands on the same lines.
+    let config = preview_config(first);
+    let term = Term::stdout();
+    let mut previous_lines = 0;
+
+    for figure in figures {
+        if previous_lines > 0 {
+            let _ = term.clear_last_lines(previous_lines);
+        }
+        let frame = figure.to_console(&config);
+        print!("{frame}");
+        let _ = term.flush();
+        previous_lines = frame.lines().count();
+        sleep(Duration::from_millis(delay.into()));
+    }
+
+    println!();
 }
 
 /// A console canvas for an inline preview, falling back to a default when the

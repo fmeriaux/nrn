@@ -56,14 +56,6 @@ pub struct RasterImage {
     pub height: u32,
 }
 
-/// A sequence of equally sized rendered frames forming a looping animation.
-pub struct RasterAnimation {
-    /// The frames in display order.
-    pub frames: Vec<RasterImage>,
-    /// Delay between frames in milliseconds.
-    pub frame_delay: u16,
-}
-
 impl Figure {
     /// Rasterizes the figure to a [`RasterImage`], stacking its panels vertically in order.
     pub fn to_image(&self, cfg: &ImageConfig) -> Result<RasterImage, Box<dyn Error>> {

@@ -8,6 +8,11 @@ pub(crate) struct Artifacts {
 }
 
 impl Artifacts {
+    /// An empty set, to be filled with [`add`](Artifacts::add).
+    pub(crate) fn empty() -> Self {
+        Self { items: Vec::new() }
+    }
+
     /// Build an `Artifacts` holding a single `(label, path)` pair.
     pub(crate) fn single(label: &'static str, path: PathBuf) -> Self {
         Self {
@@ -15,18 +20,14 @@ impl Artifacts {
         }
     }
 
-    /// Append a `(label, path)` pair, returning `&mut Self` to chain further calls.
-    pub(crate) fn add(&mut self, label: &'static str, path: PathBuf) -> &mut Self {
+    /// Append a `(label, path)` pair.
+    pub(crate) fn add(&mut self, label: &'static str, path: PathBuf) {
         self.items.push((label, path));
-        self
     }
-}
 
-impl<const N: usize> From<[(&'static str, PathBuf); N]> for Artifacts {
-    fn from(items: [(&'static str, PathBuf); N]) -> Self {
-        Self {
-            items: items.into(),
-        }
+    /// Whether no artifact has been recorded.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.items.is_empty()
     }
 }
 

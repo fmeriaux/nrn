@@ -108,9 +108,10 @@ A backend-neutral figure IR with feature-gated renderers, in three stages:
 - **`build.rs`** (always compiled) — derives figures from domain objects: `Dataset::figure`,
   `Predictor::boundary_figure`, `EvaluationHistory::figure` (each with a `*_with_padding` override;
   the default padding lives here). `n_features != 2` becomes an `Err`.
-- **`image.rs`** (`raster`, `plotters`) → `Figure::to_image` produces a `RasterImage` /
-  `RasterAnimation`; **`console.rs`** (`console`, `textplots`) → `Figure::to_console` produces a
-  `String`. Pure rendering — the caller persists the bytes (`io`) or prints the text.
+- **`image.rs`** (`raster`, `plotters`) → `Figure::to_image` produces a `RasterImage`;
+  **`console.rs`** (`console`, `textplots`) → `Figure::to_console` produces a `String`. Pure
+  rendering — the caller persists the bytes (`io`) or prints the text. Animations are streamed
+  frame-by-frame to a GIF by `io`'s `GifWriter` (no in-memory frame buffer).
 
 ### I/O (`core/src/io/`, behind `io` feature)
 
@@ -125,19 +126,25 @@ A run lives in a directory managed by `TrainingRun`: `create`/`open` persist run
 (`meta.json`), `trim_after` rewinds the trajectory (removing later checkpoints), `archive()` reads it
 back. Each `checkpoint-{epoch:06}/` is written by a `CheckpointRecorder` (the `TrainerCallback` from
 `TrainingRun::recorder`) and read by a `CheckpointArchive` (`model_at` / `optimizer_at` / `epoch_at` /
-`evaluation_history`).
+`evaluation_history`, plus `sample` for evenly-spaced animation frames).
 
 ### CLI (`cli/src/`)
 
 - **`cli.rs`** — top-level `clap` command enum dispatching to subcommands.
-- **`commands/`** — one module per subcommand (`synth`, `encode`, `predict`, `plot`), plus the
-  `train/` group (`train start` / `train resume`). Scaling is a `train --scale` option (no separate
-  command): the scaler is fitted during training and bundled with the model, so `predict` loads a
-  composite `Predictor` (network + optional scaler) from a model directory. The CLI parses args into
-  a core `HyperParameters` spec (via `TryFrom`, in `train/args.rs`) and runs it: `execute_training()`
-  composes the callbacks, calls `build(..)`, optionally `restore(..)`s for resume, then `train()`. The
-  console-facing callbacks (`ModelSaver`, `ConsoleMonitor` with its progress bar) are `TrainerCallback`
-  impls under `train/`. `synth` previews a 2-feature dataset inline via the console renderer.
+- **`commands/`** — one module per subcommand (`synth`, `encode`, `predict`), plus the `train/`
+  group (`train start` / `train resume`) and the `plot/` group (`plot dataset` / `plot run`). Each
+  group is a module directory: `mod.rs` holds the subcommand enum, dispatch and small shared bits
+  (e.g. plot's `Format` / `render`), one file per leaf subcommand (`start.rs` / `resume.rs`,
+  `dataset.rs` / `run.rs`), and larger shared concerns get their own file (`train/args.rs`,
+  `train/callbacks.rs`). Scaling is a `train --scale` option (no separate command): the scaler is
+  fitted during training and bundled with the model, so `predict` loads a composite `Predictor`
+  (network + optional scaler) from a model directory. The CLI parses args into a core
+  `HyperParameters` spec (via `TryFrom`, in `train/args.rs`) and runs it: it composes the callbacks,
+  calls `build(..)`, optionally `restore(..)`s for resume, then `train()`. The console-facing
+  callbacks (`ModelSaver`, `ConsoleMonitor` with its progress bar) are `TrainerCallback` impls under
+  `train/`. `plot` renders a figure inline (`--format console`) or to a file (`--format image`: a
+  PNG, or a streamed GIF when `plot run --animate`); `synth` previews a 2-feature dataset inline.
 - **`display/`** — console rendering: the `Describe`/`Named` entity traits, status icons/verbs,
-  `Artifacts`, and `terminal.rs` (figure `preview` sized to the terminal). Loading/saving goes through
-  core `.load()` / `.save()` methods on the types (`Dataset::load`, `Predictor::load`, `dataset.save`, …).
+  `Artifacts`, and `terminal.rs` (figure `preview` and `play_frames` console animation, sized to the
+  terminal). Loading/saving goes through core `.load()` / `.save()` methods on the types
+  (`Dataset::load`, `Predictor::load`, `dataset.save`, …).
