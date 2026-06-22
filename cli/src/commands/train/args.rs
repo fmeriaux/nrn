@@ -1,4 +1,5 @@
 use clap::*;
+use ndarray_rand::rand::random;
 use nrn::data::scalers::ScalerKind;
 use nrn::io::hyperparams::{
     ClippingRecord, EarlyStoppingRecord, HyperParametersRecord, SchedulerRecord,
@@ -194,7 +195,7 @@ impl TryFrom<&TrainArgs> for HyperParameters {
             args.early_stopping(),
             args.val_ratio,
             args.test_ratio,
-            args.seed.unwrap_or_else(ndarray_rand::rand::random),
+            args.seed.unwrap_or_else(random),
             args.scale.map(Into::into),
         )
     }

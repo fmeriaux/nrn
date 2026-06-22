@@ -15,7 +15,7 @@ pub struct SynthArgs {
     distribution: DistributionOption,
 
     /// Number of samples to generate
-    #[arg(short = 'n', long, default_value_t = 100)]
+    #[arg(short = 'n', long, default_value_t = 1000)]
     samples: usize,
 
     /// Number of features in the generated data
@@ -27,11 +27,11 @@ pub struct SynthArgs {
     clusters: usize,
 
     /// Minimum value for each feature in the dataset
-    #[arg(long, default_value_t = 0.0)]
+    #[arg(long, default_value_t = -100.0)]
     min: f32,
 
     /// Maximum value for each feature in the dataset
-    #[arg(long, default_value_t = 10.0)]
+    #[arg(long, default_value_t = 100.0)]
     max: f32,
 
     /// Ring overlap fraction between consecutive rings, negative for a gap [ring only]
@@ -108,7 +108,7 @@ impl SynthArgs {
 
         // A two-feature dataset gets an inline scatter preview in the terminal.
         if dataset.n_features() == 2 {
-            preview(&dataset.figure()?)?;
+            preview(&dataset.figure()?);
         }
 
         let filename = self.output.clone().unwrap_or_else(|| dataset.id());

@@ -5,12 +5,17 @@ use rgb::RGB8;
 use std::error::Error;
 use textplots::{Chart, ColorPlot, Shape};
 
+/// The smallest canvas `textplots` accepts, in dots.
+const MIN_WIDTH: u32 = 32;
+const MIN_HEIGHT: u32 = 3;
+
 /// Rendering options for drawing a [`Figure`] as text.
+#[derive(Debug)]
 pub struct ConsoleConfig {
     /// Canvas width in dots (two dots per character column).
-    pub width: u32,
+    width: u32,
     /// Canvas height in dots (four dots per character row).
-    pub height: u32,
+    height: u32,
 }
 
 impl Default for ConsoleConfig {
@@ -24,28 +29,60 @@ impl Default for ConsoleConfig {
 
 impl ConsoleConfig {
     /// A console configuration of the given canvas size.
-    pub fn new(width: u32, height: u32) -> Self {
-        Self { width, height }
+    ///
+    /// # Errors
+    /// When the canvas is smaller than `textplots` allows (width below 32 or height below 3).
+    pub fn new(width: u32, height: u32) -> Result<Self, Box<dyn Error>> {
+        if width < MIN_WIDTH || height < MIN_HEIGHT {
+            return Err("Console canvas must be at least 32 by 3 dots".into());
+        }
+        Ok(Self { width, height })
+    }
+
+    /// The largest canvas that honours `aspect` (data width / height) within a
+    /// budget of `max_cols` by `max_rows` character cells.
+    ///
+    /// Braille dots are square — two per column, four per row over a cell that
+    /// is twice as tall as wide — so a square data domain yields a square
+    /// canvas. The result is floored to the smallest size `textplots` accepts.
+    pub fn fitted(aspect: f32, max_cols: u16, max_rows: u16) -> Self {
+        let max_width = u32::from(max_cols) * 2;
+        let max_height = u32::from(max_rows) * 4;
+
+        let mut height = max_height;
+        let mut width = (height as f32 * aspect).round() as u32;
+        if width > max_width {
+            width = max_width;
+            height = (width as f32 / aspect).round() as u32;
+        }
+
+        Self {
+            width: width.max(MIN_WIDTH),
+            height: height.max(MIN_HEIGHT),
+        }
+    }
+
+    /// The canvas width in dots.
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// The canvas height in dots.
+    pub fn height(&self) -> u32 {
+        self.height
     }
 }
 
 impl Figure {
     /// Renders the figure as text, stacking its panels top to bottom.
-    ///
-    /// # Errors
-    /// When the canvas is smaller than `textplots` allows (width below 32 or height below 3).
-    pub fn to_console(&self, cfg: &ConsoleConfig) -> Result<String, Box<dyn Error>> {
-        if cfg.width < 32 || cfg.height < 3 {
-            return Err("Console canvas must be at least 32 by 3 dots".into());
-        }
-
+    pub fn to_console(&self, cfg: &ConsoleConfig) -> String {
         let mut output = String::new();
         for panel in &self.panels {
             output.push_str(&panel.title);
             output.push('\n');
             output.push_str(&render_panel(panel, cfg));
         }
-        Ok(output)
+        output
     }
 }
 
@@ -110,7 +147,7 @@ mod tests {
         let figure = Figure {
             panels: vec![line_panel()],
         };
-        let text = figure.to_console(&ConsoleConfig::new(64, 32)).unwrap();
+        let text = figure.to_console(&ConsoleConfig::new(64, 32).unwrap());
         assert!(text.starts_with("Loss\n"));
         // The plotted series draw braille dots: non-blank cells past U+2800.
         assert!(
@@ -128,7 +165,7 @@ mod tests {
         let figure = Figure {
             panels: vec![top, bottom],
         };
-        let text = figure.to_console(&ConsoleConfig::default()).unwrap();
+        let text = figure.to_console(&ConsoleConfig::default());
         assert!(text.contains("Top\n"));
         assert!(text.contains("Bottom\n"));
     }
@@ -136,22 +173,26 @@ mod tests {
     #[test]
     fn to_console_of_an_empty_figure_is_empty() {
         let figure = Figure { panels: Vec::new() };
-        let text = figure.to_console(&ConsoleConfig::new(64, 32)).unwrap();
+        let text = figure.to_console(&ConsoleConfig::new(64, 32).unwrap());
         assert!(text.is_empty());
     }
 
     #[test]
-    fn to_console_rejects_a_too_narrow_canvas() {
-        let figure = Figure { panels: Vec::new() };
-        let error = figure.to_console(&ConsoleConfig::new(16, 32)).unwrap_err();
+    fn new_rejects_a_too_narrow_canvas() {
+        let error = ConsoleConfig::new(16, 32).unwrap_err();
         assert!(error.to_string().contains("at least 32"));
     }
 
     #[test]
-    fn to_console_rejects_a_too_short_canvas() {
-        let figure = Figure { panels: Vec::new() };
+    fn new_rejects_a_too_short_canvas() {
         // Width is fine, so the height bound is what rejects it.
-        let error = figure.to_console(&ConsoleConfig::new(64, 2)).unwrap_err();
+        let error = ConsoleConfig::new(64, 2).unwrap_err();
         assert!(error.to_string().contains("at least 32"));
+    }
+
+    #[test]
+    fn fitted_floors_to_the_minimum_canvas() {
+        let cfg = ConsoleConfig::fitted(1.0, 1, 1);
+        assert!(cfg.width >= MIN_WIDTH && cfg.height >= MIN_HEIGHT);
     }
 }

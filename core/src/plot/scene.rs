@@ -76,10 +76,31 @@ pub struct Panel {
     pub series: Vec<Series>,
 }
 
+impl Panel {
+    /// The width-to-height ratio of the panel's data domain, defaulting to 1
+    /// for a degenerate range.
+    pub fn data_aspect(&self) -> f32 {
+        let width = self.x_range.1 - self.x_range.0;
+        let height = self.y_range.1 - self.y_range.0;
+        if width > 0.0 && height > 0.0 {
+            width / height
+        } else {
+            1.0
+        }
+    }
+}
+
 /// A complete figure: one or more panels stacked vertically.
 #[derive(Debug)]
 pub struct Figure {
     pub panels: Vec<Panel>,
+}
+
+impl Figure {
+    /// The data aspect of the first panel, or `None` when the figure is empty.
+    pub fn data_aspect(&self) -> Option<f32> {
+        self.panels.first().map(Panel::data_aspect)
+    }
 }
 
 /// Widens each `[min, max]` range by `padding_factor` of its extent on both sides.
@@ -130,5 +151,41 @@ mod tests {
         let (mins, maxs) = add_padding(&[], &[], 0.05);
         assert!(mins.is_empty());
         assert!(maxs.is_empty());
+    }
+
+    fn panel(x_range: (f32, f32), y_range: (f32, f32)) -> Panel {
+        Panel {
+            title: String::new(),
+            x_range,
+            y_range,
+            show_legend: false,
+            series: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn data_aspect_is_the_width_over_height_ratio() {
+        assert_eq!(panel((0.0, 8.0), (0.0, 2.0)).data_aspect(), 4.0);
+        assert_eq!(panel((0.0, 10.0), (0.0, 10.0)).data_aspect(), 1.0);
+    }
+
+    #[test]
+    fn data_aspect_defaults_to_one_for_a_degenerate_range() {
+        assert_eq!(panel((1.0, 1.0), (0.0, 5.0)).data_aspect(), 1.0);
+        assert_eq!(panel((0.0, 5.0), (2.0, 2.0)).data_aspect(), 1.0);
+    }
+
+    #[test]
+    fn figure_data_aspect_reads_the_first_panel() {
+        let figure = Figure {
+            panels: vec![panel((0.0, 6.0), (0.0, 2.0)), panel((0.0, 1.0), (0.0, 9.0))],
+        };
+        assert_eq!(figure.data_aspect(), Some(3.0));
+    }
+
+    #[test]
+    fn figure_data_aspect_is_none_when_empty() {
+        let figure = Figure { panels: Vec::new() };
+        assert_eq!(figure.data_aspect(), None);
     }
 }
