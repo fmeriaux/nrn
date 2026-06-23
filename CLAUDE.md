@@ -21,9 +21,17 @@ cargo test -p nrn <name>        # core crate only
 task lint                       # rustfmt --check + clippy (-D warnings), with & without features
 task audit                      # cargo-audit advisory scan
 task coverage / coverage-html   # cargo-llvm-cov summary / HTML report
+task coverage-check             # fail under the line-coverage threshold (CI gate)
 ```
 
 All serialization is pure Rust — no system C library is needed to build or run.
+
+## Testing
+
+New public behavior ships with a test; every bug fix ships with a regression test that fails
+before the fix. Unit tests live in-module under `#[cfg(test)]`; CLI behavior is covered
+end-to-end through `assert_cmd` in `cli/tests/`. CI gates merges on a line-coverage threshold
+(`task coverage-check`) — keep coverage from regressing.
 
 ## Commit conventions
 

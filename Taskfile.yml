@@ -52,6 +52,11 @@ tasks:
     cmds:
       - cargo llvm-cov --workspace --all-features --summary-only
 
+  coverage-check:
+    desc: Fail if line coverage drops below the threshold (requires cargo-llvm-cov)
+    cmds:
+      - cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 99
+
   coverage-html:
     desc: Generate an HTML coverage report for the workspace and open it
     cmds:
