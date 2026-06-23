@@ -2,7 +2,7 @@ use super::callbacks::Callbacks;
 use super::early_stopping::{EarlyStoppingConfig, EarlyStoppingConfigError};
 use super::preprocessing::TrainingData;
 use super::trainer::Trainer;
-use crate::data::ModelDataset;
+use crate::data::Dataset;
 use crate::data::scalers::{ScalerKind, ScalerMethod};
 use crate::gradients::{GradientClipping, GradientClippingError};
 use crate::learning_rate::{LearningRate, LearningRateError};
@@ -397,7 +397,7 @@ impl HyperParameters {
     /// split is always well-formed), then scales it. An explicit `scaler` is applied
     /// unchanged; otherwise this spec's [`scaler`](Self::scaler) kind is fitted on
     /// the train split.
-    pub fn prepare(&self, dataset: ModelDataset, scaler: Option<ScalerMethod>) -> TrainingData {
+    pub fn prepare(&self, dataset: Dataset, scaler: Option<ScalerMethod>) -> TrainingData {
         let split = dataset.split(self.val_ratio, self.test_ratio, self.seed);
         let scaler = scaler.or_else(|| self.scaler.map(|kind| split.train.fit_scaler(kind)));
         TrainingData::new(split, scaler)
@@ -695,7 +695,7 @@ mod tests {
     #[test]
     fn prepare_fits_the_configured_scaler_on_the_train_split() {
         let hp = spec_with_scaler(Some(ScalerKind::MinMax));
-        let data = hp.prepare(ramp_dataset().to_model_dataset(), None);
+        let data = hp.prepare(ramp_dataset(), None);
 
         // A scaler was fitted from the spec's kind, and applying it lands the train
         // inputs in [0, 1] — the signature of the MinMax kind that was configured.
@@ -721,7 +721,7 @@ mod tests {
         );
 
         let hp = spec_with_scaler(None);
-        let data = hp.prepare(ramp_dataset().to_model_dataset(), Some(supplied));
+        let data = hp.prepare(ramp_dataset(), Some(supplied));
 
         assert!(data.split.train.inputs.iter().all(|&v| v < 0.5));
     }

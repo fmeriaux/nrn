@@ -238,7 +238,7 @@ mod tests {
     };
     use super::*;
     use crate::activations::SIGMOID;
-    use crate::data::ModelDataset;
+    use crate::data::Dataset;
     use crate::model::NeuronLayer;
     use crate::optimizers::Optimizer;
     use crate::schedulers::Scheduler;
@@ -250,14 +250,24 @@ mod tests {
     /// A 10-sample, 2-feature dataset — large enough that the ratio split in
     /// [`HyperParameters::build`] yields non-degenerate train/validation/test sets
     /// (e.g. `val_ratio = test_ratio = 0.1` gives 8/1/1).
-    fn sample_dataset() -> ModelDataset {
-        ModelDataset {
-            inputs: array![
-                [0.1, 0.9, 0.2, 0.8, 0.15, 0.85, 0.25, 0.75, 0.3, 0.7],
-                [0.2, 0.8, 0.3, 0.7, 0.25, 0.75, 0.35, 0.65, 0.4, 0.6]
+    fn sample_dataset() -> Dataset {
+        Dataset::new(
+            array![
+                [0.1, 0.2],
+                [0.9, 0.8],
+                [0.2, 0.3],
+                [0.8, 0.7],
+                [0.15, 0.25],
+                [0.85, 0.75],
+                [0.25, 0.35],
+                [0.75, 0.65],
+                [0.3, 0.4],
+                [0.7, 0.6]
             ],
-            targets: array![[1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0]],
-        }
+            array![1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0],
+            None,
+        )
+        .unwrap()
     }
 
     /// A fixed (non-random) 2-input -> 1-output sigmoid network, so loss

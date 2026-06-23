@@ -302,6 +302,62 @@ impl Dataset {
 
         Ok(Dataset::new(features, labels, Some(origin))?)
     }
+
+    /// Shuffles the samples (seeded by `seed`) and partitions them into training,
+    /// validation, and testing sets by the given ratios, each as a [`ModelDataset`].
+    ///
+    /// # Parameters
+    /// - `val_ratio`: The ratio of the dataset to be used for validation (between 0 and 1).
+    /// - `test_ratio`: The ratio of the dataset to be used for testing (between 0 and 1).
+    /// - `seed`: Seeds the shuffle, so the partition is reproducible from it.
+    ///
+    /// # Panics
+    /// - When `val_ratio` is not between 0 and 1.
+    /// - When `test_ratio` is not between 0 and 1 or is equal to 0.
+    /// - When the sum of `val_ratio` and `test_ratio` is greater than or equal to 1.
+    //
+    pub fn split(&self, val_ratio: f32, test_ratio: f32, seed: u64) -> ModelSplit {
+        assert!(
+            (0.0..1.0).contains(&val_ratio),
+            "Validation ratio must be between 0 and 1"
+        );
+
+        assert!(
+            (0.0..1.0).contains(&test_ratio) && test_ratio > 0.0,
+            "Test ratio must be between 0 and 1 and greater than 0"
+        );
+
+        assert!(
+            val_ratio + test_ratio < 1.0,
+            "Sum of ratios must be less than 1"
+        );
+
+        let model = self.to_model_dataset();
+        let n_samples = model.targets.ncols();
+
+        let mut indices: Vec<usize> = (0..n_samples).collect();
+        indices.shuffle(&mut StdRng::seed_from_u64(seed));
+
+        let size = |ratio: f32| (n_samples as f32 * ratio).round() as usize;
+        let select = |idx: &[usize]| ModelDataset {
+            inputs: model.inputs.select(Axis(1), idx),
+            targets: model.targets.select(Axis(1), idx),
+        };
+
+        let test_size = size(test_ratio);
+        let val_size = size(val_ratio);
+        let train_size = n_samples - test_size - val_size;
+
+        ModelSplit {
+            train: select(&indices[..train_size]),
+            validation: if val_size > 0 {
+                Some(select(&indices[train_size..train_size + val_size]))
+            } else {
+                None
+            },
+            test: select(&indices[train_size + val_size..]),
+        }
+    }
 }
 
 impl ModelDataset {
@@ -343,61 +399,6 @@ impl ModelDataset {
     /// for the call.
     pub fn scale_inplace(&mut self, scaler: &dyn Scaler) {
         scaler.apply_inplace(self.inputs.view_mut().reversed_axes());
-    }
-
-    /// Shuffles the samples (seeded by `seed`) and partitions them into training,
-    /// validation, and testing sets by the given ratios.
-    ///
-    /// # Parameters
-    /// - `val_ratio`: The ratio of the dataset to be used for validation (between 0 and 1).
-    /// - `test_ratio`: The ratio of the dataset to be used for testing (between 0 and 1).
-    /// - `seed`: Seeds the shuffle, so the partition is reproducible from it.
-    ///
-    /// # Panics
-    /// - When `val_ratio` is not between 0 and 1.
-    /// - When `test_ratio` is not between 0 and 1 or is equal to 0.
-    /// - When the sum of `val_ratio` and `test_ratio` is greater than or equal to 1.
-    //
-    pub fn split(&self, val_ratio: f32, test_ratio: f32, seed: u64) -> ModelSplit {
-        assert!(
-            (0.0..1.0).contains(&val_ratio),
-            "Validation ratio must be between 0 and 1"
-        );
-
-        assert!(
-            (0.0..1.0).contains(&test_ratio) && test_ratio > 0.0,
-            "Test ratio must be between 0 and 1 and greater than 0"
-        );
-
-        assert!(
-            val_ratio + test_ratio < 1.0,
-            "Sum of ratios must be less than 1"
-        );
-
-        let n_samples = self.targets.ncols();
-
-        let mut indices: Vec<usize> = (0..n_samples).collect();
-        indices.shuffle(&mut StdRng::seed_from_u64(seed));
-
-        let size = |ratio: f32| (n_samples as f32 * ratio).round() as usize;
-        let select = |idx: &[usize]| ModelDataset {
-            inputs: self.inputs.select(Axis(1), idx),
-            targets: self.targets.select(Axis(1), idx),
-        };
-
-        let test_size = size(test_ratio);
-        let val_size = size(val_ratio);
-        let train_size = n_samples - test_size - val_size;
-
-        ModelSplit {
-            train: select(&indices[..train_size]),
-            validation: if val_size > 0 {
-                Some(select(&indices[train_size..train_size + val_size]))
-            } else {
-                None
-            },
-            test: select(&indices[train_size + val_size..]),
-        }
     }
 }
 
@@ -556,9 +557,9 @@ mod tests {
     #[test]
     fn split_ratios_produce_correct_sizes() {
         // 100 samples, 20% test, 10% val → 70 train / 10 val / 20 test
-        let inputs = Array2::zeros((2, 100));
-        let targets = Array2::zeros((1, 100));
-        let dataset = ModelDataset { inputs, targets };
+        let features = Array2::zeros((100, 2));
+        let labels = Array1::from_shape_fn(100, |i| (i % 2) as f32);
+        let dataset = Dataset::new(features, labels, None).unwrap();
         let split = dataset.split(0.1, 0.2, 0);
         assert_eq!(split.train_size(), 70);
         assert_eq!(split.validation_size(), 10);
@@ -568,9 +569,11 @@ mod tests {
     #[test]
     fn split_without_validation_yields_no_validation_set() {
         // val_ratio 0.0 → the validation split is None.
-        let inputs = Array2::from_shape_fn((2, 100), |(_, j)| j as f32);
-        let targets = Array2::zeros((1, 100));
-        let mut split = ModelDataset { inputs, targets }.split(0.0, 0.2, 0);
+        let features = Array2::from_shape_fn((100, 2), |(i, _)| i as f32);
+        let labels = Array1::from_shape_fn(100, |i| (i % 2) as f32);
+        let mut split = Dataset::new(features, labels, None)
+            .unwrap()
+            .split(0.0, 0.2, 0);
         assert!(split.validation.is_none());
         assert_eq!(split.train_size(), 80);
         assert_eq!(split.test_size(), 20);
@@ -674,7 +677,7 @@ mod tests {
         let labels = Array1::from_shape_fn(10, |i| (i % 2) as f32);
         let dataset = Dataset::new(features, labels, None).unwrap();
 
-        let mut split = dataset.to_model_dataset().split(0.2, 0.2, 0);
+        let mut split = dataset.split(0.2, 0.2, 0);
         let scaler = split.train.fit_scaler(ScalerKind::MinMax);
         split.scale_inplace(&scaler);
 

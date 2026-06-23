@@ -77,7 +77,7 @@ impl StartArgs {
             }
         };
 
-        let data = hyperparameters.prepare(dataset.to_model_dataset(), None);
+        let data = hyperparameters.prepare(dataset, None);
 
         let recorder = if hyperparameters.checkpoint_interval() > 0 {
             let meta = TrainingMeta {
