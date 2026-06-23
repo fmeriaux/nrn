@@ -1,3 +1,4 @@
+use crate::data::Classes;
 use crate::io::path::PathExt;
 use fs::read_dir;
 use std::collections::BTreeMap;
@@ -5,29 +6,27 @@ use std::error::Error;
 use std::fs;
 use std::path::Path;
 
-type ClassMap = BTreeMap<String, usize>;
+impl Classes {
+    /// Scans `root` for class subdirectories, mapping each subdirectory name to a
+    /// contiguous 0-indexed label assigned in sorted name order. Stray files are
+    /// ignored: only subdirectories become classes.
+    pub fn scan<P: AsRef<Path>>(root: P) -> Result<Self, Box<dyn Error>> {
+        let mut directories = read_dir(Path::combine_safe_with_cwd(root)?)?
+            .filter_map(Result::ok)
+            .filter(|e| e.path().is_dir())
+            .collect::<Vec<_>>();
 
-/// Extract class names from subdirectory names within the given root directory.
-pub fn extract_classes<P: AsRef<Path>>(root: &P) -> Result<ClassMap, Box<dyn Error>> {
-    let mut classes = BTreeMap::new();
+        directories.sort_by_key(|e| e.file_name());
 
-    let mut directories = read_dir(Path::combine_safe_with_cwd(root)?)?
-        .filter_map(Result::ok)
-        .filter(|e| e.path().is_dir())
-        .collect::<Vec<_>>();
-
-    directories.sort_by_key(|e| e.file_name());
-
-    directories
-        .into_iter()
-        .enumerate()
-        .for_each(|(index, entry)| {
+        let mut classes = BTreeMap::new();
+        for (index, entry) in directories.into_iter().enumerate() {
             if let Some(name) = entry.file_name().to_str() {
                 classes.insert(name.to_string(), index);
             }
-        });
+        }
 
-    Ok(classes)
+        Ok(Classes::new(classes))
+    }
 }
 
 #[cfg(test)]
@@ -43,7 +42,7 @@ mod tests {
     }
 
     #[test]
-    fn extracts_subdirectories_as_sorted_indexed_classes() {
+    fn scans_subdirectories_as_sorted_indexed_classes() {
         let root = temp_dir("sorted");
         for name in ["dog", "bird", "cat"] {
             fs::create_dir_all(root.join(name)).unwrap();
@@ -51,19 +50,23 @@ mod tests {
         // A stray file is ignored: only directories become classes.
         fs::write(root.join("notes.txt"), b"ignored").unwrap();
 
-        let classes = extract_classes(&root).unwrap();
+        let classes = Classes::scan(&root).unwrap();
         fs::remove_dir_all(&root).unwrap();
 
-        assert_eq!(classes.get("bird"), Some(&0));
-        assert_eq!(classes.get("cat"), Some(&1));
-        assert_eq!(classes.get("dog"), Some(&2));
-        assert_eq!(classes.len(), 3);
+        assert_eq!(
+            classes,
+            Classes::new(BTreeMap::from([
+                ("bird".to_string(), 0),
+                ("cat".to_string(), 1),
+                ("dog".to_string(), 2),
+            ]))
+        );
     }
 
     #[test]
     fn errors_when_root_is_missing() {
         let missing = temp_dir("missing");
         fs::remove_dir_all(&missing).unwrap();
-        assert!(extract_classes(&missing).is_err());
+        assert!(Classes::scan(&missing).is_err());
     }
 }

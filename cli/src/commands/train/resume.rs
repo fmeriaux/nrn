@@ -63,7 +63,7 @@ impl ResumeArgs {
             None
         };
 
-        let data = hyperparameters.prepare(dataset.to_model_dataset(), scaler);
+        let data = hyperparameters.prepare(dataset, scaler);
 
         let callbacks = Callbacks::empty()
             .with(ConsoleMonitor::new(hyperparameters.clone(), Some(previous)))

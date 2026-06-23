@@ -86,7 +86,8 @@ of the scikit-learn convention). `Dataset` (row-major, `(samples, features)`) co
 ### Data (`core/src/data/`)
 
 - **`dataset.rs`** — `Dataset` (raw) → `ModelDataset` (column-major). `batches()` shuffles and chunks
-  for mini-batch SGD; `split()` produces `ModelSplit` (train/val/test) from pre-shuffled data.
+  for mini-batch SGD; `split()` shuffles (seeded) then partitions into `ModelSplit` (train/val/test),
+  so producers store data in natural order and the run seed governs the partition.
 - **`preprocessors/scalers/`** — `Scaler` trait (`MinMax`, `ZScore`); `ScalerKind` names the method,
   `ScalerKind::fit` turns it into a fitted `ScalerMethod` (the dispatch enum carrying parameters).
   Params serialized to JSON for reuse at prediction time.

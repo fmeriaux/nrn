@@ -36,7 +36,7 @@ mod tests {
     }
 
     #[test]
-    fn encoded_label_is_the_source_name() {
+    fn encoded_label_is_the_source() {
         let origin = DatasetOrigin::Encoded {
             source: "mnist".to_string(),
         };
