@@ -398,7 +398,7 @@ impl HyperParameters {
     /// unchanged; otherwise this spec's [`scaler`](Self::scaler) kind is fitted on
     /// the train split.
     pub fn prepare(&self, dataset: ModelDataset, scaler: Option<ScalerMethod>) -> TrainingData {
-        let split = dataset.split(self.val_ratio, self.test_ratio);
+        let split = dataset.split(self.val_ratio, self.test_ratio, self.seed);
         let scaler = scaler.or_else(|| self.scaler.map(|kind| split.train.fit_scaler(kind)));
         TrainingData::new(split, scaler)
     }

@@ -7,9 +7,8 @@
 pub enum DatasetOrigin {
     /// Produced by a synthetic generator, reproducible from `distribution` + `seed`.
     Synthetic { distribution: String, seed: u64 },
-    /// Encoded from a directory of images at `source`, its sample order
-    /// reproducible from `seed`.
-    Encoded { source: String, seed: u64 },
+    /// Encoded from a directory of images at `source`.
+    Encoded { source: String },
 }
 
 impl DatasetOrigin {
@@ -18,7 +17,7 @@ impl DatasetOrigin {
     pub fn label(&self) -> String {
         match self {
             DatasetOrigin::Synthetic { distribution, seed } => format!("{distribution}-seed{seed}"),
-            DatasetOrigin::Encoded { source, seed } => format!("{source}-seed{seed}"),
+            DatasetOrigin::Encoded { source } => source.clone(),
         }
     }
 }
@@ -37,11 +36,10 @@ mod tests {
     }
 
     #[test]
-    fn encoded_label_carries_source_and_seed() {
+    fn encoded_label_is_the_source() {
         let origin = DatasetOrigin::Encoded {
             source: "mnist".to_string(),
-            seed: 7,
         };
-        assert_eq!(origin.label(), "mnist-seed7");
+        assert_eq!(origin.label(), "mnist");
     }
 }

@@ -2,7 +2,6 @@ use crate::display::{Artifacts, bar, completed, saved, show};
 use crate::path::PathExt;
 use clap::{Args, Subcommand};
 use console::style;
-use ndarray_rand::rand::random;
 use nrn::data::vectorizers::{ImageEncoder, VectorEncoder};
 use nrn::data::{Classes, Dataset, Instance};
 use nrn::io::bytes::secure_read;
@@ -63,10 +62,6 @@ pub struct ImgDirArgs {
     #[arg(short, long)]
     output: Option<PathBuf>,
 
-    /// Seed for shuffling the dataset (random when omitted)
-    #[arg(long)]
-    seed: Option<u64>,
-
     #[command(flatten)]
     encoder: EncoderArgs,
 }
@@ -110,12 +105,7 @@ impl ImgDirArgs {
             progression.finish_and_clear();
         }
 
-        let dataset = Dataset::from_encoded(
-            self.seed.unwrap_or_else(random),
-            self.input.file_stem_string(),
-            data,
-            labels,
-        )?;
+        let dataset = Dataset::from_encoded(self.input.file_stem_string(), data, labels)?;
 
         completed!("Encoding completed");
 

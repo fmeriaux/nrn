@@ -1,6 +1,6 @@
 use crate::data::origin::DatasetOrigin;
 use crate::data::scalers::{Scaler, ScalerKind, ScalerMethod};
-use ndarray::{Array1, Array2, Axis, s};
+use ndarray::{Array1, Array2, Axis};
 use ndarray_rand::rand::Rng;
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::prelude::{SliceRandom, StdRng};
@@ -271,36 +271,15 @@ impl Dataset {
         ModelDataset { inputs, targets }
     }
 
-    /// Shuffles the dataset features and labels in unison and returns it, so
-    /// construction and shuffling can be chained (`Dataset::new(..)?.shuffled(rng)`).
-    ///
-    /// Reordering preserves every dataset invariant, so the result needs no
-    /// re-validation.
+    /// Builds a dataset from encoded `images` and their `labels`, stamped with
+    /// [`DatasetOrigin::Encoded`] provenance. Samples are kept in the order they
+    /// were encoded (grouped by class); shuffling is deferred to
+    /// [`ModelDataset::split`], so the stored order carries no randomness.
     /// # Arguments
-    /// - `rng`: A mutable reference to a random number generator.
-    /// # Details
-    /// - Generates a vector of indices over the samples and shuffles it.
-    /// - Reorders both `features` and `labels` by those indices, keeping the
-    ///   feature/label correspondence intact.
-    pub fn shuffled<R: Rng + ?Sized>(mut self, rng: &mut R) -> Self {
-        let mut indices: Vec<usize> = (0..self.features.nrows()).collect();
-        indices.shuffle(rng);
-
-        self.features = self.features.select(Axis(0), &indices);
-        self.labels = self.labels.select(Axis(0), &indices);
-        self
-    }
-
-    /// Builds a shuffled dataset from encoded `images` and their `labels`, stamped
-    /// with [`DatasetOrigin::Encoded`] provenance whose sample order is
-    /// reproducible from `seed`.
-    /// # Arguments
-    /// - `seed`: Seeds the shuffle and is recorded in the origin for reproducibility.
     /// - `source`: Name of the source the images were encoded from.
     /// - `images`: A vector of images represented as 1D arrays of pixel values.
     /// - `labels`: A vector of labels corresponding to each image.
     pub fn from_encoded(
-        seed: u64,
         source: impl Into<String>,
         images: Vec<Array1<f32>>,
         labels: Vec<usize>,
@@ -319,11 +298,9 @@ impl Dataset {
 
         let origin = DatasetOrigin::Encoded {
             source: source.into(),
-            seed,
         };
 
-        let mut rng = StdRng::seed_from_u64(seed);
-        Ok(Dataset::new(features, labels, Some(origin))?.shuffled(&mut rng))
+        Ok(Dataset::new(features, labels, Some(origin))?)
     }
 }
 
@@ -368,22 +345,20 @@ impl ModelDataset {
         scaler.apply_inplace(self.inputs.view_mut().reversed_axes());
     }
 
-    /// Splits the model dataset into training, validation, and testing sets based on the provided ratios.
+    /// Shuffles the samples (seeded by `seed`) and partitions them into training,
+    /// validation, and testing sets by the given ratios.
     ///
     /// # Parameters
     /// - `val_ratio`: The ratio of the dataset to be used for validation (between 0 and 1).
     /// - `test_ratio`: The ratio of the dataset to be used for testing (between 0 and 1).
-    ///
-    /// # Important
-    /// This method does **not** shuffle the dataset. It assumes the dataset has already been shuffled.
-    /// If the dataset is not shuffled, the split may not be representative.
+    /// - `seed`: Seeds the shuffle, so the partition is reproducible from it.
     ///
     /// # Panics
     /// - When `val_ratio` is not between 0 and 1.
     /// - When `test_ratio` is not between 0 and 1 or is equal to 0.
     /// - When the sum of `val_ratio` and `test_ratio` is greater than or equal to 1.
     //
-    pub fn split(&self, val_ratio: f32, test_ratio: f32) -> ModelSplit {
+    pub fn split(&self, val_ratio: f32, test_ratio: f32, seed: u64) -> ModelSplit {
         assert!(
             (0.0..1.0).contains(&val_ratio),
             "Validation ratio must be between 0 and 1"
@@ -401,10 +376,13 @@ impl ModelDataset {
 
         let n_samples = self.targets.ncols();
 
+        let mut indices: Vec<usize> = (0..n_samples).collect();
+        indices.shuffle(&mut StdRng::seed_from_u64(seed));
+
         let size = |ratio: f32| (n_samples as f32 * ratio).round() as usize;
-        let slice = |start: usize, end: usize| ModelDataset {
-            inputs: self.inputs.slice(s![.., start..end]).to_owned(),
-            targets: self.targets.slice(s![.., start..end]).to_owned(),
+        let select = |idx: &[usize]| ModelDataset {
+            inputs: self.inputs.select(Axis(1), idx),
+            targets: self.targets.select(Axis(1), idx),
         };
 
         let test_size = size(test_ratio);
@@ -412,13 +390,13 @@ impl ModelDataset {
         let train_size = n_samples - test_size - val_size;
 
         ModelSplit {
-            train: slice(0, train_size),
+            train: select(&indices[..train_size]),
             validation: if val_size > 0 {
-                Some(slice(train_size, train_size + val_size))
+                Some(select(&indices[train_size..train_size + val_size]))
             } else {
                 None
             },
-            test: slice(train_size + val_size, n_samples),
+            test: select(&indices[train_size + val_size..]),
         }
     }
 }
@@ -581,7 +559,7 @@ mod tests {
         let inputs = Array2::zeros((2, 100));
         let targets = Array2::zeros((1, 100));
         let dataset = ModelDataset { inputs, targets };
-        let split = dataset.split(0.1, 0.2);
+        let split = dataset.split(0.1, 0.2, 0);
         assert_eq!(split.train_size(), 70);
         assert_eq!(split.validation_size(), 10);
         assert_eq!(split.test_size(), 20);
@@ -592,7 +570,7 @@ mod tests {
         // val_ratio 0.0 → the validation split is None.
         let inputs = Array2::from_shape_fn((2, 100), |(_, j)| j as f32);
         let targets = Array2::zeros((1, 100));
-        let mut split = ModelDataset { inputs, targets }.split(0.0, 0.2);
+        let mut split = ModelDataset { inputs, targets }.split(0.0, 0.2, 0);
         assert!(split.validation.is_none());
         assert_eq!(split.train_size(), 80);
         assert_eq!(split.test_size(), 20);
@@ -606,9 +584,7 @@ mod tests {
     #[test]
     fn from_encoded_rejects_empty_images() {
         // No images → no samples, surfaced as a Result rather than a panic.
-        let err = Dataset::from_encoded(0, "test", vec![], vec![])
-            .err()
-            .unwrap();
+        let err = Dataset::from_encoded("test", vec![], vec![]).err().unwrap();
         assert_eq!(err.to_string(), DatasetError::NoSamples.to_string());
     }
 
@@ -617,7 +593,7 @@ mod tests {
         // Images of differing lengths cannot form a rectangular matrix → Err.
         let images = vec![array![0.0f32, 1.0], array![2.0, 3.0, 4.0]];
         let labels = vec![0usize, 1];
-        assert!(Dataset::from_encoded(0, "test", images, labels).is_err());
+        assert!(Dataset::from_encoded("test", images, labels).is_err());
     }
 
     #[test]
@@ -627,9 +603,7 @@ mod tests {
         // `Dataset::new`, which rejects the count mismatch.
         let images = vec![array![0.0f32, 1.0], array![2.0, 3.0]];
         let labels = vec![0usize]; // one label for two images
-        let err = Dataset::from_encoded(0, "test", images, labels)
-            .err()
-            .unwrap();
+        let err = Dataset::from_encoded("test", images, labels).err().unwrap();
         assert!(
             err.to_string().contains("disagree on sample count"),
             "got: {err}"
@@ -700,7 +674,7 @@ mod tests {
         let labels = Array1::from_shape_fn(10, |i| (i % 2) as f32);
         let dataset = Dataset::new(features, labels, None).unwrap();
 
-        let mut split = dataset.to_model_dataset().split(0.2, 0.2);
+        let mut split = dataset.to_model_dataset().split(0.2, 0.2, 0);
         let scaler = split.train.fit_scaler(ScalerKind::MinMax);
         split.scale_inplace(&scaler);
 
@@ -721,19 +695,18 @@ mod tests {
         let images = vec![array![0.0f32, 1.0], array![2.0, 3.0], array![4.0, 5.0]];
         let labels = vec![0usize, 1, 2];
 
-        let dataset = Dataset::from_encoded(42, "digits", images, labels).unwrap();
+        let dataset = Dataset::from_encoded("digits", images, labels).unwrap();
         assert_eq!(dataset.features().shape(), &[3, 2]);
         assert_eq!(dataset.labels().len(), 3);
         let mut unique = dataset.unique_labels();
         unique.sort_by(f32::total_cmp);
         assert_eq!(unique, vec![0.0, 1.0, 2.0]);
 
-        // The seed is stamped into the origin, so the dataset is reproducible.
+        // The source is stamped into the origin.
         assert_eq!(
             dataset.origin(),
             Some(&DatasetOrigin::Encoded {
                 source: "digits".to_string(),
-                seed: 42,
             })
         );
     }

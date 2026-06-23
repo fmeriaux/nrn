@@ -31,10 +31,9 @@ fn origin_into_metadata(origin: &DatasetOrigin) -> HashMap<String, String> {
             (ORIGIN_DISTRIBUTION.to_string(), distribution.clone()),
             (ORIGIN_SEED.to_string(), seed.to_string()),
         ]),
-        DatasetOrigin::Encoded { source, seed } => HashMap::from([
+        DatasetOrigin::Encoded { source } => HashMap::from([
             (ORIGIN_KIND.to_string(), KIND_ENCODED.to_string()),
             (ORIGIN_SOURCE.to_string(), source.clone()),
-            (ORIGIN_SEED.to_string(), seed.to_string()),
         ]),
     }
 }
@@ -47,7 +46,6 @@ fn origin_from_metadata(metadata: &HashMap<String, String>) -> Option<DatasetOri
         }),
         KIND_ENCODED => Some(DatasetOrigin::Encoded {
             source: metadata.get(ORIGIN_SOURCE)?.clone(),
-            seed: metadata.get(ORIGIN_SEED)?.parse().ok()?,
         }),
         _ => None,
     }
@@ -140,7 +138,6 @@ mod tests {
     fn dataset_roundtrips_an_encoded_origin() {
         let origin = DatasetOrigin::Encoded {
             source: "images/digits".to_string(),
-            seed: 7,
         };
         let path = temp_path("dataset_encoded");
 

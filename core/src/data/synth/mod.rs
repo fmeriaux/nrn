@@ -250,7 +250,6 @@ impl SynthDataset {
 
         Dataset::new(features, labels, Some(origin))
             .expect("synthetic parameters guarantee a valid dataset")
-            .shuffled(&mut rng)
     }
 }
 
