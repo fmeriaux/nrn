@@ -1,8 +1,7 @@
 use super::{Format, ImageSize, render};
-use crate::display::{Artifacts, bar, loaded, play_frames, saved, warning};
+use crate::display::{Artifacts, Frames, loaded, play_frames, saved, warning};
 use crate::path::PathExt;
 use clap::Args;
-use indicatif::ProgressIterator;
 use nrn::data::Dataset;
 use nrn::data::scalers::ScalerMethod;
 use nrn::io::checkpoint::CheckpointArchive;
@@ -111,12 +110,13 @@ impl RunArgs {
 
         match self.format {
             Format::Console => {
-                let progress = bar(indices.len(), "Rendering decision boundary frames");
-                let figures = indices
-                    .iter()
-                    .progress_with(progress)
-                    .map(|&index| boundary_at(archive, index, dataset, scaler, resolution))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let progress = Frames::new(indices.len(), "Rendering frames");
+                let mut figures = Vec::with_capacity(indices.len());
+                for &index in indices {
+                    figures.push(boundary_at(archive, index, dataset, scaler, resolution)?);
+                    progress.advance();
+                }
+                progress.finish();
 
                 play_frames(&figures, self.delay);
                 Ok(None)
@@ -132,11 +132,13 @@ impl RunArgs {
                     self.delay,
                 )?;
 
-                let progress = bar(indices.len(), "Rendering decision boundary GIF");
-                for &index in indices.iter().progress_with(progress) {
+                let progress = Frames::new(indices.len(), "Rendering GIF");
+                for &index in indices {
                     let figure = boundary_at(archive, index, dataset, scaler, resolution)?;
                     writer.write_frame(&figure.to_image(&cfg)?)?;
+                    progress.advance();
                 }
+                progress.finish();
 
                 Ok(Some(writer.finish()))
             }

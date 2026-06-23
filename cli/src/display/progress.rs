@@ -6,30 +6,7 @@
 use super::theme;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use nrn::evaluation::EvaluationSet;
-use std::borrow::Cow;
 use std::fmt::Display;
-
-// TODO(progress): removed once `plot` migrates to the typed wrappers.
-/// Builds a hidden progress bar with the project's standard style, drawn to stdout.
-fn styled_bar() -> ProgressBar {
-    let bar = ProgressBar::hidden();
-    bar.set_style(
-        ProgressStyle::with_template(
-            "{msg} {spinner:.green} [{elapsed_precise}] {wide_bar} {pos}/{len} {percent}% ({eta})",
-        )
-        .unwrap(),
-    );
-    bar.set_draw_target(ProgressDrawTarget::stdout());
-    bar
-}
-
-/// A standalone progress bar of known length, for use with [`indicatif::ProgressIterator`].
-pub(crate) fn bar(len: usize, msg: impl Into<Cow<'static, str>>) -> ProgressBar {
-    let bar = styled_bar();
-    bar.set_length(len as u64);
-    bar.set_message(msg);
-    bar
-}
 
 /// The fill / head / empty glyphs of every bar — a thin, single-weight rule.
 const PROGRESS_CHARS: &str = "━╸─";
@@ -119,6 +96,30 @@ impl Epochs {
     }
 
     /// Clears the bar at the end of the run.
+    pub(crate) fn finish(&self) {
+        self.0.finish_and_clear();
+    }
+}
+
+/// Tracks decision-boundary frame rendering for an animation.
+pub(crate) struct Frames(ProgressBar);
+
+impl Frames {
+    /// A bar over `count` frames, prefixed with what's being rendered
+    /// (e.g. `"Rendering GIF"`).
+    pub(crate) fn new(count: usize, what: &'static str) -> Self {
+        let bar = styled("{pos}/{len} frames · {eta:.dim}");
+        bar.set_length(count as u64);
+        bar.set_prefix(what);
+        Self(bar)
+    }
+
+    /// Records one rendered frame.
+    pub(crate) fn advance(&self) {
+        self.0.inc(1);
+    }
+
+    /// Clears the bar once every frame is rendered.
     pub(crate) fn finish(&self) {
         self.0.finish_and_clear();
     }

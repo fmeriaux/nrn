@@ -26,7 +26,7 @@ mod theme;
 pub(crate) use artifacts::Artifacts;
 pub(crate) use hyperparameters::HyperParametersView;
 pub(crate) use icons::*;
-pub(crate) use progress::{Encoding, Epochs, bar};
+pub(crate) use progress::{Encoding, Epochs, Frames};
 pub(crate) use terminal::{play_frames, preview};
 
 use console::Emoji;
