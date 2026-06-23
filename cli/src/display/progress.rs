@@ -5,12 +5,13 @@
 
 use super::theme;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
+use nrn::evaluation::EvaluationSet;
 use std::borrow::Cow;
 use std::fmt::Display;
 
-// TODO(progress): removed once `train` and `plot` migrate to the typed wrappers.
+// TODO(progress): removed once `plot` migrates to the typed wrappers.
 /// Builds a hidden progress bar with the project's standard style, drawn to stdout.
-pub(crate) fn styled_bar() -> ProgressBar {
+fn styled_bar() -> ProgressBar {
     let bar = ProgressBar::hidden();
     bar.set_style(
         ProgressStyle::with_template(
@@ -75,6 +76,49 @@ impl Encoding {
     }
 
     /// Clears the bar once every category is encoded.
+    pub(crate) fn finish(&self) {
+        self.0.finish_and_clear();
+    }
+}
+
+/// Tracks the training loop epoch by epoch, surfacing the latest evaluated
+/// loss and accuracy beside the bar.
+pub(crate) struct Epochs(ProgressBar);
+
+impl Epochs {
+    /// A bar awaiting [`start`](Self::start) — held by the monitor before the
+    /// loop's total epoch count is known.
+    pub(crate) fn new() -> Self {
+        Self(styled("{pos}/{len} epochs · {msg}{eta:.dim}"))
+    }
+
+    /// Reveals the bar, spanning `epochs` total epochs.
+    pub(crate) fn start(&self, epochs: usize) {
+        self.0.set_prefix("Training");
+        self.0.set_length(epochs as u64);
+    }
+
+    /// Records one finished epoch.
+    pub(crate) fn advance(&self) {
+        self.0.inc(1);
+    }
+
+    /// Surfaces the latest evaluation — validation when present, else train.
+    pub(crate) fn evaluated(&self, eval: &EvaluationSet) {
+        let metrics = eval.validation.unwrap_or(eval.train);
+        self.0.set_message(format!(
+            "loss {:.4} · acc {:.1}% · ",
+            metrics.loss, metrics.accuracy
+        ));
+    }
+
+    /// Runs `body` with the bar suspended, so printed lines aren't garbled by
+    /// its redraws.
+    pub(crate) fn quiet<R>(&self, body: impl FnOnce() -> R) -> R {
+        self.0.suspend(body)
+    }
+
+    /// Clears the bar at the end of the run.
     pub(crate) fn finish(&self) {
         self.0.finish_and_clear();
     }
