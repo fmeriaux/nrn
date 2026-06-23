@@ -2,7 +2,8 @@ use crate::data::origin::DatasetOrigin;
 use crate::data::scalers::{Scaler, ScalerKind, ScalerMethod};
 use ndarray::{Array1, Array2, Axis, s};
 use ndarray_rand::rand::Rng;
-use ndarray_rand::rand::prelude::SliceRandom;
+use ndarray_rand::rand::SeedableRng;
+use ndarray_rand::rand::prelude::{SliceRandom, StdRng};
 use std::collections::HashSet;
 use std::error::Error;
 
@@ -290,22 +291,23 @@ impl Dataset {
         self
     }
 
-    /// Creates a new dataset from a vector of images and their corresponding labels.
+    /// Builds a shuffled dataset from encoded `images` and their `labels`, stamped
+    /// with [`DatasetOrigin::Encoded`] provenance whose sample order is
+    /// reproducible from `seed`.
     /// # Arguments
-    /// - `rng`: A mutable reference to a random number generator for shuffling.
+    /// - `seed`: Seeds the shuffle and is recorded in the origin for reproducibility.
+    /// - `source`: Name of the source the images were encoded from.
     /// - `images`: A vector of images represented as 1D arrays of pixel values.
     /// - `labels`: A vector of labels corresponding to each image.
-    /// - `origin`: Where the images were encoded from, when known.
-    pub fn from_vec<R: Rng>(
-        rng: &mut R,
+    pub fn from_encoded(
+        seed: u64,
+        source: impl Into<String>,
         images: Vec<Array1<f32>>,
         labels: Vec<usize>,
-        origin: Option<DatasetOrigin>,
     ) -> Result<Self, Box<dyn Error>> {
-        assert!(
-            !images.is_empty(),
-            "Images vector must not be empty to create a dataset"
-        );
+        if images.is_empty() {
+            return Err(DatasetError::NoSamples.into());
+        }
 
         let features: Array2<f32> = Array2::from_shape_vec(
             (images.len(), images[0].len()),
@@ -315,7 +317,13 @@ impl Dataset {
         let labels: Array1<f32> =
             Array1::from(labels.into_iter().map(|x| x as f32).collect::<Vec<_>>());
 
-        Ok(Dataset::new(features, labels, origin)?.shuffled(rng))
+        let origin = DatasetOrigin::Encoded {
+            source: source.into(),
+            seed,
+        };
+
+        let mut rng = StdRng::seed_from_u64(seed);
+        Ok(Dataset::new(features, labels, Some(origin))?.shuffled(&mut rng))
     }
 }
 
@@ -447,8 +455,6 @@ impl ModelSplit {
 mod tests {
     use super::*;
     use ndarray::{Array1, Array2, array};
-    use ndarray_rand::rand::SeedableRng;
-    use ndarray_rand::rand::prelude::StdRng;
 
     #[test]
     fn new_rejects_out_of_range_multiclass_label() {
@@ -598,23 +604,30 @@ mod tests {
     }
 
     #[test]
-    fn from_vec_rejects_inconsistent_image_sizes() {
-        // Images of differing lengths cannot form a rectangular matrix → Err.
-        let mut rng = StdRng::seed_from_u64(0);
-        let images = vec![array![0.0f32, 1.0], array![2.0, 3.0, 4.0]];
-        let labels = vec![0usize, 1];
-        assert!(Dataset::from_vec(&mut rng, images, labels, None).is_err());
+    fn from_encoded_rejects_empty_images() {
+        // No images → no samples, surfaced as a Result rather than a panic.
+        let err = Dataset::from_encoded(0, "test", vec![], vec![])
+            .err()
+            .unwrap();
+        assert_eq!(err.to_string(), DatasetError::NoSamples.to_string());
     }
 
     #[test]
-    fn from_vec_propagates_dataset_validation_error() {
-        // The images form a valid rectangular matrix, but `from_vec` does not
+    fn from_encoded_rejects_inconsistent_image_sizes() {
+        // Images of differing lengths cannot form a rectangular matrix → Err.
+        let images = vec![array![0.0f32, 1.0], array![2.0, 3.0, 4.0]];
+        let labels = vec![0usize, 1];
+        assert!(Dataset::from_encoded(0, "test", images, labels).is_err());
+    }
+
+    #[test]
+    fn from_encoded_propagates_dataset_validation_error() {
+        // The images form a valid rectangular matrix, but `from_encoded` does not
         // check that there are as many labels as images — it delegates to
         // `Dataset::new`, which rejects the count mismatch.
-        let mut rng = StdRng::seed_from_u64(0);
         let images = vec![array![0.0f32, 1.0], array![2.0, 3.0]];
         let labels = vec![0usize]; // one label for two images
-        let err = Dataset::from_vec(&mut rng, images, labels, None)
+        let err = Dataset::from_encoded(0, "test", images, labels)
             .err()
             .unwrap();
         assert!(
@@ -704,17 +717,25 @@ mod tests {
     }
 
     #[test]
-    fn from_vec_builds_dataset_from_images() {
-        let mut rng = StdRng::seed_from_u64(42);
+    fn from_encoded_builds_dataset_from_images() {
         let images = vec![array![0.0f32, 1.0], array![2.0, 3.0], array![4.0, 5.0]];
         let labels = vec![0usize, 1, 2];
 
-        let dataset = Dataset::from_vec(&mut rng, images, labels, None).unwrap();
+        let dataset = Dataset::from_encoded(42, "digits", images, labels).unwrap();
         assert_eq!(dataset.features().shape(), &[3, 2]);
         assert_eq!(dataset.labels().len(), 3);
         let mut unique = dataset.unique_labels();
         unique.sort_by(f32::total_cmp);
         assert_eq!(unique, vec![0.0, 1.0, 2.0]);
+
+        // The seed is stamped into the origin, so the dataset is reproducible.
+        assert_eq!(
+            dataset.origin(),
+            Some(&DatasetOrigin::Encoded {
+                source: "digits".to_string(),
+                seed: 42,
+            })
+        );
     }
 
     #[test]

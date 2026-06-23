@@ -17,8 +17,8 @@ impl Describe for Dataset {
             Some(DatasetOrigin::Synthetic { distribution, seed }) => {
                 entries.push(("Origin", format!("synthetic {distribution} (seed {seed})")));
             }
-            Some(DatasetOrigin::Encoded { source }) => {
-                entries.push(("Origin", format!("encoded from {source}")));
+            Some(DatasetOrigin::Encoded { source, seed }) => {
+                entries.push(("Origin", format!("encoded from {source} (seed {seed})")));
             }
             None => {}
         }

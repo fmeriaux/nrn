@@ -10,6 +10,7 @@
 
 mod artifacts;
 mod checkpoint;
+mod classes;
 mod classification;
 mod dataset;
 mod evaluation;
@@ -157,10 +158,6 @@ pub(crate) fn recording<E: Named + Describe>(entity: &E) {
 }
 
 // ─── Message verbs ──────────────────────────────────────────────────────────
-
-pub(crate) fn trace(message: &str) {
-    action(TRACE_ICON, message);
-}
 
 /// The inline prompt for the `index`-th feature value, leaving the cursor on the
 /// same line so the typed value follows it.
