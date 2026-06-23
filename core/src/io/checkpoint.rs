@@ -273,6 +273,30 @@ impl CheckpointArchive {
             .transpose()
     }
 
+    /// At most `count` checkpoint indices, evenly spaced and always including the
+    /// first and last, sorted and de-duplicated.
+    ///
+    /// Over an archive of 9 checkpoints: `sample(3)` → `[0, 4, 8]`, `sample(1)` →
+    /// `[8]`, `sample(20)` → `[0, 1, …, 8]`. Empty when the archive is empty or
+    /// `count` is 0.
+    pub fn sample(&self, count: usize) -> Vec<usize> {
+        let n = self.entries.len();
+        if n == 0 || count == 0 {
+            return Vec::new();
+        }
+        if count >= n {
+            return (0..n).collect();
+        }
+        if count == 1 {
+            return vec![n - 1];
+        }
+
+        let last = n - 1;
+        let mut indices: Vec<usize> = (0..count).map(|i| i * last / (count - 1)).collect();
+        indices.dedup();
+        indices
+    }
+
     /// Reads all `evaluations.json` files into a pure [`EvaluationHistory`].
     pub fn evaluation_history(&self) -> Result<EvaluationHistory> {
         let mut history = Vec::with_capacity(self.entries.len());
@@ -504,6 +528,73 @@ mod tests {
 
         assert!(archive.is_empty());
         assert_eq!(archive.len(), 0);
+    }
+
+    /// An archive of `n` checkpoints at epochs `0..n`, plus its directory for cleanup.
+    fn archive_of(tag: &str, n: usize) -> (PathBuf, CheckpointArchive) {
+        let dir = temp_dir(tag);
+        let recorder = create_run(&dir, "ds", false);
+        for epoch in 0..n {
+            write_checkpoint(&recorder, epoch);
+        }
+        let archive = CheckpointArchive::load(&dir).unwrap();
+        (dir, archive)
+    }
+
+    #[test]
+    fn sample_of_empty_archive_is_empty() {
+        let dir = temp_dir("sample_empty");
+        let archive = CheckpointArchive::load(&dir).unwrap();
+        cleanup(&dir);
+
+        assert!(archive.sample(5).is_empty());
+    }
+
+    #[test]
+    fn sample_zero_is_empty() {
+        let (dir, archive) = archive_of("sample_zero", 9);
+        let picked = archive.sample(0);
+        cleanup(&dir);
+
+        assert!(picked.is_empty());
+    }
+
+    #[test]
+    fn sample_spans_first_and_last_evenly() {
+        let (dir, archive) = archive_of("sample_even", 9);
+        let picked = archive.sample(3);
+        cleanup(&dir);
+
+        assert_eq!(picked, vec![0, 4, 8]);
+    }
+
+    #[test]
+    fn sample_one_is_the_last_checkpoint() {
+        let (dir, archive) = archive_of("sample_one", 9);
+        let picked = archive.sample(1);
+        cleanup(&dir);
+
+        assert_eq!(picked, vec![8]);
+    }
+
+    #[test]
+    fn sample_more_than_available_takes_all() {
+        let (dir, archive) = archive_of("sample_all", 5);
+        let picked = archive.sample(20);
+        cleanup(&dir);
+
+        assert_eq!(picked, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn sample_dedups_when_points_collide() {
+        // 3 checkpoints, 3 frames requested would map 0,1,2 — but a higher count
+        // over a short archive rounds to repeats, which are removed.
+        let (dir, archive) = archive_of("sample_dedup", 3);
+        let picked = archive.sample(3);
+        cleanup(&dir);
+
+        assert_eq!(picked, vec![0, 1, 2]);
     }
 
     #[test]

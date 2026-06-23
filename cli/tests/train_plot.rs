@@ -1,9 +1,9 @@
 //! End-to-end coverage of the `train`/`plot` happy paths: a full run produces a
-//! run directory and checkpoints, `plot` renders the training curves (PNG) and
-//! the decision-boundary animation (GIF), and the recap reflects resume
-//! overrides. Also exercises the checkpoint-count guards, early-stopping
-//! checkpoint flushing, and optimizer-state restoration on resume. The
-//! lifecycle and error paths live in `train_lifecycle.rs`.
+//! run directory and checkpoints, and `plot` covers its formats — `plot run`
+//! (console, still PNG, animated GIF, the two-checkpoint minimum) and `plot
+//! dataset` (console and image). The recap reflects resume overrides. Also
+//! exercises early-stopping checkpoint flushing and optimizer-state restoration
+//! on resume. The lifecycle and error paths live in `train_lifecycle.rs`.
 
 use assert_cmd::Command;
 use predicates::str::contains;
@@ -45,6 +45,10 @@ fn train_creates_run_dir_and_plot_generates_png_and_gif() {
         dir,
         &[
             "synth",
+            "--min",
+            "0",
+            "--max",
+            "10",
             "--seed",
             "42",
             "--distribution",
@@ -88,27 +92,374 @@ fn train_creates_run_dir_and_plot_generates_png_and_gif() {
 
     let run_arg = format!("training-model-{ds_name}");
 
-    // Plot emits the training curves (PNG) and, for the 2D dataset recorded in
-    // the run's meta.json, the decision boundary animation (GIF).
-    nrn(dir, &["plot", &run_arg]).success();
+    // `plot run --format image --animate` emits the training curves (PNG) and,
+    // for the 2D dataset recorded in the run's meta.json, the decision boundary
+    // animation (GIF). Artifacts land beside the run directory.
+    nrn(
+        dir,
+        &["plot", "run", &run_arg, "--format", "image", "--animate"],
+    )
+    .success();
 
-    let png = dir.join(format!("training-model-{ds_name}.png"));
-    assert!(png.exists(), "expected PNG at {png:?}");
+    let png = dir.join(format!("curves-training-model-{ds_name}.png"));
+    assert!(png.exists(), "expected curves PNG at {png:?}");
 
-    let gif = dir.join(format!("training-model-{ds_name}.gif"));
-    assert!(gif.exists(), "expected GIF at {gif:?}");
+    let gif = dir.join(format!("boundary-training-model-{ds_name}.gif"));
+    assert!(gif.exists(), "expected boundary GIF at {gif:?}");
 }
 
 #[test]
-fn load_history_rejects_too_few_checkpoints() {
+fn plot_run_still_image_emits_two_pngs_and_no_gif() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    // interval=100 with epochs=2 → only the initial checkpoint is written.
     nrn(
         dir,
         &[
             "synth",
+            "--min",
+            "0",
+            "--max",
+            "10",
+            "--seed",
+            "42",
+            "--distribution",
+            "ring",
+            "--clusters",
+            "2",
+            "--samples",
+            "20",
+        ],
+    )
+    .success();
+
+    let ds_name = "ring-seed42-c2-f2-n20";
+    nrn(
+        dir,
+        &[
+            "train",
+            "start",
+            "--seed",
+            "42",
+            ds_name,
+            "--epochs",
+            "20",
+            "--checkpoint-interval",
+            "5",
+            "--no-clip",
+        ],
+    )
+    .success();
+
+    let run_arg = format!("training-model-{ds_name}");
+
+    // No --animate: a still boundary PNG, no GIF.
+    nrn(dir, &["plot", "run", &run_arg, "--format", "image"]).success();
+
+    assert!(
+        dir.join(format!("curves-training-model-{ds_name}.png"))
+            .exists(),
+        "expected a curves PNG"
+    );
+    assert!(
+        dir.join(format!("boundary-training-model-{ds_name}.png"))
+            .exists(),
+        "expected a still boundary PNG"
+    );
+    assert!(
+        !dir.join(format!("boundary-training-model-{ds_name}.gif"))
+            .exists(),
+        "a still plot must not emit a GIF"
+    );
+}
+
+#[test]
+fn plot_run_console_prints_curves_and_boundary_without_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    nrn(
+        dir,
+        &[
+            "synth",
+            "--min",
+            "0",
+            "--max",
+            "10",
+            "--seed",
+            "42",
+            "--distribution",
+            "ring",
+            "--clusters",
+            "2",
+            "--samples",
+            "20",
+        ],
+    )
+    .success();
+
+    let ds_name = "ring-seed42-c2-f2-n20";
+    nrn(
+        dir,
+        &[
+            "train",
+            "start",
+            "--seed",
+            "42",
+            ds_name,
+            "--epochs",
+            "20",
+            "--checkpoint-interval",
+            "5",
+            "--no-clip",
+        ],
+    )
+    .success();
+
+    let run_arg = format!("training-model-{ds_name}");
+
+    let out = Command::cargo_bin("nrn")
+        .unwrap()
+        .current_dir(dir)
+        .args(["plot", "run", &run_arg])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("Training Loss Over Epochs"),
+        "expected curves in stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("Scatter Plot of Dataset Features"),
+        "expected the boundary scatter in stdout: {stdout}"
+    );
+    assert!(
+        !dir.join(format!("curves-training-model-{ds_name}.png"))
+            .exists(),
+        "the console format must not write files"
+    );
+}
+
+#[test]
+fn plot_run_console_animation_replays_the_boundary_frames() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    nrn(
+        dir,
+        &[
+            "synth",
+            "--min",
+            "0",
+            "--max",
+            "10",
+            "--seed",
+            "42",
+            "--distribution",
+            "ring",
+            "--clusters",
+            "2",
+            "--samples",
+            "20",
+        ],
+    )
+    .success();
+
+    let ds_name = "ring-seed42-c2-f2-n20";
+    nrn(
+        dir,
+        &[
+            "train",
+            "start",
+            "--seed",
+            "42",
+            ds_name,
+            "--epochs",
+            "20",
+            "--checkpoint-interval",
+            "5",
+            "--no-clip",
+        ],
+    )
+    .success();
+
+    let run_arg = format!("training-model-{ds_name}");
+
+    // Console + --animate: each frame is a full boundary scatter redrawn in place,
+    // so the title prints once per frame. A small frame count and delay keep it
+    // fast. Seeing it more than once is what separates the animation from a still.
+    let out = Command::cargo_bin("nrn")
+        .unwrap()
+        .current_dir(dir)
+        .args([
+            "plot",
+            "run",
+            &run_arg,
+            "--animate",
+            "--frames",
+            "3",
+            "--delay",
+            "10",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let frames = stdout.matches("Scatter Plot of Dataset Features").count();
+    assert!(
+        frames >= 2,
+        "expected the boundary to be redrawn for several frames, saw {frames}: {stdout}"
+    );
+    assert!(
+        !dir.join(format!("boundary-training-model-{ds_name}.gif"))
+            .exists(),
+        "the console animation must not write a GIF"
+    );
+}
+
+#[test]
+fn plot_dataset_renders_console_and_image() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    nrn(
+        dir,
+        &[
+            "synth",
+            "--min",
+            "0",
+            "--max",
+            "10",
+            "--seed",
+            "42",
+            "--distribution",
+            "ring",
+            "--clusters",
+            "2",
+            "--samples",
+            "20",
+        ],
+    )
+    .success();
+
+    let ds_name = "ring-seed42-c2-f2-n20";
+
+    // Console: an inline scatter on stdout, no file.
+    let out = Command::cargo_bin("nrn")
+        .unwrap()
+        .current_dir(dir)
+        .args(["plot", "dataset", ds_name])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("Scatter Plot of Dataset Features"),
+        "expected an inline scatter on stdout: {stdout}"
+    );
+
+    // Image: a PNG beside the dataset.
+    nrn(dir, &["plot", "dataset", ds_name, "--format", "image"]).success();
+    assert!(
+        dir.join(format!("{ds_name}.png")).exists(),
+        "expected a scatter PNG beside the dataset"
+    );
+}
+
+#[test]
+fn plot_run_skips_the_boundary_silently_for_non_2d_data() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    // A 3-feature dataset: the curves still plot, but the decision boundary
+    // (a 2D-only bonus) cannot.
+    nrn(
+        dir,
+        &[
+            "synth",
+            "--min",
+            "0",
+            "--max",
+            "10",
+            "--seed",
+            "42",
+            "--distribution",
+            "ring",
+            "--clusters",
+            "2",
+            "--features",
+            "3",
+            "--samples",
+            "30",
+        ],
+    )
+    .success();
+
+    let ds_name = "ring-seed42-c2-f3-n30";
+    nrn(
+        dir,
+        &[
+            "train",
+            "start",
+            "--seed",
+            "42",
+            ds_name,
+            "--epochs",
+            "20",
+            "--checkpoint-interval",
+            "5",
+            "--no-clip",
+        ],
+    )
+    .success();
+
+    let run_arg = format!("training-model-{ds_name}");
+
+    // Without --animate: curves only, and no nag about the unavailable boundary.
+    let out = Command::cargo_bin("nrn")
+        .unwrap()
+        .current_dir(dir)
+        .args(["plot", "run", &run_arg])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("two-feature"),
+        "a still plot must not warn about the boundary: {stderr}"
+    );
+
+    // With --animate: the explicit request can't be honored, so it warns.
+    let out = Command::cargo_bin("nrn")
+        .unwrap()
+        .current_dir(dir)
+        .args(["plot", "run", &run_arg, "--animate"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("two-feature dataset"),
+        "an explicit --animate on non-2D data should warn: {stderr}"
+    );
+}
+
+#[test]
+fn plot_run_succeeds_at_the_two_checkpoint_minimum() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    nrn(
+        dir,
+        &[
+            "synth",
+            "--min",
+            "0",
+            "--max",
+            "10",
             "--seed",
             "7",
             "--distribution",
@@ -123,6 +474,8 @@ fn load_history_rejects_too_few_checkpoints() {
 
     let ds_name = "ring-seed7-c2-f2-n20";
 
+    // interval=100 with epochs=2 → the initial and final checkpoints only: the
+    // two-point minimum a run plot needs.
     nrn(
         dir,
         &[
@@ -140,9 +493,77 @@ fn load_history_rejects_too_few_checkpoints() {
     .success();
 
     let run_arg = format!("training-model-{ds_name}");
-    nrn(dir, &["plot", &run_arg])
+    nrn(dir, &["plot", "run", &run_arg])
+        .success()
+        .stdout(contains("Training Loss Over Epochs"));
+}
+
+#[test]
+fn plot_run_rejects_a_single_checkpoint() {
+    // A run plot interpolates between checkpoints, so a lone one cannot be drawn.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    nrn(
+        dir,
+        &[
+            "synth",
+            "--min",
+            "0",
+            "--max",
+            "10",
+            "--seed",
+            "13",
+            "--distribution",
+            "ring",
+            "--clusters",
+            "2",
+            "--samples",
+            "20",
+        ],
+    )
+    .success();
+
+    let ds_name = "ring-seed13-c2-f2-n20";
+    nrn(
+        dir,
+        &[
+            "train",
+            "start",
+            "--seed",
+            "42",
+            ds_name,
+            "--epochs",
+            "2",
+            "--checkpoint-interval",
+            "1",
+            "--no-clip",
+        ],
+    )
+    .success();
+
+    let run_arg = format!("training-model-{ds_name}");
+    let run_dir = dir.join(&run_arg);
+
+    // Strip the trajectory down to its first checkpoint, leaving a single point.
+    let mut checkpoints: Vec<_> = fs::read_dir(&run_dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("checkpoint-"))
+        })
+        .collect();
+    checkpoints.sort();
+    for path in checkpoints.iter().skip(1) {
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    nrn(dir, &["plot", "run", &run_arg])
         .failure()
-        .stderr(contains("more than two checkpoints"));
+        .stderr(contains("at least two checkpoints"));
 }
 
 #[test]
@@ -155,6 +576,10 @@ fn early_stopping_writes_final_checkpoint() {
         dir,
         &[
             "synth",
+            "--min",
+            "0",
+            "--max",
+            "10",
             "--seed",
             "99",
             "--distribution",
@@ -222,6 +647,10 @@ fn no_duplicate_checkpoint_when_early_stop_fires_on_interval_boundary() {
         dir,
         &[
             "synth",
+            "--min",
+            "0",
+            "--max",
+            "10",
             "--seed",
             "42",
             "--distribution",
@@ -290,6 +719,9 @@ fn model_exists(dir: &Path, ds_name: &str) -> bool {
 
 #[test]
 fn start_prints_recap_without_overrides() {
+    // A fresh run shows no `was` override markers. The non-default scheduler,
+    // clipping, batch and early-stopping settings also exercise those recap
+    // value branches, including `--no-restore-best-model`.
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
@@ -297,6 +729,10 @@ fn start_prints_recap_without_overrides() {
         dir,
         &[
             "synth",
+            "--min",
+            "0",
+            "--max",
+            "10",
             "--seed",
             "1",
             "--distribution",
@@ -324,7 +760,15 @@ fn start_prints_recap_without_overrides() {
             "2",
             "--checkpoint-interval",
             "1",
-            "--no-clip",
+            "--scheduler",
+            "cosine",
+            "--clip-value",
+            "0.5",
+            "--batch-size",
+            "8",
+            "--early-stopping",
+            "3",
+            "--no-restore-best-model",
         ])
         .output()
         .unwrap();
@@ -339,6 +783,26 @@ fn start_prints_recap_without_overrides() {
         !stdout.contains("was"),
         "a fresh run must not show any override marker: {stdout}"
     );
+    // The chosen non-default values render their respective recap branches.
+    assert!(
+        stdout.contains("cosine annealing"),
+        "expected the cosine scheduler label: {stdout}"
+    );
+    assert!(
+        stdout.contains("value · min"),
+        "expected the value-clipping label: {stdout}"
+    );
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line.contains("Batches") && line.contains('8')),
+        "expected the mini-batch size on the Batches row: {stdout}"
+    );
+    // `--no-restore-best-model` renders the patience-only early-stopping label.
+    assert!(
+        stdout.contains("patience 3") && !stdout.contains("restore best"),
+        "expected early stopping without the restore-best suffix: {stdout}"
+    );
 }
 
 #[test]
@@ -350,6 +814,10 @@ fn resume_with_lr_override_shows_marker_on_optimizer_line() {
         dir,
         &[
             "synth",
+            "--min",
+            "0",
+            "--max",
+            "10",
             "--seed",
             "2",
             "--distribution",
@@ -413,6 +881,10 @@ fn resume_restores_adam_optimizer_state() {
         dir,
         &[
             "synth",
+            "--min",
+            "0",
+            "--max",
+            "10",
             "--seed",
             "2",
             "--distribution",
@@ -462,6 +934,10 @@ fn resume_rejects_val_ratio_override() {
         dir,
         &[
             "synth",
+            "--min",
+            "0",
+            "--max",
+            "10",
             "--seed",
             "3",
             "--distribution",
@@ -512,6 +988,10 @@ fn divergence_with_early_stopping_recovers_best_model() {
         dir,
         &[
             "synth",
+            "--min",
+            "0",
+            "--max",
+            "10",
             "--seed",
             "42",
             "--distribution",
@@ -568,8 +1048,8 @@ fn divergence_with_early_stopping_recovers_best_model() {
 #[test]
 fn synth_warns_on_uneven_clusters_and_plots_scatter() {
     // 21 samples across 2 clusters → 1 dropped (uneven division warning, stderr).
-    // The dataset id reflects the *generated* count, and --plot renders the
-    // 2-feature scatter to a PNG beside it.
+    // The dataset id reflects the *generated* count, and a 2-feature dataset
+    // gets an inline scatter preview printed to stdout.
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
@@ -578,6 +1058,10 @@ fn synth_warns_on_uneven_clusters_and_plots_scatter() {
         .current_dir(dir)
         .args([
             "synth",
+            "--min",
+            "0",
+            "--max",
+            "10",
             "--seed",
             "1",
             "--distribution",
@@ -586,7 +1070,6 @@ fn synth_warns_on_uneven_clusters_and_plots_scatter() {
             "2",
             "--samples",
             "21",
-            "--plot",
         ])
         .output()
         .unwrap();
@@ -598,14 +1081,16 @@ fn synth_warns_on_uneven_clusters_and_plots_scatter() {
         "expected an uneven-cluster warning on stderr: {stderr}"
     );
 
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("Scatter Plot of Dataset Features"),
+        "expected an inline scatter preview on stdout: {stdout}"
+    );
+
     let ds_name = "ring-seed1-c2-f2-n20";
     assert!(
         dir.join(format!("{ds_name}.safetensors")).exists(),
         "expected dataset named after the generated count"
-    );
-    assert!(
-        dir.join(format!("{ds_name}.png")).exists(),
-        "expected --plot to render a scatter PNG"
     );
 }
 
@@ -620,6 +1105,10 @@ fn start_with_auto_layers_infers_architecture() {
         dir,
         &[
             "synth",
+            "--min",
+            "0",
+            "--max",
+            "10",
             "--seed",
             "1",
             "--distribution",
@@ -674,6 +1163,10 @@ fn resume_restores_stateful_scheduler() {
         dir,
         &[
             "synth",
+            "--min",
+            "0",
+            "--max",
+            "10",
             "--seed",
             "5",
             "--distribution",
@@ -727,6 +1220,10 @@ fn resume_with_checkpoints_disabled_writes_no_new_checkpoints() {
         dir,
         &[
             "synth",
+            "--min",
+            "0",
+            "--max",
+            "10",
             "--seed",
             "6",
             "--distribution",

@@ -18,12 +18,17 @@ fn nrn(dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
         .assert()
 }
 
-/// Generates a small 2-class ring dataset in `dir` and returns its filename.
+/// Generates a small 2-class ring dataset in `dir` over the `[0, 10]` feature
+/// range, returning its filename.
 fn synth_ring(dir: &Path, seed: &str, samples: &str) -> String {
     nrn(
         dir,
         &[
             "synth",
+            "--min",
+            "0",
+            "--max",
+            "10",
             "--seed",
             seed,
             "--distribution",

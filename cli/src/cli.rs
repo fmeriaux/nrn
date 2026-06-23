@@ -22,8 +22,9 @@ pub enum Command {
     Train(TrainCommand),
     /// Predict using a trained model
     Predict(PredictArgs),
-    /// Plot training curves and decision boundaries
-    Plot(PlotArgs),
+    /// Plot a dataset or a training run's curves and decision boundary
+    #[command(subcommand)]
+    Plot(PlotCommand),
 }
 
 impl Command {
