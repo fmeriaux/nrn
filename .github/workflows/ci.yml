@@ -19,7 +19,7 @@ jobs:
         run: |
           rustup update stable
           rustup default stable
-          rustup component add clippy rustfmt
+          rustup component add clippy rustfmt llvm-tools-preview
 
       - name: Install system dependencies
         run: sudo apt-get install -y libfontconfig-dev
@@ -38,3 +38,7 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - run: task audit
+
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+      - run: task coverage-check
