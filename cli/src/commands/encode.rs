@@ -18,16 +18,18 @@ pub struct EncodeArgs {
 #[derive(Subcommand, Debug)]
 pub enum EncodeCommand {
     /// Encode a directory of per-class image folders into a dataset
-    ImgDir(ImgDirArgs),
+    #[command(visible_alias = "ds")]
+    Dataset(DatasetArgs),
     /// Encode a single image into an instance
-    Img(ImgArgs),
+    #[command(visible_alias = "inst")]
+    Instance(InstanceArgs),
 }
 
 impl EncodeArgs {
     pub fn run(self) -> Result<(), Box<dyn Error>> {
         match self.subcommand {
-            EncodeCommand::ImgDir(args) => args.run(),
-            EncodeCommand::Img(args) => args.run(),
+            EncodeCommand::Dataset(args) => args.run(),
+            EncodeCommand::Instance(args) => args.run(),
         }
     }
 }
@@ -54,7 +56,7 @@ impl From<&EncoderArgs> for ImageEncoder {
 }
 
 #[derive(Args, Debug)]
-pub struct ImgDirArgs {
+pub struct DatasetArgs {
     /// Directory of per-class subfolders of images to encode
     input: PathBuf,
 
@@ -66,7 +68,7 @@ pub struct ImgDirArgs {
     encoder: EncoderArgs,
 }
 
-impl ImgDirArgs {
+impl DatasetArgs {
     pub fn run(&self) -> Result<(), Box<dyn Error>> {
         let classes = Classes::scan(&self.input)?;
         show(&classes);
@@ -120,7 +122,7 @@ impl ImgDirArgs {
 }
 
 #[derive(Args, Debug)]
-pub struct ImgArgs {
+pub struct InstanceArgs {
     /// Image file to encode
     input: PathBuf,
 
@@ -132,7 +134,7 @@ pub struct ImgArgs {
     encoder: EncoderArgs,
 }
 
-impl ImgArgs {
+impl InstanceArgs {
     /// The path to save the instance under: the `--output` override, or the input
     /// image's file stem by default.
     fn output_path(&self) -> PathBuf {
@@ -195,11 +197,11 @@ mod tests {
     #[derive(Parser)]
     struct ImgCli {
         #[command(flatten)]
-        args: ImgArgs,
+        args: InstanceArgs,
     }
 
-    fn img_args(extra: &[&str]) -> ImgArgs {
-        let mut argv = vec!["img"];
+    fn img_args(extra: &[&str]) -> InstanceArgs {
+        let mut argv = vec!["instance"];
         argv.extend_from_slice(extra);
         ImgCli::parse_from(argv).args
     }
@@ -218,5 +220,23 @@ mod tests {
             img_args(&["pics/digit.png", "--output", "out/encoded"]).output_path(),
             PathBuf::from("out/encoded")
         );
+    }
+
+    #[derive(Parser)]
+    struct EncodeCli {
+        #[command(subcommand)]
+        command: EncodeCommand,
+    }
+
+    #[test]
+    fn ds_is_an_alias_for_dataset() {
+        let cli = EncodeCli::try_parse_from(["encode", "ds", "images/"]).unwrap();
+        assert!(matches!(cli.command, EncodeCommand::Dataset(_)));
+    }
+
+    #[test]
+    fn inst_is_an_alias_for_instance() {
+        let cli = EncodeCli::try_parse_from(["encode", "inst", "digit.png"]).unwrap();
+        assert!(matches!(cli.command, EncodeCommand::Instance(_)));
     }
 }

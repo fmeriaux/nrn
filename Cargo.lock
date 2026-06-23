@@ -820,6 +820,7 @@ dependencies = [
  "assert_cmd",
  "clap",
  "console",
+ "image 0.25.10",
  "indicatif",
  "ndarray",
  "ndarray-rand",

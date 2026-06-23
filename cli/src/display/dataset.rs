@@ -26,3 +26,43 @@ impl Describe for Dataset {
         rows(&entries)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::display::Describe;
+    use ndarray::{Array2, array};
+    use nrn::data::{Dataset, DatasetOrigin};
+
+    fn dataset(origin: Option<DatasetOrigin>) -> Dataset {
+        // 4 samples (rows), 2 features, 2 classes.
+        Dataset::new(Array2::zeros((4, 2)), array![0.0f32, 1.0, 0.0, 1.0], origin).unwrap()
+    }
+
+    #[test]
+    fn describes_shape_and_omits_the_origin_row_when_absent() {
+        let described = dataset(None).describe();
+        assert!(described.contains("Features"));
+        assert!(described.contains("Classes"));
+        assert!(described.contains("Samples"));
+        assert!(!described.contains("Origin"));
+    }
+
+    #[test]
+    fn describes_a_synthetic_origin() {
+        let described = dataset(Some(DatasetOrigin::Synthetic {
+            distribution: "ring".to_string(),
+            seed: 42,
+        }))
+        .describe();
+        assert!(described.contains("synthetic ring (seed 42)"));
+    }
+
+    #[test]
+    fn describes_an_encoded_origin() {
+        let described = dataset(Some(DatasetOrigin::Encoded {
+            source: "imgs".to_string(),
+        }))
+        .describe();
+        assert!(described.contains("encoded from imgs"));
+    }
+}
