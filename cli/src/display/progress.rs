@@ -7,6 +7,7 @@ use super::theme;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use nrn::evaluation::EvaluationSet;
 use std::fmt::Display;
+use std::time::Duration;
 
 /// The fill / head / empty glyphs of every bar — a thin, single-weight rule.
 const PROGRESS_CHARS: &str = "━╸─";
@@ -28,6 +29,35 @@ fn styled(suffix: &str) -> ProgressBar {
     );
     bar.set_draw_target(ProgressDrawTarget::stdout());
     bar
+}
+
+/// An indeterminate spinner for a single blocking step with no measurable
+/// progress (e.g. splitting a large dataset). It ticks on a background thread,
+/// so it keeps animating while the calling thread is busy.
+pub(crate) struct Spinner(ProgressBar);
+
+impl Spinner {
+    /// Starts a spinner labelled `message`, animating until [`finish`](Self::finish).
+    pub(crate) fn start(message: &'static str) -> Self {
+        let bar = ProgressBar::new_spinner();
+        bar.set_style(
+            ProgressStyle::with_template(&format!(
+                "{{spinner:.{accent}}} {{msg:.bold.{title}}}",
+                accent = theme::ACCENT,
+                title = theme::TITLE,
+            ))
+            .unwrap(),
+        );
+        bar.set_draw_target(ProgressDrawTarget::stdout());
+        bar.set_message(message);
+        bar.enable_steady_tick(Duration::from_millis(80));
+        Self(bar)
+    }
+
+    /// Stops and clears the spinner.
+    pub(crate) fn finish(&self) {
+        self.0.finish_and_clear();
+    }
 }
 
 /// Tracks image encoding across every category under a single bar: the prefix

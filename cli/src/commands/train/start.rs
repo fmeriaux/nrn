@@ -1,7 +1,7 @@
 use super::DivergedRun;
 use super::args::TrainArgs;
 use super::callbacks::{ConsoleMonitor, ModelSaver};
-use crate::display::{initialized, loaded, recording};
+use crate::display::{Spinner, initialized, loaded, recording};
 use crate::path::PathExt;
 use clap::Args;
 use nrn::activations::RELU;
@@ -77,7 +77,9 @@ impl StartArgs {
             }
         };
 
+        let spinner = Spinner::start("Preparing dataset");
         let data = hyperparameters.prepare(dataset, None);
+        spinner.finish();
 
         let recorder = if hyperparameters.checkpoint_interval() > 0 {
             let meta = TrainingMeta {
