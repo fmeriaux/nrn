@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 #[derive(Subcommand, Debug)]
 pub enum PlotCommand {
     /// Plot a dataset's feature scatter
+    #[command(visible_alias = "ds")]
     Dataset(DatasetArgs),
     /// Plot a training run's curves and decision boundary
     Run(RunArgs),
@@ -76,5 +77,23 @@ pub(super) fn render(
             Ok(None)
         }
         Format::Image => Ok(Some(figure.to_image(&size.config())?.save(path)?)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct Cli {
+        #[command(subcommand)]
+        command: PlotCommand,
+    }
+
+    #[test]
+    fn ds_is_an_alias_for_dataset() {
+        let cli = Cli::try_parse_from(["plot", "ds", "data.safetensors"]).unwrap();
+        assert!(matches!(cli.command, PlotCommand::Dataset(_)));
     }
 }
