@@ -17,6 +17,7 @@ use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec, Predictor};
 use nrn::optimizers::Adam;
 use nrn::schedulers::ConstantScheduler;
 use nrn::training::{GradientClipping, TrainerCallback};
+use nrn::weight_decay::WeightDecay;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -83,7 +84,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let mut model = NeuralNetwork::initialization(2, &specs, 0);
 
     let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
-    let mut optimizer = Adam::with_defaults(0.05.try_into().unwrap());
+    let mut optimizer = Adam::with_defaults(0.05.try_into().unwrap(), WeightDecay::ZERO);
     let mut scheduler = ConstantScheduler::new(0.05.try_into().unwrap());
     let clipping = GradientClipping::None;
 

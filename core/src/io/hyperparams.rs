@@ -244,7 +244,7 @@ impl From<&HyperParameters> for HyperParametersRecord {
             checkpoint_interval: hyperparameters.checkpoint_interval(),
             batch_size: hyperparameters.batch_size(),
             lr: hyperparameters.lr().value(),
-            weight_decay: hyperparameters.weight_decay(),
+            weight_decay: hyperparameters.weight_decay().value(),
             optimizer: hyperparameters.optimizer().into(),
             scheduler: hyperparameters.scheduler().into(),
             clipping: hyperparameters.clipping().into(),

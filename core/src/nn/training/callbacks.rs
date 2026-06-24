@@ -161,6 +161,7 @@ mod tests {
     use crate::model::NeuronLayerSpec;
     use crate::optimizers::Adam;
     use crate::schedulers::ConstantScheduler;
+    use crate::weight_decay::WeightDecay;
     use ndarray::array;
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -204,7 +205,7 @@ mod tests {
     fn default_callback_methods_are_noop() {
         let mut callback = DefaultCallback;
         let model = sample_model();
-        let optimizer = Adam::with_defaults(0.01.try_into().unwrap());
+        let optimizer = Adam::with_defaults(0.01.try_into().unwrap(), WeightDecay::ZERO);
         let scheduler = ConstantScheduler::new(0.01.try_into().unwrap());
 
         assert!(

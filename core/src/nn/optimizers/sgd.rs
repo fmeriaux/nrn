@@ -12,32 +12,19 @@ use crate::gradients::Gradients;
 use crate::learning_rate::LearningRate;
 use crate::model::NeuronLayer;
 use crate::optimizers::Optimizer;
+use crate::weight_decay::WeightDecay;
 
 pub struct StochasticGradientDescent {
-    pub learning_rate: LearningRate,
-    /// L2 weight-decay coefficient; `0.0` disables it. Applied to weights only,
-    /// never biases.
-    weight_decay: f32,
+    learning_rate: LearningRate,
+    weight_decay: WeightDecay,
 }
 
 impl StochasticGradientDescent {
-    pub fn new(learning_rate: LearningRate) -> Self {
+    pub fn new(learning_rate: LearningRate, weight_decay: WeightDecay) -> Self {
         StochasticGradientDescent {
             learning_rate,
-            weight_decay: 0.0,
+            weight_decay,
         }
-    }
-
-    /// Sets the L2 weight-decay coefficient.
-    /// # Panics
-    /// Will panic if `weight_decay` is negative or non-finite.
-    pub fn with_weight_decay(mut self, weight_decay: f32) -> Self {
-        assert!(
-            weight_decay >= 0.0 && weight_decay.is_finite(),
-            "Weight decay must be a finite, non-negative value."
-        );
-        self.weight_decay = weight_decay;
-        self
     }
 }
 
@@ -58,8 +45,8 @@ impl Optimizer for StochasticGradientDescent {
         let (dw, db) = (&gradients.dw, &gradients.db);
         // L2 weight decay: shrink the weights before the gradient step. Biases are
         // not decayed.
-        if self.weight_decay > 0.0 {
-            layer.weights *= 1.0 - self.learning_rate.value() * self.weight_decay;
+        if self.weight_decay.is_active() {
+            layer.weights *= 1.0 - self.learning_rate.value() * self.weight_decay.value();
         }
         layer.weights -= &(dw * self.learning_rate.value());
         layer.biases -= &(db * self.learning_rate.value());
@@ -82,7 +69,7 @@ mod tests {
 
     #[test]
     fn sgd_subtracts_scaled_gradient() {
-        let mut opt = StochasticGradientDescent::new(0.1.try_into().unwrap());
+        let mut opt = StochasticGradientDescent::new(0.1.try_into().unwrap(), WeightDecay::ZERO);
         assert_eq!(opt.name(), "Stochastic Gradient Descent (SGD)");
         assert_eq!(opt.learning_rate().value(), 0.1);
         let mut l = layer(array![[1.0, 2.0]], array![1.0]);
@@ -99,7 +86,7 @@ mod tests {
 
     #[test]
     fn sgd_zero_gradient_leaves_params_unchanged() {
-        let mut opt = StochasticGradientDescent::new(0.5.try_into().unwrap());
+        let mut opt = StochasticGradientDescent::new(0.5.try_into().unwrap(), WeightDecay::ZERO);
         let mut l = layer(array![[1.0, -2.0]], array![3.0]);
         let grads = Gradients {
             dw: Array2::zeros((1, 2)),
@@ -112,7 +99,7 @@ mod tests {
 
     #[test]
     fn set_learning_rate_changes_the_update_magnitude() {
-        let mut opt = StochasticGradientDescent::new(0.1.try_into().unwrap());
+        let mut opt = StochasticGradientDescent::new(0.1.try_into().unwrap(), WeightDecay::ZERO);
         opt.set_learning_rate(LearningRate::new(1.0).unwrap());
 
         let mut l = layer(array![[1.0]], array![0.0]);
@@ -128,8 +115,8 @@ mod tests {
     #[test]
     fn weight_decay_shrinks_weights_and_spares_biases() {
         let lr = 0.1;
-        let wd = 0.5;
-        let mut opt = StochasticGradientDescent::new(lr.try_into().unwrap()).with_weight_decay(wd);
+        let wd = WeightDecay::new(0.5).unwrap();
+        let mut opt = StochasticGradientDescent::new(lr.try_into().unwrap(), wd);
         let mut l = layer(array![[2.0]], array![3.0]);
         let grads = Gradients {
             dw: array![[1.0]],
@@ -142,16 +129,10 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Weight decay must be a finite, non-negative value")]
-    fn weight_decay_rejects_negative_value() {
-        StochasticGradientDescent::new(0.1.try_into().unwrap()).with_weight_decay(-1.0);
-    }
-
-    #[test]
     fn step_is_a_noop_for_stateless_sgd() {
         // SGD keeps no internal state, so it relies on the trait's default `step`.
-        let mut opt = StochasticGradientDescent::new(0.1.try_into().unwrap());
+        let mut opt = StochasticGradientDescent::new(0.1.try_into().unwrap(), WeightDecay::ZERO);
         opt.step();
-        assert_eq!(opt.learning_rate.value(), 0.1);
+        assert_eq!(opt.learning_rate().value(), 0.1);
     }
 }

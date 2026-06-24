@@ -512,13 +512,15 @@ mod tests {
         assert_eq!(
             HyperParameters::try_from(&train_args(&[]))
                 .unwrap()
-                .weight_decay(),
+                .weight_decay()
+                .value(),
             0.0
         );
         assert_eq!(
             HyperParameters::try_from(&train_args(&["--weight-decay", "0.0001"]))
                 .unwrap()
-                .weight_decay(),
+                .weight_decay()
+                .value(),
             0.0001
         );
     }

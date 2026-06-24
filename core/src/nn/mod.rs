@@ -11,3 +11,4 @@ pub mod model;
 pub mod optimizers;
 pub mod schedulers;
 pub mod training;
+pub mod weight_decay;

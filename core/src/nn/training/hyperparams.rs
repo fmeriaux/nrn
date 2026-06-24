@@ -12,6 +12,7 @@ use crate::optimizers::{Adam, Optimizer, StochasticGradientDescent};
 use crate::schedulers::{
     ConstantScheduler, CosineAnnealing, CosineAnnealingError, Scheduler, StepDecay, StepDecayError,
 };
+use crate::weight_decay::{WeightDecay, WeightDecayError};
 use std::fmt;
 use std::sync::Arc;
 
@@ -50,16 +51,11 @@ pub enum LossConfig {
 
 impl OptimizerConfig {
     /// Instantiates the concrete optimizer for the shared learning rate `lr` and
-    /// weight-decay coefficient `weight_decay` (`0.0` disables decay). Adam applies
-    /// it as decoupled decay (AdamW); SGD applies it as classic L2.
-    fn instantiate(&self, lr: LearningRate, weight_decay: f32) -> Box<dyn Optimizer> {
+    /// `weight_decay`. Adam applies decay as decoupled (AdamW); SGD as classic L2.
+    fn instantiate(&self, lr: LearningRate, weight_decay: WeightDecay) -> Box<dyn Optimizer> {
         match self {
-            OptimizerConfig::Sgd => {
-                Box::new(StochasticGradientDescent::new(lr).with_weight_decay(weight_decay))
-            }
-            OptimizerConfig::Adam => {
-                Box::new(Adam::with_defaults(lr).with_weight_decay(weight_decay))
-            }
+            OptimizerConfig::Sgd => Box::new(StochasticGradientDescent::new(lr, weight_decay)),
+            OptimizerConfig::Adam => Box::new(Adam::with_defaults(lr, weight_decay)),
         }
     }
 }
@@ -117,8 +113,8 @@ pub struct HyperParameters {
     batch_size: Option<usize>,
     /// Shared (maximum) learning rate, used by both the optimizer and the scheduler.
     lr: LearningRate,
-    /// Weight-decay coefficient passed to the optimizer; `0.0` disables decay.
-    weight_decay: f32,
+    /// Weight-decay coefficient passed to the optimizer.
+    weight_decay: WeightDecay,
     /// Parameter-update rule.
     optimizer: OptimizerConfig,
     /// Learning-rate schedule, stepped once per epoch.
@@ -158,8 +154,8 @@ pub enum HyperParametersError {
     ZeroEpochs,
     /// `batch_size` was `Some(0)`.
     ZeroBatchSize,
-    /// `weight_decay` was negative or non-finite.
-    InvalidWeightDecay(f32),
+    /// The weight decay was negative or non-finite.
+    WeightDecay(WeightDecayError),
     /// `val_ratio` was outside `[0.0, 1.0)`.
     InvalidValRatio(f32),
     /// `test_ratio` was outside `(0.0, 1.0)`.
@@ -187,10 +183,7 @@ impl fmt::Display for HyperParametersError {
             HyperParametersError::ZeroBatchSize => {
                 write!(f, "the batch size must be greater than zero")
             }
-            HyperParametersError::InvalidWeightDecay(weight_decay) => write!(
-                f,
-                "the weight decay must be a finite, non-negative value, got {weight_decay}"
-            ),
+            HyperParametersError::WeightDecay(e) => write!(f, "{e}"),
             HyperParametersError::InvalidValRatio(ratio) => {
                 write!(f, "the validation ratio must be in [0.0, 1.0), got {ratio}")
             }
@@ -218,6 +211,12 @@ impl std::error::Error for HyperParametersError {}
 impl From<LearningRateError> for HyperParametersError {
     fn from(e: LearningRateError) -> Self {
         HyperParametersError::LearningRate(e)
+    }
+}
+
+impl From<WeightDecayError> for HyperParametersError {
+    fn from(e: WeightDecayError) -> Self {
+        HyperParametersError::WeightDecay(e)
     }
 }
 
@@ -259,7 +258,7 @@ impl HyperParameters {
         checkpoint_interval: usize,
         batch_size: Option<usize>,
         lr: LearningRate,
-        weight_decay: f32,
+        weight_decay: WeightDecay,
         optimizer: OptimizerConfig,
         scheduler: SchedulerConfig,
         clipping: GradientClipping,
@@ -275,9 +274,6 @@ impl HyperParameters {
         }
         if batch_size == Some(0) {
             return Err(HyperParametersError::ZeroBatchSize);
-        }
-        if !weight_decay.is_finite() || weight_decay < 0.0 {
-            return Err(HyperParametersError::InvalidWeightDecay(weight_decay));
         }
         if !(0.0..1.0).contains(&val_ratio) {
             return Err(HyperParametersError::InvalidValRatio(val_ratio));
@@ -348,7 +344,7 @@ impl HyperParameters {
             checkpoint_interval,
             batch_size,
             LearningRate::new(lr)?,
-            weight_decay,
+            WeightDecay::new(weight_decay)?,
             optimizer,
             scheduler,
             clipping,
@@ -377,7 +373,7 @@ impl HyperParameters {
         self.lr
     }
 
-    pub fn weight_decay(&self) -> f32 {
+    pub fn weight_decay(&self) -> WeightDecay {
         self.weight_decay
     }
 
