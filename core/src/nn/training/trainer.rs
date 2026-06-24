@@ -534,7 +534,7 @@ mod tests {
     #[test]
     fn fatal_divergence_without_recovery_is_reported_as_data() {
         let counts = Rc::new(RefCell::new(Counts::default()));
-        let hyperparameters = sample_hyperparameters(5, 1, 1e30, None, 0.0);
+        let hyperparameters = sample_hyperparameters(5, 1, f32::MAX, None, 0.0);
 
         let report = trainer(hyperparameters, counts.clone()).train().unwrap();
 
@@ -555,7 +555,7 @@ mod tests {
     fn divergence_recovers_seeded_best_model_when_restore_enabled() {
         let counts = Rc::new(RefCell::new(Counts::default()));
         let early_stopping = Some(EarlyStoppingConfig::new(10, true).unwrap());
-        let hyperparameters = sample_hyperparameters(5, 1, 1e30, early_stopping, 0.1);
+        let hyperparameters = sample_hyperparameters(5, 1, f32::MAX, early_stopping, 0.1);
 
         let report = trainer(hyperparameters, counts.clone()).train().unwrap();
 
@@ -602,7 +602,7 @@ mod tests {
     #[test]
     fn into_result_is_err_for_unrecovered_divergence() {
         let counts = Rc::new(RefCell::new(Counts::default()));
-        let hyperparameters = sample_hyperparameters(5, 1, 1e30, None, 0.0);
+        let hyperparameters = sample_hyperparameters(5, 1, f32::MAX, None, 0.0);
         let report = trainer(hyperparameters, counts).train().unwrap();
 
         assert_eq!(

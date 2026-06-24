@@ -305,8 +305,8 @@ fn resume_from_unknown_epoch_fails() {
 
 #[test]
 fn fatal_divergence_without_early_stopping_errors() {
-    // lr=5.0 + no-clip diverges within a few epochs. Without early stopping there
-    // is no best model to recover, so the run must fail with the divergence error.
+    // An enormous lr + no-clip overflows the weights to ±inf. Without early stopping
+    // there is no best model to recover, so the run must fail with the divergence error.
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
     let ds = synth_ring(dir, "42", "40");
@@ -325,7 +325,7 @@ fn fatal_divergence_without_early_stopping_errors() {
             "1000",
             "--no-clip",
             "--lr",
-            "5.0",
+            "1e38",
             "--layers",
             "4,4",
         ],

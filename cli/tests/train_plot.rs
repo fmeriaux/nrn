@@ -978,7 +978,7 @@ fn resume_rejects_val_ratio_override() {
 
 #[test]
 fn divergence_with_early_stopping_recovers_best_model() {
-    // lr=5.0 + no-clip causes divergence at epoch 2-3 for any He-initialized model.
+    // An enormous lr + no-clip overflows the weights to ±inf within a step or two.
     // With --early-stopping + restore_best_model (default), the best model seen before
     // divergence must be saved instead of erroring out.
     let tmp = tempfile::tempdir().unwrap();
@@ -1018,7 +1018,7 @@ fn divergence_with_early_stopping_recovers_best_model() {
             "50",
             "--no-clip",
             "--lr",
-            "5.0",
+            "1e38",
             "--early-stopping",
             "20",
             "--checkpoint-interval",
@@ -1031,18 +1031,16 @@ fn divergence_with_early_stopping_recovers_best_model() {
 
     let stderr = String::from_utf8_lossy(&out.stderr);
 
-    // With --early-stopping + restore_best_model (default), the model must always be
-    // saved: recovery kicks in on divergence, normal save on successful training.
+    // The run diverges, early stopping recovers the best pre-divergence model, and that
+    // recovered model is saved (rather than the run erroring out).
+    assert!(
+        stderr.contains("diverged") && stderr.contains("recovered"),
+        "divergence with early stopping should recover the best model\nstderr: {stderr}"
+    );
     assert!(
         model_exists(dir, ds_name),
-        "model should be saved whether training converges or recovers from divergence\nstderr: {stderr}"
+        "recovered model should be saved\nstderr: {stderr}"
     );
-    if stderr.contains("diverged") {
-        assert!(
-            stderr.contains("recovered"),
-            "divergence with early stopping should print a recovery warning\nstderr: {stderr}"
-        );
-    }
 }
 
 #[test]
