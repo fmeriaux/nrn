@@ -1,6 +1,6 @@
 mod cross_entropy_loss;
 
-pub use cross_entropy_loss::CROSS_ENTROPY_LOSS;
+pub use cross_entropy_loss::{CROSS_ENTROPY_LOSS, CrossEntropyLoss};
 
 use ndarray::{Array2, ArrayView2};
 

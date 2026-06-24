@@ -14,11 +14,18 @@ use std::sync::Arc;
 pub struct CrossEntropyLoss;
 
 impl CrossEntropyLoss {
+    /// Distance kept from the open ends of `(0, 1)` when clamping probabilities.
+    ///
+    /// Sized for `f32`: the largest float below `1.0` is `1 − 2⁻²⁴ ≈ 1 − 6e-8`, so an
+    /// epsilon any smaller than that makes `1.0 − epsilon` round straight back to `1.0`
+    /// and the upper clamp a no-op. A saturated sigmoid output of exactly `1.0` would
+    /// then drive the binary-CE gradient's `p(1 − p)` denominator to zero — `NaN`/`inf`.
+    pub(crate) const PROBABILITY_EPSILON: f32 = 1e-7;
+
     /// Clips the predicted probabilities so that they lie within a safe numerical range
     /// to prevent invalid logarithms during loss computation.
-    fn clip_probabilities(probabilities: &ArrayView2<f32>) -> Array2<f32> {
-        let epsilon = 1e-15;
-        probabilities.mapv(|p| p.clamp(epsilon, 1.0 - epsilon))
+    pub(crate) fn clip_probabilities(probabilities: &ArrayView2<f32>) -> Array2<f32> {
+        probabilities.mapv(|p| p.clamp(Self::PROBABILITY_EPSILON, 1.0 - Self::PROBABILITY_EPSILON))
     }
 }
 
@@ -84,8 +91,31 @@ pub static CROSS_ENTROPY_LOSS: Lazy<Arc<CrossEntropyLoss>> =
 mod tests {
     use super::*;
 
+    use ndarray::array;
+
     #[test]
     fn name_is_cross_entropy() {
         assert_eq!(CrossEntropyLoss.name(), "Cross-Entropy");
+    }
+
+    #[test]
+    fn clip_keeps_saturated_probabilities_off_the_open_ends() {
+        // Regression: a saturated 0.0/1.0 must land strictly inside (0, 1).
+        let clipped = CrossEntropyLoss::clip_probabilities(&array![[0.0, 1.0]].view());
+        assert!(clipped.iter().all(|&p| p > 0.0 && p < 1.0), "{clipped:?}");
+    }
+
+    #[test]
+    fn saturated_binary_predictions_give_finite_loss_and_gradient() {
+        // Correctly classified but saturated: loss ≈ 0 and gradient ≈ 0, not NaN/inf.
+        let predictions = array![[1.0, 0.0]];
+        let targets = array![[1.0, 0.0]];
+        let loss = CrossEntropyLoss.compute(predictions.view(), targets.view());
+        assert!(loss.is_finite() && loss >= 0.0, "loss = {loss}");
+
+        // gradient() expects pre-clipped inputs, mirroring the backward pass.
+        let safe = CrossEntropyLoss::clip_probabilities(&predictions.view());
+        let grad = CrossEntropyLoss.gradient(safe.view(), targets.view());
+        assert!(grad.iter().all(|v| v.is_finite()), "grad = {grad:?}");
     }
 }

@@ -1,6 +1,6 @@
 use crate::data::ModelDataset;
 use crate::gradients::{GradientClipping, Gradients};
-use crate::loss_functions::LossFunction;
+use crate::loss_functions::{CrossEntropyLoss, LossFunction};
 use crate::model::{NeuralNetwork, last_activation};
 use crate::optimizers::Optimizer;
 use crate::schedulers::Scheduler;
@@ -136,7 +136,7 @@ impl NeuralNetwork {
         let last_act = last_activation(activations);
         // Clip to (0, 1) interior so gradient() and vjp() see the same values;
         // their product then cancels exactly to p − y even near saturation.
-        let safe_act = last_act.mapv(|p| p.clamp(1e-15_f32, 1.0 - 1e-15_f32));
+        let safe_act = CrossEntropyLoss::clip_probabilities(&last_act.view());
         let loss_grad = loss_function.gradient(safe_act.view(), targets);
         let mut dz = self
             .layers
@@ -326,6 +326,36 @@ mod tests {
                     &format!("b[{layer_idx}][{i}]"),
                 );
             }
+        }
+    }
+
+    #[test]
+    fn backward_is_finite_when_binary_sigmoid_saturates() {
+        // Regression: a saturated sigmoid output (exactly 1.0/0.0 in f32) must not
+        // make the binary-CE gradient non-finite via its p(1 - p) divisor.
+        let specs = NeuronLayerSpec::network_for(vec![], &*SIGMOID, 2);
+        let mut model = NeuralNetwork::initialization(2, &specs, 0);
+
+        // Large weights so the single sample's logit saturates the sigmoid.
+        model.layers[0].weights = array![[100.0, 100.0]];
+        model.layers[0].biases = Array1::from_vec(vec![0.0]);
+
+        let inputs = array![[1.0, -1.0], [1.0, -1.0]]; // logits +200 / -200 → 1.0 / 0.0
+        let targets = array![[1.0, 0.0]];
+
+        let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
+        let activations = model.forward(inputs.view());
+        // The forward output is genuinely saturated, so this exercises the clamp.
+        assert_eq!(last_activation(&activations), array![[1.0, 0.0]]);
+
+        let grads = model.backward(&activations, targets.view(), &loss_fn);
+        for g in &grads {
+            assert!(
+                g.dw.iter().chain(g.db.iter()).all(|v| v.is_finite()),
+                "saturated sigmoid produced non-finite gradients: dw={:?} db={:?}",
+                g.dw,
+                g.db
+            );
         }
     }
 }
