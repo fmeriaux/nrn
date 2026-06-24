@@ -1,529 +1,363 @@
-# Neural Network CLI
+<div align="center">
 
+# 🧠 nrn — neural networks from scratch, in Rust
+
+**A feedforward neural-network library and CLI, built from first principles — no ML framework, no C dependencies, pure Rust.**
+
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Rust edition 2024](https://img.shields.io/badge/Rust-edition_2024-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+![MSRV 1.88](https://img.shields.io/badge/MSRV-1.88-orange)
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-%23FE5196?logo=conventionalcommits&logoColor=white)](https://conventionalcommits.org)
 
-This project is a personal educational initiative aimed at learning Rust and understanding the fundamentals of neural networks. The main goal is to explore how neural networks work by implementing them from scratch in Rust, while also gaining hands-on experience with the language and its ecosystem.
+A multi-layer perceptron learning to untangle two interleaved spirals — a problem with no linear solution:
 
-As this is an educational project, if you notice any mistakes or have suggestions for clarification, please feel free to open an issue or otherwise provide constructive feedback. Your input is welcome and will help strengthen my understanding!
+![A neural network learning the decision boundary of a two-arm spiral](docs/spiral-boundary.gif)
 
-Currently, the project implements feedforward neural networks, including both single-layer perceptron (SLP) and multi-layer perceptron (MLP). A single-layer perceptron is the simplest form of a neural network, consisting of an input layer directly connected to an output layer, with no hidden layers. A multi-layer perceptron extends this by adding one or more hidden layers between the input and output, allowing the network to model more complex relationships. Each neuron (except for the input nodes) uses a nonlinear activation function.
+</div>
 
-The command-line interface (CLI) provides several commands to generate synthetic data, encode and scale datasets, train models, make predictions, and visualize training history. This project is a work in progress and serves as a learning platform rather than a production-ready tool.
+---
 
-## Table of Contents
+This is a personal, educational project: an attempt to *truly* understand neural networks by implementing
+every piece — forward and backward passes, optimizers, schedulers, losses, weight initialization — without
+leaning on an existing ML library. Rust keeps it honest (and fast). Everything from data generation to
+inference is driven by a single CLI, `nrn`.
 
-- [Concepts](#concepts)
-    - [Activation Functions](#activation-functions)
-    - [Gradient Clipping](#gradient-clipping)
-    - [Data Scaling and Normalization](#data-scaling-and-normalization)
-- [Getting Started](#getting-started)
-    - [Prerequisites](#prerequisites)
-    - [Clone the Repository](#clone-the-repository)
-    - [Build the Project](#build-the-project)
-    - [Install](#install)
-    - [Run a Quick Test](#run-a-quick-test)
-- [Tutorials](#tutorials)
-    - [Tutorial: SLP on Linearly Separable Data](#tutorial-slp-on-linearly-separable-data)
-    - [Tutorial: MLP on Non-Linear Data](#tutorial-mlp-on-non-linear-data)
-    - [Tutorial: MLP on Multi-Class Non-Linear Data](#tutorial-mlp-on-multi-class-non-linear-data)
-- [Going Further: MNIST Use Case](#going-further-handwritten-digit-recognition)
+Spotted a mistake or a clearer way to explain something? Issues and feedback are very welcome — they sharpen
+the learning.
 
-## Concepts
+## ✨ Highlights
 
-### Activation Functions
+- **From scratch, no magic** — the math (backprop, gradients, init) is in the source, not a dependency.
+- **SLP & MLP** — single- and multi-layer perceptrons, architecture inferred automatically from the data.
+- **A full ML workflow** — `synth` → `train` → `plot` → `predict`, each a CLI subcommand.
+- **Real training stack** — SGD / Adam, weight decay (decoupled **AdamW** / SGD L2), learning-rate
+  schedulers (step, cosine with warm restarts), gradient clipping, **early stopping**, mini-batches.
+- **Built-in visualization** — loss/accuracy curves and **animated decision boundaries**, rendered to PNG/GIF
+  or straight into your terminal.
+- **Synthetic playgrounds** — `uniform`, `ring` and `spiral` generators to probe what each architecture can
+  and cannot learn.
+- **Beyond toys** — encode folders of images (e.g. MNIST digits) and train a real classifier.
+- **Pure-Rust I/O** — datasets, models and checkpoints are [safetensors](https://github.com/huggingface/safetensors);
+  no system libraries required to build or run.
 
-The CLI automatically selects the activation function for each layer based on the network architecture:
+## 📑 Table of Contents
 
-- **ReLU (Rectified Linear Unit)** is used for all hidden layers. It outputs the input directly if it is positive; otherwise, it outputs zero. ReLU is widely used for hidden layers due to its simplicity and effectiveness in deep networks.
-- **Sigmoid** is used for the output layer if there is only one output neuron (binary classification or regression between 0 and 1). It maps input values to the range (0, 1) and introduces non-linearity to the network.
-- **Softmax** is used for the output layer if there are multiple output neurons (multi-class classification). It converts a vector of values into a probability distribution, where the sum of all outputs is 1.
+- [How it works](#-how-it-works)
+- [Concepts](#-concepts)
+  - [Activation functions](#activation-functions)
+  - [Feature scaling](#feature-scaling)
+  - [Gradient clipping](#gradient-clipping)
+  - [Early stopping](#early-stopping)
+- [Getting started](#-getting-started)
+- [Tutorials](#-tutorials)
+  - [1 · A line is enough: SLP on separable data](#1--a-line-is-enough-slp-on-separable-data)
+  - [2 · When a line fails: MLP on rings](#2--when-a-line-fails-mlp-on-rings)
+  - [3 · Many classes at once: multi-class MLP](#3--many-classes-at-once-multi-class-mlp)
+- [Going further: handwritten digits (MNIST)](#-going-further-handwritten-digits-mnist)
+- [Development](#-development)
+- [License](#-license)
 
-### Gradient Clipping
+## 🔭 How it works
 
-To prevent the problem of exploding gradients during training, this project implements gradient clipping. During each training step, before updating the weights and biases, the gradients are clipped to keep updates stable. Three modes are available:
+The CLI mirrors the lifecycle of a machine-learning experiment. Each step produces files the next step
+consumes:
 
-- **L2 norm clipping** (`--clip-norm`, default): scales the gradient vector down if its L2 norm exceeds `max_norm`. Preserves the direction of the update.
-- **Value clipping** (`--clip-value`): clamps each gradient component individually to the symmetric range `[-value, value]`. Simpler but changes the direction.
-- **No clipping** (`--no-clip`): disables clipping entirely. Useful for stable problems or when debugging.
+```
+ nrn synth  ─▶  nrn train  ─▶  nrn plot  ─▶  nrn predict
+   data          model         charts        inference
+ (.safetensors)  (model dir)   (PNG / GIF)   (class probabilities)
+```
 
-### Data Scaling and Normalization
+- **`synth`** generates a labelled 2-D dataset (and previews it right in the terminal).
+- **`train`** fits a network, optionally fitting a feature scaler on the way; the scaler is bundled *inside*
+  the model directory, so it travels with the network.
+- **`plot`** turns a dataset or a finished run into figures — scatter plots, training curves, decision
+  boundaries (still or animated).
+- **`predict`** loads a model directory and classifies new instances — no need to re-specify the scaler.
 
-Normalizing (scaling) the features of your dataset is important because neural networks are sensitive to the scale of input data. Features with different scales can negatively impact the convergence speed and stability of training, and may cause the model to give more importance to features with larger values. Normalization ensures that all features contribute equally to the learning process and helps the optimizer perform better.
+## 📚 Concepts
 
-Two common methods are provided:
+### Activation functions
 
-- **Min-max scaling** brings all feature values into the [0, 1] range. This is useful for bounded data or when you want to preserve the shape of the distribution.
-- **Z-score normalization** (standardization) centers the data around 0 with a standard deviation of 1. This is often more appropriate for unbounded or non-image data, as it makes features comparable in terms of variance and is robust to outliers.
+The CLI picks an activation per layer automatically, based on the architecture:
 
-When scaling, several files are generated:
-- The scaled dataset (ready for training)
-- A plot visualizing the scaled data (useful to check the effect of normalization)
-- A JSON file containing the scaling parameters (mean and standard deviation for each feature in the case of z-score). This file is required to apply the same scaling to new data at prediction time, ensuring consistency between training and inference.
+| Layer | Activation | Why |
+| --- | --- | --- |
+| Hidden | **ReLU** | Cheap, effective, the default workhorse for hidden layers (He init). |
+| Output, 1 neuron | **Sigmoid** | Binary classification — squashes to a single probability in (0, 1). |
+| Output, *N* neurons | **Softmax** | Multi-class — a probability distribution summing to 1. |
 
-## Getting Started
+A 2-class problem becomes a single sigmoid output; 3+ classes become a softmax over *N* neurons.
 
-Before diving into the tutorials, follow these steps to set up the project and ensure everything is working correctly on your system.
+### Feature scaling
+
+Neural networks are sensitive to the scale of their inputs: features with large ranges dominate the
+gradient and slow convergence. Pass `--scale` to `train` to fit a scaler on the **training split** and apply
+it everywhere:
+
+- **`min-max`** maps each feature into `[0, 1]` — good for bounded data (e.g. pixels).
+- **`z-score`** centers each feature to mean 0, standard deviation 1 — a robust default for unbounded data.
+
+The fitted scaler is saved next to the network in the model directory, so `predict` re-applies the exact same
+transformation automatically.
+
+### Gradient clipping
+
+To tame exploding gradients, every update is clipped before it is applied:
+
+- **`--clip-norm <N>`** *(default, 1.0)* — rescales the gradient if its L2 norm exceeds `N`, preserving
+  direction.
+- **`--clip-value <V>`** — clamps each component to `[-V, V]`. Simpler, but changes direction.
+- **`--no-clip`** — disables clipping entirely.
+
+### Early stopping
+
+`--early-stopping <patience>` monitors validation loss and stops once it stops improving for `patience`
+epochs, restoring the best model seen. It also **recovers gracefully from divergence** (NaN/Inf): if training
+blows up, the best earlier model is restored instead of losing the run. Handy for deeper networks on hard,
+separable problems — and used throughout the tutorials below.
+
+## 🚀 Getting started
 
 ### Prerequisites
 
-This project requires Rust **edition 2024**. You can install or update it from [rustup.rs](https://rustup.rs/). To check your version:
-  
-```sh
-rustc --version
-```
-> [!NOTE]
-> Rust 2024 edition is very recent. If you encounter build errors, update Rust with:
+Rust **edition 2024** (MSRV 1.88). Install or update via [rustup.rs](https://rustup.rs/):
 
 ```sh
 rustup update
+rustc --version   # should be >= 1.88
 ```
 
-**Task (optional)**
+Optionally, [Task](https://taskfile.dev) runs the project's common commands (`brew install go-task/tap/go-task`).
 
-The project includes a [Taskfile](https://taskfile.dev) to simplify common commands. Install with:
-
-- macOS: `brew install go-task/tap/go-task`
-- Other: see [taskfile.dev/installation](https://taskfile.dev/installation/)
-
-### Clone the Repository
+### Build & install
 
 ```sh
 git clone https://github.com/fmeriaux/nrn.git
 cd nrn
+
+cargo install --path cli --locked   # installs the `nrn` binary into ~/.cargo/bin
+nrn --help                          # verify the install
 ```
 
-### Build the Project
+> [!TIP]
+> Prefer not to install? Build with `cargo build --release` (or `task build`) and run the binary from
+> `target/release/nrn`.
 
-With Task:
+### A working directory
+
+The tutorials create datasets, models and figures as files. Run them from a scratch directory so your
+workspace stays tidy:
 
 ```sh
-task build        # release binary at target/release/nrn
-task dev          # debug build
+mkdir playground && cd playground
 ```
 
-Or directly with Cargo:
+## 🎓 Tutorials
 
-```sh
-cargo build --release
-```
-
-### Install
-
-To install `nrn` to `~/.cargo/bin` (which is already in your `PATH` if you use Rust):
-
-```sh
-task install
-```
-
-Or with Cargo directly:
-
-```sh
-cargo install --path cli --locked
-```
-
-### Run a Quick Test
-
-You can verify your installation by running the following help command:
-
-```sh
-nrn --help
-```
-
-This should display the list of available commands and options.
-
-### Next Steps
-
-Once the setup is complete, you can proceed to the tutorials below to start generating data, training models, and visualizing results.
-
-## Tutorials
-
-Before running the following commands, change to the `tutorials` directory to ensure correct file path handling:
-
-```sh
-cd tutorials
-```
-
-### Tutorial: SLP on Linearly Separable Data
-
-Below is a typical workflow using the CLI to generate a synthetic dataset, visualize it, scale the data, train a single-layer perceptron (SLP), visualize training metrics, and make predictions.
-
-#### 1. Generate a uniform dataset
-
-```sh
-nrn synth --seed 1024 --distribution uniform --samples 500 --features 2 --clusters 2 --plot
-```
-**Output files:**
-- `uniform-c2-f2-n500-seed1024.safetensors`: generated synthetic dataset (required for next steps).
-- `uniform-c2-f2-n500-seed1024.png`: dataset visualization (only if two features).
-
-> [!IMPORTANT]
-> The seed value is important for dataset quality. Some seeds may produce overlapping clusters; pay attention to the seed choice to ensure well-separated clusters if needed.
-
-**Example of generated dataset:**
-
-![Synthetic dataset: 2 uniform clusters](tutorials/uniform-c2-f2-n500-seed1024.png)
-
-#### 2. Scale the dataset
-
-See the [Data Scaling and Normalization](#data-scaling-and-normalization) section above for a detailed explanation of the importance and methods of normalization. Here is how to apply normalization in practice:
-
-```sh
-nrn scale uniform-c2-f2-n500-seed1024 z-score --plot
-```
-**Output files:**
-- `scaled-uniform-c2-f2-n500-seed1024.safetensors`: scaled dataset, ready for training.
-- `scaled-uniform-c2-f2-n500-seed1024.png`: visualization of the scaled data.
-- `scaler-uniform-c2-f2-n500-seed1024.json`: scaling parameters (mean, std; required for prediction to ensure consistency).
-
-**Example of scaled data visualization:**
-
-*Be attentive to the scale: after normalization, the clusters may look similar to the original, which is expected and a sign that the scaling preserved the structure of the data.*
-
-![Scaled synthetic dataset: z-score](tutorials/scaled-uniform-c2-f2-n500-seed1024.png)
-
-#### 3. Train a Single-Layer Perceptron (SLP)
-
-```sh
-nrn train start scaled-uniform-c2-f2-n500-seed1024 --epochs 1000
-```
-**Output files:**
-- `model-scaled-uniform-c2-f2-n500-seed1024.safetensors`: trained model (architecture and weights; required for prediction).
-- `training-model-scaled-uniform-c2-f2-n500-seed1024/`: training history directory — one `snapshot-{n}/` subdirectory per checkpoint, each containing `model.safetensors` and `evaluations.json`.
+Three short walkthroughs, each building on the last. Every command is reproducible — the `--seed` pins
+weight initialization and the data split.
 
 > [!NOTE]
-> The network architecture is generated automatically based on the dataset and parameters (here, `[2] -> 1-sigmoid` means two input features, no hidden layers, and one output neuron with a sigmoid activation). The model and history filenames are prefixed with the dataset name to ensure traceability and avoid confusion when working with multiple datasets or experiments.
+> Dataset files are named after what they contain: `{distribution}-seed{seed}-c{classes}-f{features}-n{samples}`.
+> Training a dataset `D.safetensors` creates a run directory `training-model-D/` and saves the final model
+> beside it as `model-D/` (network **plus** its scaler).
 
-The CLI also reports the final loss, training accuracy, and test accuracy.
+### 1 · A line is enough: SLP on separable data
 
-#### 4. Visualize training history (loss, accuracy, decision boundary)
+When two classes are linearly separable, a **single-layer perceptron** (no hidden layers) suffices: it only
+ever draws a straight line, and here that's all it takes.
 
-```sh
-nrn plot training-model-scaled-uniform-c2-f2-n500-seed1024 --dataset scaled-uniform-c2-f2-n500-seed1024
-```
-**Output files:**
-- `training-model-scaled-uniform-c2-f2-n500-seed1024.gif`: decision boundary animation (only for 2D datasets).
-- `training-model-scaled-uniform-c2-f2-n500-seed1024.png`: loss and accuracy curves.
-
-*The loss curve shows how the model's error decreases during training, indicating learning progress and convergence.*
-*The accuracy curve shows the proportion of correct predictions during training (train accuracy) and on the validation/test set (test accuracy). Comparing both helps to assess model performance and detect overfitting (train accuracy much higher than test accuracy) or underfitting (both low).* 
-
-![Training curves](tutorials/training-model-scaled-uniform-c2-f2-n500-seed1024.png)
-
-*The decision boundary animation shows how the model's classification regions evolve during training. It helps to visually understand how the network learns to separate the clusters and how quickly the boundary stabilizes. This is especially useful for 2D datasets to interpret the model's learning dynamics.*
-*A broad decision boundary indicates uncertainty, while a sharp boundary indicates confidence in classification.*
-
-![Decision boundary animation](tutorials/training-model-scaled-uniform-c2-f2-n500-seed1024.gif)
-
-#### 5. Make predictions
+**Generate** a dataset of two well-separated blobs:
 
 ```sh
-nrn predict model-scaled-uniform-c2-f2-n500-seed1024 --scaler scaler-uniform-c2-f2-n500-seed1024
+nrn synth --seed 1024 --distribution uniform --samples 500 --features 2 --clusters 2
 ```
-- Use the trained model to make predictions on new data.
-- The `--scaler` option ensures the same scaling is applied as during training.
 
-**Interactive example:**
+This writes `uniform-seed1024-c2-f2-n500.safetensors` and, since the data is 2-D, prints a scatter preview
+in your terminal. You can also render it to an image:
 
 ```sh
-nrn predict model-scaled-uniform-c2-f2-n500-seed1024 --scaler scaler-uniform-c2-f2-n500-seed1024
-📥 Loaded NEURAL NETWORK | [2] -> 1-sigmoid
-📥 Loaded SCALER | z-score
-Input[0]:
-3
-Input[1]:
-5
-Predictions for [-1.3665887, -0.14052105]
-|> 0: 57.17%
-|> 1: 42.83%
+nrn plot dataset uniform-seed1024-c2-f2-n500.safetensors --format image
 ```
 
-- The entered values are automatically normalized (here, [-0.23714493, -1.3086028]).
-- The result displays the probability for each class; the predicted class is the one with the highest percentage.
-- To predict multiple examples at once, you can provide a `.safetensors` file with the `--input` option.
+![Two linearly separable clusters](docs/uniform-scatter.png)
 
-### Tutorial: MLP on Non-Linear Data
-
-In this section, we demonstrate how to use a Multi-Layer Perceptron (MLP) to solve a non-linear classification problem. We'll generate a synthetic dataset consisting of two concentric rings (also known as the "ring" or "circles" dataset), which cannot be separated by a linear decision boundary.
-
-A Single-Layer Perceptron (SLP) is inherently limited to learning linear boundaries and will fail on this type of data. This limitation is clearly visible when training an SLP on the ring dataset:
-
-![SLP decision boundary on ring dataset](tutorials/slp-training-model-scaled-ring-c2-f2-n400-seed1024.gif)
-
-To solve this problem, we need to add at least one hidden layer, turning our network into an MLP capable of learning non-linear decision boundaries.
-
-#### 1. Generate a ring dataset
+**Train** a single-layer perceptron, scaling the features with z-score normalization:
 
 ```sh
-nrn synth --seed 1024 --distribution ring --samples 500 --features 2 --clusters 2 --plot
+nrn train start uniform-seed1024-c2-f2-n500.safetensors \
+  --scale z-score --epochs 200 --lr 0.01 --seed 7
 ```
-**Output files:**
-- `ring-c2-f2-n500-seed1024.safetensors`: generated synthetic dataset (rings; required for next steps).
-- `ring-c2-f2-n500-seed1024.png`: dataset visualization (only if two features).
 
-#### Example of generated dataset:
+The CLI infers the architecture (`[2] -> 1-sigmoid`) and reports the final loss and accuracy. It reaches
+**100%** — a straight line cleanly separates the two blobs.
 
-![Synthetic dataset: 2 concentric rings](tutorials/ring-c2-f2-n500-seed1024.png)
-
-#### 2. Scale the dataset
-
-Scales the features using z-score normalization and visualizes the scaled data.
+**Visualize** the run — training curves plus an animated decision boundary:
 
 ```sh
-nrn scale ring-c2-f2-n500-seed1024 z-score --plot
+nrn plot run training-model-uniform-seed1024-c2-f2-n500 --animate --format image
 ```
-**Output files:**
-- `scaled-ring-c2-f2-n500-seed1024.safetensors`: scaled dataset, ready for training.
-- `scaled-ring-c2-f2-n500-seed1024.png`: visualization of the scaled data.
-- `scaler-ring-c2-f2-n500-seed1024.json`: scaling parameters (mean, std; required for prediction).
 
+| Training curves | Decision boundary forming |
+| --- | --- |
+| ![Loss and accuracy converging](docs/uniform-curves.png) | ![A line sweeping into place to separate the clusters](docs/uniform-boundary.gif) |
 
-#### Example of scaled data visualization:
-
-![Scaled ring dataset: z-score](tutorials/scaled-ring-c2-f2-n500-seed1024.png)
-
-#### 3. Train a Multi-Layer Perceptron (MLP)
+**Predict** on a new point (entered interactively, or from a file with `--instance`):
 
 ```sh
-nrn train start scaled-ring-c2-f2-n500-seed1024 --layers 16,8 --epochs 30000
+nrn predict model-uniform-seed1024-c2-f2-n500
 ```
-**Output files:**
-- `model-scaled-ring-c2-f2-n500-seed1024.safetensors`: trained MLP model (required for prediction).
-- `training-model-scaled-ring-c2-f2-n500-seed1024/`: training history directory — one `snapshot-{n}/` subdirectory per checkpoint, each containing `model.safetensors` and `evaluations.json`.
 
-Trains an MLP with two hidden layers, 16 and 8 neurons (you can adjust the number and size of hidden layers as needed).
-The CLI automatically detects the architecture: `[2] -> 16-relu -> 8-relu -> 1-sigmoid`. 
-Hidden layers use the ReLU activation function, as explained in the [Activation Functions](#activation-functions) section above.
+```
+📥 PREDICTOR LOADED
+   Architecture ... [2] -> 1-sigmoid
+   Scaler ......... z-score
 
-#### 4. Visualize training history (loss, accuracy, decision boundary)
+Feature 0 ▸ -30
+Feature 1 ▸ 60
+📊 CLASSIFICATION
+   Class 0 ... 99.22%
+   Class 1 ...  0.78%
+```
+
+Raw inputs are scaled automatically before inference, using the scaler bundled with the model.
+
+### 2 · When a line fails: MLP on rings
+
+Now the data is two **concentric rings** — an inner blob surrounded by an outer ring. No straight line can
+separate them.
 
 ```sh
-nrn plot training-model-scaled-ring-c2-f2-n500-seed1024 --dataset scaled-ring-c2-f2-n500-seed1024
+nrn synth --seed 1024 --distribution ring --samples 500 --features 2 --clusters 2
 ```
-**Output files:**
-- `training-model-scaled-ring-c2-f2-n500-seed1024.gif`: decision boundary animation (only for 2D datasets).
-- `training-model-scaled-ring-c2-f2-n500-seed1024.png`: loss and accuracy curves.
 
-![Training curves](tutorials/training-model-scaled-ring-c2-f2-n500-seed1024.png)
+![A central blob surrounded by a ring](docs/ring-scatter.png)
 
-*The decision boundary animation shows how the MLP learns a non-linear separation adapted to the ring structure. This visualization demonstrates the power of MLPs for non-linear problems.*
-
-![MLP decision boundary animation](tutorials/training-model-scaled-ring-c2-f2-n500-seed1024.gif)
-
-## Tutorial: MLP on Multi-Class Non-Linear Data
-
-This tutorial demonstrates how to use a Multi-Layer Perceptron (MLP) to solve a non-linear multi-class classification problem. We will generate a synthetic dataset consisting of three concentric rings (three clusters/classes), which cannot be separated by linear boundaries. This example highlights the use of the **Softmax** activation function in the output layer for multi-class classification.
-
-> For background on normalization, MLP architecture, and activation functions, refer to the [Concepts](#concepts) section above.
-
-#### 1. Generate a ring dataset with three clusters
+**A single-layer perceptron is doomed here.** Trained on this data, it keeps rotating its one straight line,
+never finding a separation:
 
 ```sh
-nrn synth --seed 1024 --distribution ring --samples 600 --features 2 --clusters 3 --plot
+nrn train start ring-seed1024-c2-f2-n500.safetensors \
+  --scale z-score --epochs 600 --lr 0.01 --seed 7
 ```
-**Output files:**
-- `ring-c3-f2-n600-seed1024.safetensors`: generated synthetic dataset (required for next steps).
-- `ring-c3-f2-n600-seed1024.png`: dataset visualization (only if two features).
 
-> [!NOTE]
-> The number of clusters is set to 3 to illustrate multi-class classification. You can adjust the number of samples as needed.
+![An SLP's straight line rotating, unable to separate the rings](docs/ring-slp-boundary.gif)
 
-**Example of generated dataset:**
-
-![Synthetic dataset: 3 concentric rings](tutorials/ring-c3-f2-n600-seed1024.png)
-
-#### 2. Scale the dataset
-
-Normalize the features using z-score normalization and visualize the scaled data:
+**Add hidden layers** — turning the SLP into a multi-layer perceptron — and the network can bend its
+boundary into a closed curve. `--early-stopping` keeps the run robust:
 
 ```sh
-nrn scale ring-c3-f2-n600-seed1024 z-score --plot
+nrn train start ring-seed1024-c2-f2-n500.safetensors \
+  --layers 16,8 --scale z-score --epochs 8000 --lr 0.005 \
+  --early-stopping 100 --seed 7
 ```
-**Output files:**
-- `scaled-ring-c3-f2-n600-seed1024.safetensors`: scaled dataset, ready for training.
-- `scaled-ring-c3-f2-n600-seed1024.png`: visualization of the scaled data.
-- `scaler-ring-c3-f2-n600-seed1024.json`: scaling parameters (mean, std; required for prediction).
 
-**Example of scaled data visualization:**
+The architecture becomes `[2] -> 16-relu -> 8-relu -> 1-sigmoid` and accuracy reaches **100%**. The boundary
+closes neatly around the inner blob:
 
-![Scaled ring dataset: z-score](tutorials/scaled-ring-c3-f2-n600-seed1024.png)
+| Training curves | Decision boundary forming |
+| --- | --- |
+| ![Loss and accuracy converging](docs/ring-curves.png) | ![A curved boundary wrapping around the inner ring](docs/ring-boundary.gif) |
 
-#### 3. Train a Multi-Layer Perceptron (MLP)
+### 3 · Many classes at once: multi-class MLP
+
+Three concentric rings, three classes. The output layer switches to **softmax**, producing a probability per
+class.
 
 ```sh
-nrn train start scaled-ring-c3-f2-n600-seed1024 --layers 16,8 --epochs 70000
+nrn synth --seed 1024 --distribution ring --samples 600 --features 2 --clusters 3
 ```
-**Output files:**
-- `model-scaled-ring-c3-f2-n600-seed1024.safetensors`: trained MLP model (required for prediction).
-- `training-model-scaled-ring-c3-f2-n600-seed1024/`: training history directory — one `snapshot-{n}/` subdirectory per checkpoint, each containing `model.safetensors` and `evaluations.json`.
 
-> [!NOTE]
-> The number of epochs is set to 70,000 to ensure proper convergence on this more complex multi-class problem. You may adjust this value depending on your hardware and the desired training duration.
-
-The CLI automatically detects the architecture: `[2] -> 16-relu -> 8-relu -> 3-softmax`. The output layer uses the **Softmax** activation function, which is appropriate for multi-class classification problems. Each output neuron corresponds to one class, and the output values represent the probability for each class.
-
-#### 4. Visualize training history (loss, accuracy, decision boundary)
+![Three concentric classes: blob, ring, outer ring](docs/ring3-scatter.png)
 
 ```sh
-nrn plot training-model-scaled-ring-c3-f2-n600-seed1024 --dataset scaled-ring-c3-f2-n600-seed1024
+nrn train start ring-seed1024-c3-f2-n600.safetensors \
+  --layers 16,8 --scale z-score --epochs 150 --lr 0.01 --seed 7
 ```
-**Output files:**
-- `training-model-scaled-ring-c3-f2-n600-seed1024.gif`: decision boundary animation (only for 2D datasets).
-- `training-model-scaled-ring-c3-f2-n600-seed1024.png`: loss and accuracy curves.
 
-![Training curves](tutorials/training-model-scaled-ring-c3-f2-n600-seed1024.png)
+The CLI builds `[2] -> 16-relu -> 8-relu -> 3-softmax` and learns two nested boundaries separating the three
+classes:
 
-
-*The decision boundary animation shows how the MLP learns to separate the three classes. The Softmax output enables the network to model complex, non-linear, multi-class boundaries.*
-
-![MLP decision boundary animation](tutorials/training-model-scaled-ring-c3-f2-n600-seed1024.gif)
-
-#### 5. Make predictions
+| Training curves | Decision boundary forming |
+| --- | --- |
+| ![Loss and accuracy converging](docs/ring3-curves.png) | ![Two nested boundaries separating three classes](docs/ring3-boundary.gif) |
 
 ```sh
-nrn predict model-scaled-ring-c3-f2-n600-seed1024 --scaler scaler-ring-c3-f2-n600-seed1024
+nrn plot run training-model-ring-seed1024-c3-f2-n600 --animate --format image
+nrn predict model-ring-seed1024-c3-f2-n600
 ```
-- The model outputs a probability for each class (thanks to Softmax). The predicted class is the one with the highest probability.
-- You can provide new data interactively or via a `.safetensors` file (see previous tutorials for details).
 
-**Example output:**
+The prediction lists every class with its probability; the highest wins.
+
+> [!TIP]
+> The spiral at the top of this README is the same recipe pushed further — a wider network
+> (`--layers 32,16`) learning to follow two interleaved arms. Try it:
+> ```sh
+> nrn synth --seed 7 --distribution spiral --samples 800 --features 2 --clusters 2
+> nrn train start spiral-seed7-c2-f2-n800.safetensors \
+>   --layers 32,16 --scale z-score --epochs 40000 --lr 0.005 \
+>   --early-stopping 200 --seed 7
+> ```
+
+## 🔢 Going further: handwritten digits (MNIST)
+
+The same pipeline scales to real image data. Grab an MNIST-style dataset of digit images organized one folder
+per class (`digits/7/img_001.png`, …).
+
+**Encode** the image folders into a dataset (each 28×28 image flattens to 784 features):
 
 ```sh
-📥 Loaded NEURAL NETWORK | [2] -> 16-relu -> 8-relu -> 3-softmax
-📥 Loaded SCALER | z-score
-Input[0]:
-7
-Input[1]:
-9
-Predictions for [1.1158931, 1.865757]
-|> 2: 99.97%
-|> 1: 0.03%
-|> 0: 0.00%
+nrn encode dataset digits/ --grayscale --shape 28 --output digits
 ```
-
-## Going Further: Handwritten Digit Recognition
-
-The MNIST dataset is a classic benchmark for evaluating neural networks on handwritten digit recognition. With the CLI, you can easily prepare, train a model, and make prediction on MNIST-like image data.
-
-You can search online for the MNIST dataset or use any similar dataset of handwritten digits organized in directories by class (png files).
-
-### Encoding Images
-
-To convert a directory of images into a dataset suitable for training, use:
-
-```sh
-nrn encode img-dir --seed 42 --input digits/ --output digits.safetensors --grayscale --shape 28
-```
-- The directory structure must be `<input-dir>/<class-name>/<image>.png` (e.g., `digits/7/img_001.png`).
-- `<class-name>` should be a digit from 0 to 9.
-- `--seed` is required and ensures reproducible shuffling.
-- `--input` (`-i`) is the path to the root directory of images.
-- `--output` (`-o`) is the path to save the encoded dataset (`.safetensors` file).
-- `--grayscale` converts images to grayscale, reducing data size.
-- `--shape` (`-s`) resizes images to the given shape (28 to limit the number of features to 784).
-
-> [!NOTE]
-> The output file stores the dataset as `features` and `labels` tensors. Images are shuffled reproducibly with the chosen seed; always use the same seed to reproduce the same ordering.
 
 To encode a single image for prediction:
 
 ```sh
-nrn encode img --input digit.png --output digit.safetensors --grayscale --shape 28
+nrn encode instance digit.png --grayscale --shape 28 --output digit
 ```
-- `--input` (`-i`): path to the image file to encode.
-- `--output` (`-o`): path to save the encoded image (`.safetensors` file).
-- `--grayscale`: convert to grayscale.
-- `--shape` (`-s`): resize to the specified shape (28 for MNIST).
 
-> [!TIP]
-> The encoded image file can be used for prediction with the `predict` command (see below).
-
-### Preprocessing
-
-After encoding, scale the dataset using min-max normalization:
+**Train** a classifier — two hidden layers, min-max scaling for pixels, early stopping for safety:
 
 ```sh
-nrn scale mnist min-max
-```
-- This creates a scaled dataset (e.g., `scaled-digits.safetensors`) and a scaler file (e.g., `scaler-digits.json`).
-- Always use the scaler file generated from the training dataset for all predictions.
-
-For information on scaling methods, refer to the [Data Scaling and Normalization](#data-scaling-and-normalization) section above.
-
-### Recommended Architecture
-
-For MNIST, a typical architecture is:
-
-```
-[784] -> 128-relu -> 128-relu -> 10-softmax
-```
-- **784**: Each 28x28 image is flattened into a vector of 784 features.
-- **128-relu**: Two hidden layers with 128 neurons each and ReLU activation.
-- **10-softmax**: Output layer with 10 neurons (digits 0-9), using Softmax for multi-class classification.
-
-Train the model with:
-
-```sh
-nrn train start scaled-digits --layers 128,128 --epochs 1000
-```
-- Training on the full MNIST dataset requires significant RAM and CPU/GPU resources.
-- For quick tests, use a subset of the data.
-
-To resume from a training checkpoint (continues history, restores the exact epoch count):
-
-```sh
-nrn train resume training-model-scaled-digits --epochs 1000
-# Resume from the checkpoint recorded at a specific epoch instead of the last one:
-nrn train resume training-model-scaled-digits --from 50 --epochs 1000
+nrn train start digits.safetensors \
+  --layers 128,128 --scale min-max --epochs 1000 \
+  --batch-size 64 --early-stopping 20 --seed 7
 ```
 
-To load an external model file and start fresh (snapshot count resets to 0):
-
-```sh
-nrn train start scaled-digits --model model-scaled-digits --epochs 1000
-```
-
-### Visualizing Training
-After training, visualize the training history:
-
-```sh
-nrn plot training-model-scaled-digits
-```
+The architecture becomes `[784] -> 128-relu -> 128-relu -> 10-softmax`. Training on full MNIST is
+CPU-intensive — start with a subset to iterate quickly.
 
 > [!NOTE]
-> Decision boundary visualization is not applicable for high-dimensional data like MNIST, so only loss and accuracy plots will be generated.
+> Resume a run (continuing its history and restoring the exact epoch/optimizer state):
+> ```sh
+> nrn train resume training-model-digits --epochs 1000
+> nrn train resume training-model-digits --from 500 --epochs 1000   # rewind to a checkpoint
+> ```
 
-### Making Predictions
+**Plot** the curves (decision boundaries need 2-D data, so they're skipped here) and **predict**:
 
-To predict the digit from a new image:
-
-1. Encode the image:
-   ```sh
-   nrn encode img --input digit.png --output digit.safetensors --grayscale --shape 28
-   ```
-2. Predict using the trained model and the scaler from the original training dataset:
-   ```sh
-   nrn predict model-scaled-digits --scaler scaler-digits.json -i digit.safetensors
-   ```
-- The scaler **must** be the one generated from the original training dataset to ensure consistent preprocessing.
-- The output will show the probability for each digit (0-9); the highest value is the predicted class.
-
-**Example output:**
 ```sh
-📥 Loaded NEURAL NETWORK | [784] -> 128-relu -> 128-relu -> 10-softmax
-📥 Loaded SCALER | min-max
-Predictions for [0.0, 0.0, ..., 0.0]:
-|> 0: 0.01%
-|> 1: 0.02%
-|> 2: 0.03%
-|> 3: 0.01%
-|> 4: 0.01%
-|> 5: 0.01%
-|> 6: 0.01%
-|> 7: 99.90%
-|> 8: 0.00%
-|> 9: 0.00%
+nrn plot run training-model-digits --format image
+nrn predict model-digits --instance digit.safetensors
 ```
 
-## License
+```
+📥 PREDICTOR LOADED
+   Architecture ... [784] -> 128-relu -> 128-relu -> 10-softmax
+   Scaler ......... min-max
+📊 CLASSIFICATION
+   Class 7 ... 99.90%
+   Class 1 ...  0.03%
+   ...
+```
 
-This project is licensed under the [Apache License 2.0](LICENSE).
+## 🛠 Development
+
+`nrn` is a two-crate Cargo workspace — `core/` (the `nrn` library) and `cli/` (the `nrn` binary). Building
+from source, the project layout, the `task` commands, and the testing/commit conventions are documented in
+[CONTRIBUTING.md](CONTRIBUTING.md). Contributions and feedback are welcome.
+
+## 📄 License
+
+Licensed under the [Apache License 2.0](LICENSE).
