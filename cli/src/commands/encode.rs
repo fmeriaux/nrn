@@ -1,12 +1,12 @@
-use crate::display::{Artifacts, bar, completed, saved, show};
+use crate::display::{Artifacts, Encoding, completed, saved, show};
 use crate::path::PathExt;
 use clap::{Args, Subcommand};
-use console::style;
 use nrn::data::vectorizers::{ImageEncoder, VectorEncoder};
 use nrn::data::{Classes, Dataset, Instance};
 use nrn::io::bytes::secure_read;
 use std::error::Error;
 use std::fs::read_dir;
+use std::io;
 use std::path::PathBuf;
 
 #[derive(Args, Debug)]
@@ -75,37 +75,39 @@ impl DatasetArgs {
 
         let encoder = ImageEncoder::from(&self.encoder);
 
+        // Read every category's directory up front so a single bar can span the
+        // whole run's images with an honest end-to-end ETA.
+        let categories = classes
+            .iter()
+            .map(|(category, label)| {
+                let entries = read_dir(self.input.join(category))?
+                    .filter_map(Result::ok)
+                    .collect::<Vec<_>>();
+                Ok((category, *label, entries))
+            })
+            .collect::<Result<Vec<_>, io::Error>>()?;
+
+        let total = categories.iter().map(|(_, _, entries)| entries.len()).sum();
+
         let mut data = Vec::new();
         let mut labels = Vec::new();
 
-        for (i, (category, label)) in classes.iter().enumerate() {
-            let entries = read_dir(self.input.join(category))?
-                .filter_map(Result::ok)
-                .collect::<Vec<_>>();
-
-            let progression = bar(
-                entries.len(),
-                format!(
-                    "Encoding category [{}/{}]: {}",
-                    i + 1,
-                    classes.len(),
-                    style(category).bright().blue()
-                ),
-            );
+        let progress = Encoding::new(total);
+        for (index, (category, label, entries)) in categories.iter().enumerate() {
+            progress.category(index, classes.len(), category);
 
             for entry in entries {
-                progression.inc(1);
+                progress.advance();
 
                 let img = secure_read(entry.path())?;
 
                 if let Ok(img) = encoder.encode(&img) {
                     data.push(img);
-                    labels.push(label.to_owned());
+                    labels.push(*label);
                 }
             }
-
-            progression.finish_and_clear();
         }
+        progress.finish();
 
         let dataset = Dataset::from_encoded(self.input.file_stem_string(), data, labels)?;
 

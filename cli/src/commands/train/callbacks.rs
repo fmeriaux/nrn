@@ -4,10 +4,9 @@
 //! into a `callbacks/` submodule if this file grows.
 
 use crate::display::{
-    Artifacts, HyperParametersView, completed, completed_with, evaluated, saved, show, styled_bar,
+    Artifacts, Epochs, HyperParametersView, completed, completed_with, evaluated, saved, show,
     warning,
 };
-use indicatif::ProgressBar;
 use nrn::data::ModelSplit;
 use nrn::data::scalers::ScalerMethod;
 use nrn::evaluation::EvaluationSet;
@@ -20,11 +19,12 @@ use std::path::{Path, PathBuf};
 // ─── ConsoleMonitor ─────────────────────────────────────────────────────────
 
 /// Reports the training run lifecycle on the console: a progress bar tracks
-/// epochs, and the run configuration / final outcome are narrated as trace
-/// lines. The bar is suspended while printing so lines never get garbled by
-/// its redraws, and cleared before the final summary.
+/// epochs and surfaces the latest evaluated loss/accuracy, while the run
+/// configuration / final outcome are narrated as trace lines. The bar is
+/// suspended while printing so lines never get garbled by its redraws, and
+/// cleared before the final summary.
 pub struct ConsoleMonitor {
-    bar: ProgressBar,
+    bar: Epochs,
     current: HyperParameters,
     previous: Option<HyperParameters>,
 }
@@ -32,7 +32,7 @@ pub struct ConsoleMonitor {
 impl ConsoleMonitor {
     pub fn new(current: HyperParameters, previous: Option<HyperParameters>) -> Self {
         Self {
-            bar: styled_bar(),
+            bar: Epochs::new(),
             current,
             previous,
         }
@@ -62,15 +62,14 @@ impl TrainerCallback for ConsoleMonitor {
     }
 
     fn on_train_start(&mut self, split: &ModelSplit) -> CallbackResult {
-        self.bar.set_length(self.current.epochs() as u64);
-        self.bar.set_message("Training");
+        self.bar.start(self.current.epochs());
 
         let view = HyperParametersView {
             current: &self.current,
             previous: self.previous.as_ref(),
         };
 
-        self.bar.suspend(|| {
+        self.bar.quiet(|| {
             show(&view);
             show(split);
         });
@@ -79,7 +78,19 @@ impl TrainerCallback for ConsoleMonitor {
     }
 
     fn on_epoch_end(&mut self, _epoch: usize) -> CallbackResult {
-        self.bar.inc(1);
+        self.bar.advance();
+        Ok(())
+    }
+
+    fn on_checkpoint(
+        &mut self,
+        _model: &NeuralNetwork,
+        _optimizer: &dyn Optimizer,
+        _scheduler: &dyn Scheduler,
+        eval: &EvaluationSet,
+        _epoch: usize,
+    ) -> CallbackResult {
+        self.bar.evaluated(eval);
         Ok(())
     }
 
@@ -90,7 +101,7 @@ impl TrainerCallback for ConsoleMonitor {
         eval: Option<&EvaluationSet>,
         epoch: usize,
     ) -> CallbackResult {
-        self.bar.finish_and_clear();
+        self.bar.finish();
 
         match outcome {
             TrainingOutcome::Completed => {

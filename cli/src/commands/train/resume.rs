@@ -1,7 +1,7 @@
 use super::DivergedRun;
 use super::args::ResumeOverrides;
 use super::callbacks::{ConsoleMonitor, ModelSaver};
-use crate::display::{loaded, recording, warning};
+use crate::display::{Spinner, loaded, recording, warning};
 use clap::Args;
 use nrn::data::Dataset;
 use nrn::io::run::TrainingRun;
@@ -63,7 +63,9 @@ impl ResumeArgs {
             None
         };
 
+        let spinner = Spinner::start("Preparing dataset");
         let data = hyperparameters.prepare(dataset, scaler);
+        spinner.finish();
 
         let callbacks = Callbacks::empty()
             .with(ConsoleMonitor::new(hyperparameters.clone(), Some(previous)))

@@ -26,7 +26,7 @@ mod theme;
 pub(crate) use artifacts::Artifacts;
 pub(crate) use hyperparameters::HyperParametersView;
 pub(crate) use icons::*;
-pub(crate) use progress::{bar, styled_bar};
+pub(crate) use progress::{Encoding, Epochs, Frames, Spinner};
 pub(crate) use terminal::{play_frames, preview};
 
 use console::Emoji;
@@ -145,7 +145,7 @@ pub(crate) fn saved(artifacts: &Artifacts) {
     headed(SAVE_ICON, artifacts);
 }
 
-/// The record icon, then a violet `RECORDING NAME` active header and its
+/// The record icon, then an active `RECORDING NAME` header and its
 /// description.
 pub(crate) fn recording<E: Named + Describe>(entity: &E) {
     action(
@@ -179,7 +179,7 @@ pub(crate) fn emit_completed(message: &str) {
 }
 
 /// Backing implementation for the [`completed_with!`] macro: a success status
-/// line with a dim `· caption` set apart from the green headline — a secondary
+/// line with a dim `· caption` set apart from the success headline — a secondary
 /// fact about the same event. Prefer the macro at call sites.
 #[doc(hidden)]
 pub(crate) fn emit_completed_with(message: &str, caption: Option<&str>) {
@@ -220,7 +220,7 @@ macro_rules! completed {
 }
 
 /// Emit a success status line with a dim `· caption` detail set apart from the
-/// green headline. The `caption` (an `Option<&str>`) comes first; the remaining
+/// success headline. The `caption` (an `Option<&str>`) comes first; the remaining
 /// `format!`-style arguments build the headline.
 macro_rules! completed_with {
     ($caption:expr, $($arg:tt)*) => {
