@@ -9,36 +9,53 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  checks:
+  lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        run: |
-          rustup update stable
-          rustup default stable
-          rustup component add clippy rustfmt llvm-tools-preview
-
-      - name: Install system dependencies
-        run: sudo apt-get install -y libfontconfig-dev
-
-      - name: Install Task
-        run: sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
-
-      - uses: Swatinem/rust-cache@v2
-
-      # Checks are defined in the Taskfile so CI and local runs stay in sync.
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup
+        with:
+          components: clippy rustfmt
       - run: task lint
-      - run: task test
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup
+      - run: cargo test --workspace
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup
       - run: task build
 
-      # Run after the build so the toolchain and rust-cache are already warm.
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Task
+        run: sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
       - run: task audit
 
-      - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
       - run: task coverage-check
