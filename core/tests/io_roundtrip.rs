@@ -32,6 +32,7 @@ fn sample_hyperparams() -> HyperParametersRecord {
         checkpoint_interval: 5,
         batch_size: Some(32),
         lr: 0.05,
+        weight_decay: 0.0,
         optimizer: OptimizerRecord::Adam,
         scheduler: SchedulerRecord::Constant,
         clipping: ClippingRecord::None,

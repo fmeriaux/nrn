@@ -70,11 +70,17 @@ fn loss_value(loss: &LossConfig) -> String {
 }
 
 fn optimizer_value(hyperparameters: &HyperParameters) -> String {
+    let weight_decay = hyperparameters.weight_decay();
     let name = match hyperparameters.optimizer() {
         OptimizerConfig::Sgd => "Stochastic Gradient Descent (SGD)",
+        OptimizerConfig::Adam if weight_decay > 0.0 => "AdamW",
         OptimizerConfig::Adam => "Adam",
     };
-    format!("{name} · lr {}", hyperparameters.lr().value())
+    let mut value = format!("{name} · lr {}", hyperparameters.lr().value());
+    if weight_decay > 0.0 {
+        value.push_str(&format!(" · weight decay {weight_decay}"));
+    }
+    value
 }
 
 fn scheduler_value(scheduler: &SchedulerConfig) -> String {

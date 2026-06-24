@@ -27,6 +27,9 @@ pub struct Adam {
     beta2: f32,
     /// Small constant for numerical stability.
     epsilon: f32,
+    /// Decoupled weight-decay coefficient (AdamW); `0.0` disables it. Applied to
+    /// weights only, never biases.
+    weight_decay: f32,
     /// Step counter for bias correction.
     time_step: u32,
     /// Internal state for each layer, storing moment estimates.
@@ -47,6 +50,7 @@ impl Adam {
             beta1,
             beta2,
             epsilon,
+            weight_decay: 0.0,
             time_step: 1,
             states: HashMap::new(),
         }
@@ -57,6 +61,20 @@ impl Adam {
         // 1e-5 instead of the paper's 1e-8: f32 squared gradients near 1e-19 underflow
         // to 0, leaving epsilon as the sole denominator and inflating the effective step.
         Self::new(learning_rate, 0.9, 0.999, 1e-5)
+    }
+
+    /// Sets the decoupled weight-decay coefficient, turning Adam into AdamW: the
+    /// decay is applied directly to the weights, not routed through the moment
+    /// estimates.
+    /// # Panics
+    /// Will panic if `weight_decay` is negative or non-finite.
+    pub fn with_weight_decay(mut self, weight_decay: f32) -> Self {
+        assert!(
+            weight_decay >= 0.0 && weight_decay.is_finite(),
+            "Weight decay must be a finite, non-negative value."
+        );
+        self.weight_decay = weight_decay;
+        self
     }
 
     fn init_state(&mut self, layer_index: usize, layer: &NeuronLayer) {
@@ -79,7 +97,11 @@ impl Adam {
 
 impl Optimizer for Adam {
     fn name(&self) -> &'static str {
-        "Adam"
+        if self.weight_decay > 0.0 {
+            "AdamW"
+        } else {
+            "Adam"
+        }
     }
 
     fn learning_rate(&self) -> LearningRate {
@@ -114,6 +136,12 @@ impl Optimizer for Adam {
         let m_hat_biases = &state.m_biases / beta1_correction;
         let v_hat_weights = &state.v_weights / beta2_correction;
         let v_hat_biases = &state.v_biases / beta2_correction;
+
+        // Decoupled weight decay (AdamW): shrink the weights before the gradient
+        // step. Biases are not decayed.
+        if self.weight_decay > 0.0 {
+            layer.weights *= 1.0 - self.learning_rate.value() * self.weight_decay;
+        }
 
         // Update weights and biases
         layer.weights -= &(m_hat_weights * self.learning_rate.value()
@@ -314,6 +342,40 @@ mod tests {
         }
         let w = l.weights[[0, 0]];
         assert!(w.abs() < 0.5, "weight should approach 0, got {w}");
+    }
+
+    #[test]
+    fn weight_decay_renames_optimizer_to_adamw() {
+        let plain = Adam::with_defaults(0.01.try_into().unwrap());
+        assert_eq!(plain.name(), "Adam");
+        let decayed = Adam::with_defaults(0.01.try_into().unwrap()).with_weight_decay(0.01);
+        assert_eq!(decayed.name(), "AdamW");
+    }
+
+    #[test]
+    #[should_panic(expected = "Weight decay must be a finite, non-negative value")]
+    fn weight_decay_rejects_negative_value() {
+        Adam::with_defaults(0.01.try_into().unwrap()).with_weight_decay(-0.1);
+    }
+
+    #[test]
+    fn weight_decay_shrinks_weights_under_zero_gradient() {
+        // With no gradient, plain Adam leaves the weights put; AdamW's decoupled
+        // decay still pulls them toward zero, while leaving the bias untouched.
+        let lr = 0.1;
+        let wd = 0.1;
+        let mut opt = Adam::with_defaults(lr.try_into().unwrap()).with_weight_decay(wd);
+        let mut l = layer(array![[2.0, -4.0]], array![3.0]);
+        let grads = Gradients {
+            dw: Array2::zeros((1, 2)),
+            db: Array1::zeros(1),
+        };
+        opt.update(0, &mut l, &grads);
+
+        // Each weight is scaled by (1 - lr*wd) = 0.99; the bias is not decayed.
+        assert!((l.weights[[0, 0]] - 2.0 * 0.99).abs() < 1e-5);
+        assert!((l.weights[[0, 1]] - (-4.0) * 0.99).abs() < 1e-5);
+        assert!((l.biases[0] - 3.0).abs() < 1e-6);
     }
 
     #[test]

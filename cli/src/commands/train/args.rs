@@ -79,6 +79,10 @@ pub struct TrainArgs {
     #[arg(long, default_value_t = 0.001)]
     pub lr: f32,
 
+    /// Weight decay (Adam: decoupled AdamW; SGD: L2). 0 = disabled
+    #[arg(long, default_value_t = 0.0)]
+    weight_decay: f32,
+
     /// Minimum learning rate for schedulers that support it
     #[arg(long, requires = "scheduler")]
     lr_min: Option<f32>,
@@ -188,6 +192,7 @@ impl TryFrom<&TrainArgs> for HyperParameters {
             args.checkpoint_interval,
             args.batch_size,
             args.lr,
+            args.weight_decay,
             args.optimizer.into(),
             SchedulerConfig::from(args),
             GradientClipping::try_from(args)?,
@@ -227,6 +232,10 @@ pub struct ResumeOverrides {
     /// Override: minimum learning rate (only applies if the run uses a cosine scheduler)
     #[arg(long)]
     lr_min: Option<f32>,
+
+    /// Override: weight decay (0 = disabled)
+    #[arg(long)]
+    weight_decay: Option<f32>,
 
     /// Override: gradient clipping L2 norm
     #[arg(long, conflicts_with_all = &["clip_value", "no_clip"])]
@@ -272,6 +281,10 @@ impl ResumeOverrides {
 
         if let Some(lr) = self.lr {
             record.lr = lr;
+        }
+
+        if let Some(weight_decay) = self.weight_decay {
+            record.weight_decay = weight_decay;
         }
 
         if let Some(lr_min) = self.lr_min
@@ -495,6 +508,22 @@ mod tests {
     }
 
     #[test]
+    fn weight_decay_defaults_to_zero_and_is_parsed() {
+        assert_eq!(
+            HyperParameters::try_from(&train_args(&[]))
+                .unwrap()
+                .weight_decay(),
+            0.0
+        );
+        assert_eq!(
+            HyperParameters::try_from(&train_args(&["--weight-decay", "0.0001"]))
+                .unwrap()
+                .weight_decay(),
+            0.0001
+        );
+    }
+
+    #[test]
     fn scale_maps_to_the_matching_scaler_kind() {
         assert_eq!(
             HyperParameters::try_from(&train_args(&[]))
@@ -543,6 +572,7 @@ mod tests {
             checkpoint_interval: 10,
             batch_size: Some(32),
             lr: 0.001,
+            weight_decay: 0.0,
             optimizer: nrn::io::hyperparams::OptimizerRecord::Adam,
             scheduler: SchedulerRecord::Constant,
             clipping: ClippingRecord::Norm { max_norm: 1.0 },
@@ -572,11 +602,14 @@ mod tests {
             "5",
             "--lr",
             "0.01",
+            "--weight-decay",
+            "0.0005",
         ])
         .apply(&mut record);
         assert_eq!(record.epochs, 200);
         assert_eq!(record.checkpoint_interval, 5);
         assert_eq!(record.lr, 0.01);
+        assert_eq!(record.weight_decay, 0.0005);
     }
 
     #[test]

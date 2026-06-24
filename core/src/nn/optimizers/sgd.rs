@@ -15,11 +15,29 @@ use crate::optimizers::Optimizer;
 
 pub struct StochasticGradientDescent {
     pub learning_rate: LearningRate,
+    /// L2 weight-decay coefficient; `0.0` disables it. Applied to weights only,
+    /// never biases.
+    weight_decay: f32,
 }
 
 impl StochasticGradientDescent {
     pub fn new(learning_rate: LearningRate) -> Self {
-        StochasticGradientDescent { learning_rate }
+        StochasticGradientDescent {
+            learning_rate,
+            weight_decay: 0.0,
+        }
+    }
+
+    /// Sets the L2 weight-decay coefficient.
+    /// # Panics
+    /// Will panic if `weight_decay` is negative or non-finite.
+    pub fn with_weight_decay(mut self, weight_decay: f32) -> Self {
+        assert!(
+            weight_decay >= 0.0 && weight_decay.is_finite(),
+            "Weight decay must be a finite, non-negative value."
+        );
+        self.weight_decay = weight_decay;
+        self
     }
 }
 
@@ -38,6 +56,11 @@ impl Optimizer for StochasticGradientDescent {
 
     fn update(&mut self, _: usize, layer: &mut NeuronLayer, gradients: &Gradients) {
         let (dw, db) = (&gradients.dw, &gradients.db);
+        // L2 weight decay: shrink the weights before the gradient step. Biases are
+        // not decayed.
+        if self.weight_decay > 0.0 {
+            layer.weights *= 1.0 - self.learning_rate.value() * self.weight_decay;
+        }
         layer.weights -= &(dw * self.learning_rate.value());
         layer.biases -= &(db * self.learning_rate.value());
     }
@@ -100,6 +123,28 @@ mod tests {
         opt.update(0, &mut l, &grads);
         // With learning rate 1.0 the full gradient is subtracted: 1.0 - 1.0 * 0.5.
         assert!((l.weights[[0, 0]] - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn weight_decay_shrinks_weights_and_spares_biases() {
+        let lr = 0.1;
+        let wd = 0.5;
+        let mut opt = StochasticGradientDescent::new(lr.try_into().unwrap()).with_weight_decay(wd);
+        let mut l = layer(array![[2.0]], array![3.0]);
+        let grads = Gradients {
+            dw: array![[1.0]],
+            db: array![1.0],
+        };
+        opt.update(0, &mut l, &grads);
+        // w = w*(1 - lr*wd) - lr*dw = 2*0.95 - 0.1*1 = 1.8; bias = 3 - 0.1*1 = 2.9 (no decay).
+        assert!((l.weights[[0, 0]] - 1.8).abs() < 1e-6);
+        assert!((l.biases[0] - 2.9).abs() < 1e-6);
+    }
+
+    #[test]
+    #[should_panic(expected = "Weight decay must be a finite, non-negative value")]
+    fn weight_decay_rejects_negative_value() {
+        StochasticGradientDescent::new(0.1.try_into().unwrap()).with_weight_decay(-1.0);
     }
 
     #[test]

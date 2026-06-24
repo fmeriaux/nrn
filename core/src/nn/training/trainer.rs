@@ -294,6 +294,7 @@ mod tests {
             checkpoint_interval,
             None,
             lr,
+            0.0,
             OptimizerConfig::Adam,
             SchedulerConfig::Constant,
             GradientClipping::None,
@@ -697,6 +698,7 @@ mod tests {
             1,
             None,
             0.01,
+            0.0,
             OptimizerConfig::Adam,
             SchedulerConfig::Cosine {
                 lr_min: 0.001,
@@ -749,6 +751,7 @@ mod tests {
             0,
             None,
             0.01,
+            0.0,
             OptimizerConfig::Sgd,
             SchedulerConfig::Constant,
             GradientClipping::None,
@@ -785,6 +788,7 @@ mod tests {
             0,
             None,
             0.01,
+            0.0,
             OptimizerConfig::Adam,
             SchedulerConfig::Cosine {
                 lr_min: 0.001,
