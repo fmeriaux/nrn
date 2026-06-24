@@ -8,3 +8,12 @@ updates:
       ndarray:
         patterns:
           - "ndarray*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"
