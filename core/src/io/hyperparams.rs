@@ -217,17 +217,23 @@ impl TryFrom<&EarlyStoppingRecord> for EarlyStoppingConfig {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct HyperParametersRecord {
     pub epochs: usize,
+    #[serde(default)]
     pub checkpoint_interval: usize,
+    #[serde(default)]
     pub batch_size: Option<usize>,
     pub lr: f32,
+    #[serde(default)]
+    pub weight_decay: f32,
     pub optimizer: OptimizerRecord,
     pub scheduler: SchedulerRecord,
     pub clipping: ClippingRecord,
+    #[serde(default)]
     pub early_stopping: Option<EarlyStoppingRecord>,
     pub val_ratio: f32,
     pub test_ratio: f32,
     pub loss: LossRecord,
     pub seed: u64,
+    #[serde(default)]
     pub scaler: Option<ScalerKindRecord>,
 }
 
@@ -238,6 +244,7 @@ impl From<&HyperParameters> for HyperParametersRecord {
             checkpoint_interval: hyperparameters.checkpoint_interval(),
             batch_size: hyperparameters.batch_size(),
             lr: hyperparameters.lr().value(),
+            weight_decay: hyperparameters.weight_decay().value(),
             optimizer: hyperparameters.optimizer().into(),
             scheduler: hyperparameters.scheduler().into(),
             clipping: hyperparameters.clipping().into(),
@@ -273,6 +280,7 @@ impl TryFrom<HyperParametersRecord> for HyperParameters {
             record.checkpoint_interval,
             record.batch_size,
             record.lr,
+            record.weight_decay,
             (&record.optimizer).into(),
             (&record.scheduler).into(),
             clipping,
@@ -295,6 +303,7 @@ impl HyperParametersRecord {
             checkpoint_interval: 5,
             batch_size: Some(32),
             lr: 0.001,
+            weight_decay: 0.0,
             optimizer: OptimizerRecord::Adam,
             scheduler: SchedulerRecord::Constant,
             clipping: ClippingRecord::Norm { max_norm: 1.0 },
@@ -392,6 +401,31 @@ mod tests {
     }
 
     #[test]
+    fn missing_optional_keys_deserialize_to_disabled_defaults() {
+        // A meta.json from an older schema may omit the optional, off-by-default
+        // knobs (e.g. weight decay, which postdates earlier runs); each must still
+        // deserialize, falling back to its disabled sentinel.
+        let mut value = serde_json::to_value(HyperParametersRecord::sample()).unwrap();
+        let object = value.as_object_mut().unwrap();
+        for key in [
+            "checkpoint_interval",
+            "batch_size",
+            "weight_decay",
+            "early_stopping",
+            "scaler",
+        ] {
+            object.remove(key);
+        }
+
+        let record: HyperParametersRecord = serde_json::from_value(value).unwrap();
+        assert_eq!(record.checkpoint_interval, 0);
+        assert_eq!(record.batch_size, None);
+        assert_eq!(record.weight_decay, 0.0);
+        assert_eq!(record.early_stopping, None);
+        assert_eq!(record.scaler, None);
+    }
+
+    #[test]
     fn hyperparameters_record_roundtrips_through_json() {
         let record = HyperParametersRecord::sample();
         let json = serde_json::to_string(&record).unwrap();
@@ -426,12 +460,17 @@ mod tests {
             },
             ..HyperParametersRecord::sample()
         };
+        let with_weight_decay = HyperParametersRecord {
+            weight_decay: 0.0001,
+            ..HyperParametersRecord::sample()
+        };
 
         for record in [
             HyperParametersRecord::sample(),
             with_sgd,
             with_cosine,
             with_step,
+            with_weight_decay,
         ] {
             let hyperparameters = HyperParameters::try_from(record.clone()).unwrap();
             assert_eq!(HyperParametersRecord::from(&hyperparameters), record);

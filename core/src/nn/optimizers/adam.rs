@@ -2,6 +2,7 @@ use crate::gradients::Gradients;
 use crate::learning_rate::LearningRate;
 use crate::model::NeuronLayer;
 use crate::optimizers::{Optimizer, OptimizerState, OptimizerStateError};
+use crate::weight_decay::WeightDecay;
 use ndarray::{Array1, Array2};
 use std::collections::HashMap;
 
@@ -27,6 +28,9 @@ pub struct Adam {
     beta2: f32,
     /// Small constant for numerical stability.
     epsilon: f32,
+    /// Decoupled weight-decay coefficient (AdamW). Applied to weights only, never
+    /// biases.
+    weight_decay: WeightDecay,
     /// Step counter for bias correction.
     time_step: u32,
     /// Internal state for each layer, storing moment estimates.
@@ -34,10 +38,18 @@ pub struct Adam {
 }
 
 impl Adam {
-    /// Creates a new [`Adam`] optimizer with the specified parameters.
+    /// Creates a new [`Adam`] optimizer with the specified parameters. A non-zero
+    /// `weight_decay` applies decoupled decay (AdamW), directly to the weights
+    /// rather than through the moment estimates.
     /// # Panics
     /// Will panic if `beta1` or `beta2` are not in (0, 1) or if `epsilon` is not positive.
-    pub fn new(learning_rate: LearningRate, beta1: f32, beta2: f32, epsilon: f32) -> Self {
+    pub fn new(
+        learning_rate: LearningRate,
+        beta1: f32,
+        beta2: f32,
+        epsilon: f32,
+        weight_decay: WeightDecay,
+    ) -> Self {
         assert!(beta1 > 0.0 && beta1 < 1.0, "Beta1 must be in (0, 1).");
         assert!(beta2 > 0.0 && beta2 < 1.0, "Beta2 must be in (0, 1).");
         assert!(epsilon > 0.0, "Epsilon must be greater than zero.");
@@ -47,16 +59,17 @@ impl Adam {
             beta1,
             beta2,
             epsilon,
+            weight_decay,
             time_step: 1,
             states: HashMap::new(),
         }
     }
 
-    /// Creates an Adam optimizer with default parameters.
-    pub fn with_defaults(learning_rate: LearningRate) -> Self {
+    /// Creates an Adam optimizer with default moment parameters.
+    pub fn with_defaults(learning_rate: LearningRate, weight_decay: WeightDecay) -> Self {
         // 1e-5 instead of the paper's 1e-8: f32 squared gradients near 1e-19 underflow
         // to 0, leaving epsilon as the sole denominator and inflating the effective step.
-        Self::new(learning_rate, 0.9, 0.999, 1e-5)
+        Self::new(learning_rate, 0.9, 0.999, 1e-5, weight_decay)
     }
 
     fn init_state(&mut self, layer_index: usize, layer: &NeuronLayer) {
@@ -79,7 +92,11 @@ impl Adam {
 
 impl Optimizer for Adam {
     fn name(&self) -> &'static str {
-        "Adam"
+        if self.weight_decay.is_active() {
+            "AdamW"
+        } else {
+            "Adam"
+        }
     }
 
     fn learning_rate(&self) -> LearningRate {
@@ -114,6 +131,12 @@ impl Optimizer for Adam {
         let m_hat_biases = &state.m_biases / beta1_correction;
         let v_hat_weights = &state.v_weights / beta2_correction;
         let v_hat_biases = &state.v_biases / beta2_correction;
+
+        // Decoupled weight decay (AdamW): shrink the weights before the gradient
+        // step. Biases are not decayed.
+        if self.weight_decay.is_active() {
+            layer.weights *= 1.0 - self.learning_rate.value() * self.weight_decay.value();
+        }
 
         // Update weights and biases
         layer.weights -= &(m_hat_weights * self.learning_rate.value()
@@ -255,14 +278,20 @@ mod tests {
         // 1e-8 (paper default, f64) is too small for f32: squared gradients near 1e-19
         // underflow to 0, and the floor epsilon alone drives the step, causing divergence.
         // 1e-5 keeps the denominator above the f32 subnormal range.
-        let opt = Adam::with_defaults(0.001.try_into().unwrap());
+        let opt = Adam::with_defaults(0.001.try_into().unwrap(), WeightDecay::ZERO);
         assert_eq!(opt.epsilon, 1e-5);
     }
 
     #[test]
     #[should_panic(expected = "Beta1 must be in (0, 1)")]
     fn adam_rejects_invalid_beta1() {
-        Adam::new(LearningRate::new(0.01).unwrap(), 1.5, 0.999, 1e-8);
+        Adam::new(
+            LearningRate::new(0.01).unwrap(),
+            1.5,
+            0.999,
+            1e-8,
+            WeightDecay::ZERO,
+        );
     }
 
     #[test]
@@ -270,7 +299,7 @@ mod tests {
         // On the first update, m_hat = grad and v_hat = grad^2, so the step is
         // lr * grad / |grad| = lr * sign(grad), independent of the gradient magnitude.
         let lr = 0.01;
-        let mut opt = Adam::with_defaults(lr.try_into().unwrap());
+        let mut opt = Adam::with_defaults(lr.try_into().unwrap(), WeightDecay::ZERO);
         assert_eq!(opt.name(), "Adam");
         assert_eq!(opt.learning_rate().value(), lr);
         let mut l = layer(array![[1.0, 1.0]], array![1.0]);
@@ -286,7 +315,7 @@ mod tests {
 
     #[test]
     fn adam_zero_gradient_leaves_params_unchanged() {
-        let mut opt = Adam::with_defaults(0.1.try_into().unwrap());
+        let mut opt = Adam::with_defaults(0.1.try_into().unwrap(), WeightDecay::ZERO);
         let mut l = layer(array![[1.0, -2.0]], array![3.0]);
         let grads = Gradients {
             dw: Array2::zeros((1, 2)),
@@ -301,7 +330,7 @@ mod tests {
     #[test]
     fn adam_minimizes_simple_quadratic() {
         // f(w) = 0.5 * w^2 has gradient w and minimum at 0; Adam should drive w → 0.
-        let mut opt = Adam::with_defaults(0.1.try_into().unwrap());
+        let mut opt = Adam::with_defaults(0.1.try_into().unwrap(), WeightDecay::ZERO);
         let mut l = layer(array![[5.0]], array![0.0]);
         for _ in 0..200 {
             let w = l.weights[[0, 0]];
@@ -317,8 +346,37 @@ mod tests {
     }
 
     #[test]
+    fn weight_decay_renames_optimizer_to_adamw() {
+        let plain = Adam::with_defaults(0.01.try_into().unwrap(), WeightDecay::ZERO);
+        assert_eq!(plain.name(), "Adam");
+        let decayed =
+            Adam::with_defaults(0.01.try_into().unwrap(), WeightDecay::new(0.01).unwrap());
+        assert_eq!(decayed.name(), "AdamW");
+    }
+
+    #[test]
+    fn weight_decay_shrinks_weights_under_zero_gradient() {
+        // With no gradient, plain Adam leaves the weights put; AdamW's decoupled
+        // decay still pulls them toward zero, while leaving the bias untouched.
+        let lr = 0.1;
+        let wd = WeightDecay::new(0.1).unwrap();
+        let mut opt = Adam::with_defaults(lr.try_into().unwrap(), wd);
+        let mut l = layer(array![[2.0, -4.0]], array![3.0]);
+        let grads = Gradients {
+            dw: Array2::zeros((1, 2)),
+            db: Array1::zeros(1),
+        };
+        opt.update(0, &mut l, &grads);
+
+        // Each weight is scaled by (1 - lr*wd) = 0.99; the bias is not decayed.
+        assert!((l.weights[[0, 0]] - 2.0 * 0.99).abs() < 1e-5);
+        assert!((l.weights[[0, 1]] - (-4.0) * 0.99).abs() < 1e-5);
+        assert!((l.biases[0] - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
     fn to_state_restore_roundtrip_preserves_moments_and_time_step() {
-        let mut opt = Adam::with_defaults(0.01.try_into().unwrap());
+        let mut opt = Adam::with_defaults(0.01.try_into().unwrap(), WeightDecay::ZERO);
         let mut l = layer(array![[1.0, 1.0]], array![1.0]);
         let grads = Gradients {
             dw: array![[2.0, -3.0]],
@@ -329,7 +387,7 @@ mod tests {
 
         let state = opt.to_state().unwrap();
 
-        let mut restored = Adam::with_defaults(0.01.try_into().unwrap());
+        let mut restored = Adam::with_defaults(0.01.try_into().unwrap(), WeightDecay::ZERO);
         restored.restore(&state).unwrap();
 
         // Applying the same update from the restored optimizer must reproduce
@@ -350,7 +408,7 @@ mod tests {
 
     #[test]
     fn restore_rejects_missing_time_step() {
-        let mut opt = Adam::with_defaults(0.01.try_into().unwrap());
+        let mut opt = Adam::with_defaults(0.01.try_into().unwrap(), WeightDecay::ZERO);
         let state = OptimizerState {
             tensors: Vec::new(),
             metadata: HashMap::new(),
@@ -364,7 +422,7 @@ mod tests {
 
     #[test]
     fn restore_rejects_unparseable_time_step() {
-        let mut opt = Adam::with_defaults(0.01.try_into().unwrap());
+        let mut opt = Adam::with_defaults(0.01.try_into().unwrap(), WeightDecay::ZERO);
         let state = OptimizerState {
             tensors: Vec::new(),
             metadata: metadata_with_time_step("not-a-number"),
@@ -378,7 +436,7 @@ mod tests {
 
     #[test]
     fn restore_skips_unrecognized_tensor_names() {
-        let mut opt = Adam::with_defaults(0.01.try_into().unwrap());
+        let mut opt = Adam::with_defaults(0.01.try_into().unwrap(), WeightDecay::ZERO);
         let state = OptimizerState {
             tensors: vec![
                 // A complete, valid layer-0 state...
@@ -432,7 +490,7 @@ mod tests {
 
         // Dropping any one field of an otherwise-complete layer is reported by name.
         for missing in FIELDS {
-            let mut opt = Adam::with_defaults(0.01.try_into().unwrap());
+            let mut opt = Adam::with_defaults(0.01.try_into().unwrap(), WeightDecay::ZERO);
             let state = OptimizerState {
                 tensors: FIELDS
                     .iter()
@@ -458,7 +516,7 @@ mod tests {
             ("m_biases", 1),
             ("v_biases", 1),
         ] {
-            let mut opt = Adam::with_defaults(0.01.try_into().unwrap());
+            let mut opt = Adam::with_defaults(0.01.try_into().unwrap(), WeightDecay::ZERO);
             let wrong = if expected_rank == 2 {
                 Array1::<f32>::zeros(1).into_dyn()
             } else {

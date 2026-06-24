@@ -12,6 +12,7 @@ use crate::optimizers::{Adam, Optimizer, StochasticGradientDescent};
 use crate::schedulers::{
     ConstantScheduler, CosineAnnealing, CosineAnnealingError, Scheduler, StepDecay, StepDecayError,
 };
+use crate::weight_decay::{WeightDecay, WeightDecayError};
 use std::fmt;
 use std::sync::Arc;
 
@@ -49,11 +50,12 @@ pub enum LossConfig {
 }
 
 impl OptimizerConfig {
-    /// Instantiates the concrete optimizer for the shared learning rate `lr`.
-    fn instantiate(&self, lr: LearningRate) -> Box<dyn Optimizer> {
+    /// Instantiates the concrete optimizer for the shared learning rate `lr` and
+    /// `weight_decay`. Adam applies decay as decoupled (AdamW); SGD as classic L2.
+    fn instantiate(&self, lr: LearningRate, weight_decay: WeightDecay) -> Box<dyn Optimizer> {
         match self {
-            OptimizerConfig::Sgd => Box::new(StochasticGradientDescent::new(lr)),
-            OptimizerConfig::Adam => Box::new(Adam::with_defaults(lr)),
+            OptimizerConfig::Sgd => Box::new(StochasticGradientDescent::new(lr, weight_decay)),
+            OptimizerConfig::Adam => Box::new(Adam::with_defaults(lr, weight_decay)),
         }
     }
 }
@@ -111,6 +113,8 @@ pub struct HyperParameters {
     batch_size: Option<usize>,
     /// Shared (maximum) learning rate, used by both the optimizer and the scheduler.
     lr: LearningRate,
+    /// Weight-decay coefficient passed to the optimizer.
+    weight_decay: WeightDecay,
     /// Parameter-update rule.
     optimizer: OptimizerConfig,
     /// Learning-rate schedule, stepped once per epoch.
@@ -150,6 +154,8 @@ pub enum HyperParametersError {
     ZeroEpochs,
     /// `batch_size` was `Some(0)`.
     ZeroBatchSize,
+    /// The weight decay was negative or non-finite.
+    WeightDecay(WeightDecayError),
     /// `val_ratio` was outside `[0.0, 1.0)`.
     InvalidValRatio(f32),
     /// `test_ratio` was outside `(0.0, 1.0)`.
@@ -177,6 +183,7 @@ impl fmt::Display for HyperParametersError {
             HyperParametersError::ZeroBatchSize => {
                 write!(f, "the batch size must be greater than zero")
             }
+            HyperParametersError::WeightDecay(e) => write!(f, "{e}"),
             HyperParametersError::InvalidValRatio(ratio) => {
                 write!(f, "the validation ratio must be in [0.0, 1.0), got {ratio}")
             }
@@ -204,6 +211,12 @@ impl std::error::Error for HyperParametersError {}
 impl From<LearningRateError> for HyperParametersError {
     fn from(e: LearningRateError) -> Self {
         HyperParametersError::LearningRate(e)
+    }
+}
+
+impl From<WeightDecayError> for HyperParametersError {
+    fn from(e: WeightDecayError) -> Self {
+        HyperParametersError::WeightDecay(e)
     }
 }
 
@@ -245,6 +258,7 @@ impl HyperParameters {
         checkpoint_interval: usize,
         batch_size: Option<usize>,
         lr: LearningRate,
+        weight_decay: WeightDecay,
         optimizer: OptimizerConfig,
         scheduler: SchedulerConfig,
         clipping: GradientClipping,
@@ -283,6 +297,7 @@ impl HyperParameters {
             checkpoint_interval,
             batch_size,
             lr,
+            weight_decay,
             optimizer,
             scheduler,
             clipping,
@@ -313,6 +328,7 @@ impl HyperParameters {
         checkpoint_interval: usize,
         batch_size: Option<usize>,
         lr: f32,
+        weight_decay: f32,
         optimizer: OptimizerConfig,
         scheduler: SchedulerConfig,
         clipping: GradientClipping,
@@ -328,6 +344,7 @@ impl HyperParameters {
             checkpoint_interval,
             batch_size,
             LearningRate::new(lr)?,
+            WeightDecay::new(weight_decay)?,
             optimizer,
             scheduler,
             clipping,
@@ -354,6 +371,10 @@ impl HyperParameters {
 
     pub fn lr(&self) -> LearningRate {
         self.lr
+    }
+
+    pub fn weight_decay(&self) -> WeightDecay {
+        self.weight_decay
     }
 
     pub fn optimizer(&self) -> &OptimizerConfig {
@@ -411,7 +432,7 @@ impl HyperParameters {
     /// The trainer starts from epoch 0; to resume a run, call
     /// [`Trainer::restore`](crate::training::Trainer::restore) on the result.
     pub fn build(self, model: NeuralNetwork, data: TrainingData, callbacks: Callbacks) -> Trainer {
-        let optimizer = self.optimizer.instantiate(self.lr);
+        let optimizer = self.optimizer.instantiate(self.lr, self.weight_decay);
         let scheduler = self
             .scheduler
             .instantiate(self.lr)
@@ -455,6 +476,7 @@ mod tests {
             1,
             batch_size,
             lr,
+            0.0,
             OptimizerConfig::Adam,
             scheduler,
             GradientClipping::None,
@@ -543,6 +565,30 @@ mod tests {
                 0.6
             )),
             "the sum of validation and test ratios must be less than 1.0, got val=0.6, test=0.6"
+        );
+    }
+
+    #[test]
+    fn rejects_negative_weight_decay() {
+        let result = HyperParameters::from_values(
+            10,
+            1,
+            None,
+            0.01,
+            -0.1,
+            OptimizerConfig::Adam,
+            SchedulerConfig::Constant,
+            GradientClipping::None,
+            LossConfig::CrossEntropy,
+            None,
+            0.1,
+            0.1,
+            0,
+            None,
+        );
+        assert_eq!(
+            message(result),
+            "the weight decay must be a finite, non-negative value, got -0.1"
         );
     }
 
@@ -679,6 +725,7 @@ mod tests {
             1,
             None,
             0.01,
+            0.0,
             OptimizerConfig::Adam,
             SchedulerConfig::Constant,
             GradientClipping::None,

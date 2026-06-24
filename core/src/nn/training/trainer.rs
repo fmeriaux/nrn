@@ -294,6 +294,7 @@ mod tests {
             checkpoint_interval,
             None,
             lr,
+            0.0,
             OptimizerConfig::Adam,
             SchedulerConfig::Constant,
             GradientClipping::None,
@@ -674,9 +675,10 @@ mod tests {
         use crate::gradients::Gradients;
         use crate::optimizers::Adam;
         use crate::schedulers::CosineAnnealing;
+        use crate::weight_decay::WeightDecay;
 
         // Stateful optimizer/scheduler snapshots, as a checkpoint would hold them.
-        let mut adam = Adam::with_defaults(0.01.try_into().unwrap());
+        let mut adam = Adam::with_defaults(0.01.try_into().unwrap(), WeightDecay::ZERO);
         adam.update(
             0,
             &mut sample_model().layers.swap_remove(0),
@@ -697,6 +699,7 @@ mod tests {
             1,
             None,
             0.01,
+            0.0,
             OptimizerConfig::Adam,
             SchedulerConfig::Cosine {
                 lr_min: 0.001,
@@ -749,6 +752,7 @@ mod tests {
             0,
             None,
             0.01,
+            0.0,
             OptimizerConfig::Sgd,
             SchedulerConfig::Constant,
             GradientClipping::None,
@@ -785,6 +789,7 @@ mod tests {
             0,
             None,
             0.01,
+            0.0,
             OptimizerConfig::Adam,
             SchedulerConfig::Cosine {
                 lr_min: 0.001,

@@ -322,10 +322,11 @@ mod tests {
     use crate::model::NeuronLayerSpec;
     use crate::optimizers::{Adam, StochasticGradientDescent};
     use crate::schedulers::{ConstantScheduler, Scheduler, StepDecay};
+    use crate::weight_decay::WeightDecay;
     use ndarray::Array2;
 
     fn sample_optimizer() -> Adam {
-        Adam::with_defaults(0.01.try_into().unwrap())
+        Adam::with_defaults(0.01.try_into().unwrap(), WeightDecay::ZERO)
     }
 
     fn sample_scheduler() -> ConstantScheduler {
@@ -874,7 +875,7 @@ mod tests {
         let dir = temp_dir("optimizer_sgd");
         let recorder = create_run(&dir, "ds", false);
 
-        let optimizer = StochasticGradientDescent::new(0.01.try_into().unwrap());
+        let optimizer = StochasticGradientDescent::new(0.01.try_into().unwrap(), WeightDecay::ZERO);
         recorder
             .write(
                 &sample_model(),
