@@ -15,7 +15,7 @@ pub(crate) const VALUE: u8 = 172; // field values, inline figures, and diffs
 pub(crate) const ACCENT: u8 = 35; // success lines and the progress fill/spinner
 pub(crate) const ACTIVE: u8 = 92; // in-progress action verbs
 pub(crate) const WARN: u8 = 166; // warning lead-ins and bodies
-pub(crate) const ERROR: u8 = 160; // error lead-ins and bodies
+pub(crate) const DANGER: u8 = 160; // errors and worsening-metric markers
 
 /// A leading line icon in the standard accent — the single place ordinary icons
 /// get styled, so verbs pass only the glyph. Severity icons use [`warn_icon`] /
@@ -75,6 +75,16 @@ pub(crate) fn diff(text: impl Display) -> String {
     style(text).color256(VALUE).to_string()
 }
 
+/// A favorable trend marker — an improving metric — in green.
+pub(crate) fn improving(text: impl Display) -> String {
+    style(text).color256(ACCENT).to_string()
+}
+
+/// An unfavorable trend marker — a worsening metric — in red.
+pub(crate) fn regressing(text: impl Display) -> String {
+    style(text).color256(DANGER).to_string()
+}
+
 /// The bold `Warning:` lead-in, in the conventional warning color.
 pub(crate) fn warn_label(text: impl Display) -> String {
     style(text).bold().color256(WARN).to_string()
@@ -87,10 +97,10 @@ pub(crate) fn warn_text(text: impl Display) -> String {
 
 /// The bold `Error:` lead-in, in the conventional error color.
 pub(crate) fn error_label(text: impl Display) -> String {
-    style(text).bold().color256(ERROR).to_string()
+    style(text).bold().color256(DANGER).to_string()
 }
 
 /// An error message body.
 pub(crate) fn error_text(text: impl Display) -> String {
-    style(text).color256(ERROR).to_string()
+    style(text).color256(DANGER).to_string()
 }
