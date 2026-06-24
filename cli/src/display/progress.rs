@@ -12,14 +12,13 @@ use std::time::Duration;
 /// The fill / head / empty glyphs of every bar — a thin, single-weight rule.
 const PROGRESS_CHARS: &str = "━╸─";
 
-/// A hidden→stdout bar in the project style: a green spinner, a bold blue
-/// prefix label, the accent fill bar, then the caller's `suffix` of contextual
-/// tokens.
+/// A hidden→stdout bar in the project style: a spinner, a bold action prefix,
+/// the fill bar, then the caller's `suffix` of contextual tokens.
 fn styled(suffix: &str) -> ProgressBar {
     let template = format!(
-        "{{spinner:.{accent}}} {{prefix:.bold.{title}}} {{wide_bar:.{accent}}} {suffix}",
+        "{{spinner:.{accent}}} {{prefix:.bold.{active}}} {{wide_bar:.{accent}}} {suffix}",
         accent = theme::ACCENT,
-        title = theme::TITLE,
+        active = theme::ACTIVE,
     );
     let bar = ProgressBar::hidden();
     bar.set_style(
@@ -42,9 +41,9 @@ impl Spinner {
         let bar = ProgressBar::new_spinner();
         bar.set_style(
             ProgressStyle::with_template(&format!(
-                "{{spinner:.{accent}}} {{msg:.bold.{title}}}",
+                "{{spinner:.{accent}}} {{msg:.bold.{active}}}",
                 accent = theme::ACCENT,
-                title = theme::TITLE,
+                active = theme::ACTIVE,
             ))
             .unwrap(),
         );
@@ -151,10 +150,11 @@ impl Epochs {
     }
 }
 
-/// A coloured trend chevron for a metric moving from `previous` to `current`:
-/// the arrow points the way it moved — green when that's an improvement (loss
-/// falling, accuracy rising), red otherwise — with a leading space. Empty when
-/// unchanged or not comparable (e.g. a diverged `NaN`).
+/// A trend chevron for a metric moving from `previous` to `current`: the arrow
+/// points the way it moved, styled [`improving`](theme::improving) when that's a
+/// gain (loss falling, accuracy rising) and [`regressing`](theme::regressing)
+/// otherwise, with a leading space. Empty when unchanged or not comparable
+/// (e.g. a diverged `NaN`).
 fn trend(previous: f32, current: f32, higher_is_better: bool) -> String {
     let delta = current - previous;
     if !delta.is_normal() {

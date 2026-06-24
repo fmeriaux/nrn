@@ -9,7 +9,7 @@ use std::fmt::Display;
 /// `indicatif` progress templates (which take color codes as bare strings, so
 /// they can't go through the helpers). Severity icons use named terminal
 /// colors instead, where the convention itself carries the meaning.
-pub(crate) const TITLE: u8 = 33; // entity titles and progress prefixes
+pub(crate) const TITLE: u8 = 33; // entity titles
 pub(crate) const LABEL: u8 = 37; // field labels
 pub(crate) const VALUE: u8 = 172; // field values, inline figures, and diffs
 pub(crate) const ACCENT: u8 = 35; // success lines and the progress fill/spinner
@@ -34,7 +34,7 @@ pub(crate) fn error_icon(glyph: Emoji) -> String {
     style(glyph).bright().red().to_string()
 }
 
-/// The bold blue entity title (e.g. `DATASET`, `TRAINING HYPERPARAMETERS`).
+/// The bold entity title (e.g. `DATASET`, `TRAINING HYPERPARAMETERS`).
 pub(crate) fn title(text: impl Display) -> String {
     style(text).bold().color256(TITLE).to_string()
 }
@@ -44,7 +44,7 @@ pub(crate) fn label(text: impl Display) -> String {
     style(text).color256(LABEL).to_string()
 }
 
-/// A success status line, in bold green — the `completed!` counterpart to the
+/// A success status line, in bold — the `completed!` counterpart to the
 /// bold `warn_label`/`error_label` lead-ins.
 pub(crate) fn success(text: impl Display) -> String {
     style(text).bold().color256(ACCENT).to_string()
@@ -65,7 +65,7 @@ pub(crate) fn value(text: impl Display) -> String {
     style(text).color256(VALUE).to_string()
 }
 
-/// An in-progress action verb (e.g. `RECORDING`), in bold violet.
+/// An in-progress action verb (e.g. `RECORDING`), in bold.
 pub(crate) fn active(text: impl Display) -> String {
     style(text).bold().color256(ACTIVE).to_string()
 }
@@ -75,12 +75,12 @@ pub(crate) fn diff(text: impl Display) -> String {
     style(text).color256(VALUE).to_string()
 }
 
-/// A favorable trend marker — an improving metric — in green.
+/// A favorable trend marker — an improving metric.
 pub(crate) fn improving(text: impl Display) -> String {
     style(text).color256(ACCENT).to_string()
 }
 
-/// An unfavorable trend marker — a worsening metric — in red.
+/// An unfavorable trend marker — a worsening metric.
 pub(crate) fn regressing(text: impl Display) -> String {
     style(text).color256(DANGER).to_string()
 }
