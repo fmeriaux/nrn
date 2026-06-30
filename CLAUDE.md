@@ -49,6 +49,8 @@ Two crates:
   - `io`: safetensors/JSON/image I/O (`safetensors`, `serde`, `serde_json`, `image`, `png`, `gif`)
   - `raster`: image rendering (`plotters`)
   - `console`: terminal rendering (`textplots`, `rgb`)
+  - `blas`: route ndarray's matmul through a system BLAS (`sgemm`, backend picked per OS)
+    instead of the pure-Rust default; ~8× on matmul-heavy paths. See `docs/benchmarks.md`.
   The `nn` module is re-exported flat at the crate root (`pub use nn::*`), so library types live at
   e.g. `nrn::model`, `nrn::training`, `nrn::evaluation_history` — not under `nrn::nn::`.
 - **`cli/`** (crate `nrn-cli`) — `nrn` binary over `core` with `features = ["io", "raster", "console"]`, `clap` for args.

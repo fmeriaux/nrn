@@ -59,3 +59,23 @@ jobs:
         with:
           tool: cargo-llvm-cov
       - run: task coverage-check
+
+  # Benchmarks the PR against the base branch and comments the comparison.
+  # Non-blocking; shared runners are noisy. Harness compilation is covered by lint.
+  bench:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Compare benchmarks against the base branch
+        continue-on-error: true
+        uses: boa-dev/criterion-compare-action@v3
+        with:
+          cwd: core
+          benchName: training
+          branchName: ${{ github.base_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}

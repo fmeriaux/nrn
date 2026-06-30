@@ -7,3 +7,7 @@ pub mod plot;
 
 #[cfg(feature = "io")]
 pub mod io;
+
+// Links the selected BLAS backend; ndarray's `dot` then resolves to its `sgemm`.
+#[cfg(feature = "blas")]
+use blas_src as _;

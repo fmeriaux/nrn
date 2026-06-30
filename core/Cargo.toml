@@ -8,6 +8,8 @@ rust-version.workspace = true
 io = ["safetensors", "serde_json", "serde", "ndarray/serde", "image", "png", "gif"]
 raster = ["plotters"]
 console = ["textplots", "rgb"]
+# Route ndarray's matmul through a system BLAS (backend selected per OS below).
+blas = ["ndarray/blas", "dep:blas-src"]
 
 [dependencies]
 ndarray = { version = "0.17.2" }
@@ -18,9 +20,6 @@ inventory = "0.3"
 safetensors = { version = "0.8.0", optional = true }
 serde_json = { version = "1.0.150", optional = true }
 serde = { version = "1.0.228", features = ["derive"], optional = true }
-# Only the input formats `encode` needs to decode. Dropping the default feature
-# set (notably `avif`) keeps rav1e — and the unmaintained `paste` — out of the
-# tree.
 image = { version = "0.25.10", optional = true, default-features = false, features = [
     "png",
     "jpeg",
@@ -32,3 +31,21 @@ gif = { version = "0.14.2", optional = true }
 plotters = { version = "0.3.7", optional = true }
 textplots = { version = "0.8.7", default-features = false, optional = true }
 rgb = { version = "0.8.53", optional = true }
+
+# BLAS backend, one per OS.
+[target.'cfg(target_os = "macos")'.dependencies]
+blas-src = { version = "0.14.0", optional = true, default-features = false, features = [
+    "accelerate",
+] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+blas-src = { version = "0.14.0", optional = true, default-features = false, features = [
+    "openblas",
+] }
+
+[dev-dependencies]
+criterion = { version = "0.7", default-features = false }
+
+[[bench]]
+name = "training"
+harness = false

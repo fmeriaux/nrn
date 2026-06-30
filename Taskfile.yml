@@ -17,7 +17,7 @@ tasks:
   build:
     desc: Compile the release binary (target/release/nrn)
     cmds:
-      - cargo build --release --all-features
+      - cargo build --release
 
   dev:
     desc: Compile a debug build
@@ -28,7 +28,6 @@ tasks:
     desc: Run all tests across the workspace
     cmds:
       - cargo test --workspace
-      - cargo test --workspace --all-features
 
   fmt:
     desc: Format all source files
@@ -40,7 +39,11 @@ tasks:
     cmds:
       - cargo fmt --check
       - cargo clippy --workspace --all-targets -- -D warnings
-      - cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  bench:
+    desc: Run the performance benchmarks (criterion) for the core crate
+    cmds:
+      - cargo bench -p nrn --bench training
 
   audit:
     desc: Scan dependencies for security advisories (requires cargo-audit)
@@ -50,22 +53,22 @@ tasks:
   coverage:
     desc: Measure test coverage across the workspace (requires cargo-llvm-cov)
     cmds:
-      - cargo llvm-cov --workspace --all-features --summary-only
+      - cargo llvm-cov --workspace --summary-only
 
   coverage-check:
     desc: Fail if line coverage drops below the threshold (requires cargo-llvm-cov)
     cmds:
-      - cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 99
+      - cargo llvm-cov --workspace --summary-only --fail-under-lines 99
 
   coverage-html:
     desc: Generate an HTML coverage report for the workspace and open it
     cmds:
-      - cargo llvm-cov --workspace --all-features --html --open
+      - cargo llvm-cov --workspace --html --open
 
   install:
-    desc: Install the nrn binary to ~/.cargo/bin (uses locked deps)
+    desc: Install the nrn binary to ~/.cargo/bin (uses locked deps; BLAS on macOS)
     cmds:
-      - cargo install --path cli --locked
+      - cargo install --path cli --locked {{if eq OS "darwin"}}--features blas{{end}}
 
   clean:
     desc: Remove build artifacts
