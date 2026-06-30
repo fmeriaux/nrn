@@ -11,7 +11,7 @@
 
 A multi-layer perceptron learning to untangle two interleaved spirals — a problem with no linear solution:
 
-![A neural network learning the decision boundary of a two-arm spiral](docs/spiral-boundary.gif)
+![A neural network learning the decision boundary of a two-arm spiral](docs/images/spiral-boundary.gif)
 
 </div>
 
@@ -181,7 +181,7 @@ in your terminal. You can also render it to an image:
 nrn plot dataset uniform-seed1024-c2-f2-n500.safetensors --format image
 ```
 
-![Two linearly separable clusters](docs/uniform-scatter.png)
+![Two linearly separable clusters](docs/images/uniform-scatter.png)
 
 **Train** a single-layer perceptron, scaling the features with z-score normalization:
 
@@ -201,7 +201,7 @@ nrn plot run training-model-uniform-seed1024-c2-f2-n500 --animate --format image
 
 | Training curves | Decision boundary forming |
 | --- | --- |
-| ![Loss and accuracy converging](docs/uniform-curves.png) | ![A line sweeping into place to separate the clusters](docs/uniform-boundary.gif) |
+| ![Loss and accuracy converging](docs/images/uniform-curves.png) | ![A line sweeping into place to separate the clusters](docs/images/uniform-boundary.gif) |
 
 **Predict** on a new point (entered interactively, or from a file with `--instance`):
 
@@ -232,7 +232,7 @@ separate them.
 nrn synth --seed 1024 --distribution ring --samples 500 --features 2 --clusters 2
 ```
 
-![A central blob surrounded by a ring](docs/ring-scatter.png)
+![A central blob surrounded by a ring](docs/images/ring-scatter.png)
 
 **A single-layer perceptron is doomed here.** Trained on this data, it keeps rotating its one straight line,
 never finding a separation:
@@ -242,7 +242,7 @@ nrn train start ring-seed1024-c2-f2-n500.safetensors \
   --scale z-score --epochs 600 --lr 0.01 --seed 7
 ```
 
-![An SLP's straight line rotating, unable to separate the rings](docs/ring-slp-boundary.gif)
+![An SLP's straight line rotating, unable to separate the rings](docs/images/ring-slp-boundary.gif)
 
 **Add hidden layers** — turning the SLP into a multi-layer perceptron — and the network can bend its
 boundary into a closed curve. `--early-stopping` keeps the run robust:
@@ -258,7 +258,7 @@ closes neatly around the inner blob:
 
 | Training curves | Decision boundary forming |
 | --- | --- |
-| ![Loss and accuracy converging](docs/ring-curves.png) | ![A curved boundary wrapping around the inner ring](docs/ring-boundary.gif) |
+| ![Loss and accuracy converging](docs/images/ring-curves.png) | ![A curved boundary wrapping around the inner ring](docs/images/ring-boundary.gif) |
 
 ### 3 · Many classes at once: multi-class MLP
 
@@ -269,7 +269,7 @@ class.
 nrn synth --seed 1024 --distribution ring --samples 600 --features 2 --clusters 3
 ```
 
-![Three concentric classes: blob, ring, outer ring](docs/ring3-scatter.png)
+![Three concentric classes: blob, ring, outer ring](docs/images/ring3-scatter.png)
 
 ```sh
 nrn train start ring-seed1024-c3-f2-n600.safetensors \
@@ -281,7 +281,7 @@ classes:
 
 | Training curves | Decision boundary forming |
 | --- | --- |
-| ![Loss and accuracy converging](docs/ring3-curves.png) | ![Two nested boundaries separating three classes](docs/ring3-boundary.gif) |
+| ![Loss and accuracy converging](docs/images/ring3-curves.png) | ![Two nested boundaries separating three classes](docs/images/ring3-boundary.gif) |
 
 ```sh
 nrn plot run training-model-ring-seed1024-c3-f2-n600 --animate --format image
