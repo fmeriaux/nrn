@@ -42,6 +42,11 @@ tasks:
       - cargo clippy --workspace --all-targets -- -D warnings
       - cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+  bench:
+    desc: Run the performance benchmarks (criterion) for the core crate
+    cmds:
+      - cargo bench -p nrn --bench training
+
   audit:
     desc: Scan dependencies for security advisories (requires cargo-audit)
     cmds:
