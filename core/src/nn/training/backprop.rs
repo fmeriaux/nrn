@@ -358,4 +358,55 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn training_is_deterministic_for_a_fixed_seed() {
+        // Two runs with the same seed and data produce bit-identical weights.
+        use crate::learning_rate::LearningRate;
+        use crate::optimizers::StochasticGradientDescent;
+        use crate::schedulers::ConstantScheduler;
+        use crate::weight_decay::WeightDecay;
+
+        fn run() -> NeuralNetwork {
+            let specs = NeuronLayerSpec::network_for(vec![8, 4], &*SIGMOID, 3);
+            let mut model = NeuralNetwork::initialization(5, &specs, 7);
+
+            let inputs = Array2::from_shape_fn((5, 40), |(r, c)| ((r + c) as f32).sin());
+            let mut targets = Array2::zeros((3, 40));
+            for c in 0..40 {
+                targets[[c % 3, c]] = 1.0;
+            }
+            let dataset = ModelDataset { inputs, targets };
+
+            let loss: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
+            let lr = LearningRate::new(0.05).unwrap();
+            let mut optimizer = StochasticGradientDescent::new(lr, WeightDecay::ZERO);
+            let mut scheduler = ConstantScheduler::new(lr);
+
+            for epoch in 0..5 {
+                model.train(
+                    &dataset,
+                    &loss,
+                    &mut optimizer as &mut dyn Optimizer,
+                    &mut scheduler as &mut dyn Scheduler,
+                    &GradientClipping::None,
+                    Some(MiniBatch::new(16, 7, epoch)),
+                );
+            }
+            model
+        }
+
+        let a = run();
+        let b = run();
+        for (la, lb) in a.layers.iter().zip(&b.layers) {
+            assert_eq!(
+                la.weights, lb.weights,
+                "weights diverged between identical runs"
+            );
+            assert_eq!(
+                la.biases, lb.biases,
+                "biases diverged between identical runs"
+            );
+        }
+    }
 }
