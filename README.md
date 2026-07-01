@@ -72,8 +72,9 @@ consumes:
 - **`train`** fits a network, optionally fitting a feature scaler on the way; the scaler is bundled *inside*
   the model directory, so it travels with the network.
 - **`plot`** turns a dataset or a finished run into figures — scatter plots, training curves, decision
-  boundaries (still or animated).
-- **`predict`** loads a model directory and classifies new instances — no need to re-specify the scaler.
+  boundaries (still or animated), or a forward-pass activation diagram for a single instance.
+- **`predict`** loads a model directory and classifies new instances — no need to re-specify the scaler
+  (add `--activations` to print the forward-pass diagram first).
 
 ## 📚 Concepts
 
@@ -259,6 +260,44 @@ closes neatly around the inner blob:
 | Training curves | Decision boundary forming |
 | --- | --- |
 | ![Loss and accuracy converging](docs/images/ring-curves.png) | ![A curved boundary wrapping around the inner ring](docs/images/ring-boundary.gif) |
+
+**Peek inside the forward pass.** Add `--activations` to `predict` (or use `nrn plot activations`) to see
+how one instance lights up the network: each neuron is colored by how strongly it fires — positive in blue,
+negative in orange, hollow when silent — with the concrete value beside it, ending in the ranked prediction.
+
+```sh
+nrn predict model-ring-seed1024-c2-f2-n500 --activations
+```
+
+```
+Input (2 features)
+  ● n0     -0.6008
+  ● n1      1.3873
+
+relu (16 units)
+  ○ n0      0.0000  (silent)
+  ● n4      0.7730
+  ● n5      2.8036
+  …
+  ● n15     0.6402
+
+relu (8 units)
+  ● n1      4.7342
+  ● n2      6.6462
+  ○ n4      0.0000  (silent)
+  …
+
+sigmoid (1 unit)
+  ● n0      1.0000
+
+Prediction
+  ● class 1  100.0%  <-
+  ● class 0    0.0%
+```
+
+For a horizontal node-link graph instead — neurons as circles, connections colored by weight sign and weighted
+by magnitude — render it to an image with `nrn plot activations <model> --instance <file> --format image`
+(`--max-units` samples wide layers down, `--min-edge` prunes weak connections).
 
 ### 3 · Many classes at once: multi-class MLP
 

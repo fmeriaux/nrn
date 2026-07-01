@@ -5,10 +5,12 @@
 //! format, an [`ImageSize`]. [`render`] is the one place a static figure becomes
 //! either a terminal preview or a written PNG.
 
+mod activations;
 mod dataset;
 mod run;
 
 use crate::display::preview;
+use activations::ActivationsArgs;
 use clap::{Args, Subcommand, ValueEnum};
 use dataset::DatasetArgs;
 use nrn::plot::{Figure, ImageConfig};
@@ -23,6 +25,9 @@ pub enum PlotCommand {
     Dataset(DatasetArgs),
     /// Plot a training run's curves and decision boundary
     Run(RunArgs),
+    /// Plot a network's forward pass on one instance as an activation diagram
+    #[command(visible_alias = "act")]
+    Activations(ActivationsArgs),
 }
 
 impl PlotCommand {
@@ -30,6 +35,7 @@ impl PlotCommand {
         match self {
             PlotCommand::Dataset(args) => args.run(),
             PlotCommand::Run(args) => args.run(),
+            PlotCommand::Activations(args) => args.run(),
         }
     }
 }

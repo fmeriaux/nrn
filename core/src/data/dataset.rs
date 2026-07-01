@@ -1,5 +1,5 @@
 use crate::data::origin::DatasetOrigin;
-use crate::data::scalers::{Scaler, ScalerKind, ScalerMethod};
+use crate::data::scalers::{Scaler, ScalerFeatureMismatch, ScalerKind, ScalerMethod};
 use ndarray::{Array1, Array2, Axis};
 use ndarray_rand::rand::Rng;
 use ndarray_rand::rand::SeedableRng;
@@ -397,8 +397,12 @@ impl ModelDataset {
     /// Applies a scaler to the inputs in-place. `inputs` is `(features, samples)`
     /// whereas the scaler expects `(samples, features)`, so the view is transposed
     /// for the call.
-    pub fn scale_inplace(&mut self, scaler: &dyn Scaler) {
-        scaler.apply_inplace(self.inputs.view_mut().reversed_axes());
+    ///
+    /// # Errors
+    /// [`ScalerFeatureMismatch`] when the scaler's fitted feature count does not match
+    /// these inputs.
+    pub fn scale_inplace(&mut self, scaler: &dyn Scaler) -> Result<(), ScalerFeatureMismatch> {
+        scaler.apply_inplace(self.inputs.view_mut().reversed_axes())
     }
 }
 
@@ -421,12 +425,17 @@ impl ModelSplit {
     /// Applies `scaler` in-place to every split. The scaler is fitted on the
     /// train split alone; transforming all splits keeps validation and test
     /// inputs on the same scale the model is trained on.
-    pub fn scale_inplace(&mut self, scaler: &dyn Scaler) {
-        self.train.scale_inplace(scaler);
+    ///
+    /// # Errors
+    /// [`ScalerFeatureMismatch`] when the scaler's fitted feature count does not match
+    /// the split's inputs.
+    pub fn scale_inplace(&mut self, scaler: &dyn Scaler) -> Result<(), ScalerFeatureMismatch> {
+        self.train.scale_inplace(scaler)?;
         if let Some(validation) = self.validation.as_mut() {
-            validation.scale_inplace(scaler);
+            validation.scale_inplace(scaler)?;
         }
-        self.test.scale_inplace(scaler);
+        self.test.scale_inplace(scaler)?;
+        Ok(())
     }
 }
 
@@ -580,7 +589,7 @@ mod tests {
 
         // Scaling skips the absent validation split without panicking.
         let scaler = split.train.fit_scaler(ScalerKind::MinMax);
-        split.scale_inplace(&scaler);
+        split.scale_inplace(&scaler).unwrap();
         assert!(split.train.inputs.iter().all(|&v| v.is_finite()));
     }
 
@@ -657,7 +666,7 @@ mod tests {
 
         // Fit on the column-major inputs and apply back in place.
         let scaler = model.fit_scaler(ScalerKind::MinMax);
-        model.scale_inplace(&scaler);
+        model.scale_inplace(&scaler).unwrap();
 
         assert!(
             model
@@ -679,7 +688,7 @@ mod tests {
 
         let mut split = dataset.split(0.2, 0.2, 0);
         let scaler = split.train.fit_scaler(ScalerKind::MinMax);
-        split.scale_inplace(&scaler);
+        split.scale_inplace(&scaler).unwrap();
 
         for part in [
             Some(&split.train),

@@ -3,6 +3,7 @@ use clap::Args;
 use ndarray::Array1;
 use nrn::data::Instance;
 use nrn::model::Predictor;
+use nrn::plot::DiagramOptions;
 use std::error::Error;
 use std::io::stdin;
 
@@ -14,6 +15,10 @@ pub struct PredictArgs {
     /// Instance file to predict on; when omitted, the features are read from stdin
     #[arg(short, long)]
     instance: Option<String>,
+
+    /// Print the forward-pass activation diagram before the classification
+    #[arg(short, long, default_value_t = false)]
+    activations: bool,
 }
 
 impl PredictArgs {
@@ -32,15 +37,13 @@ impl PredictArgs {
             None => read_instance(input_size)?,
         };
 
-        if instance.len() != input_size {
-            return Err(format!(
-                "instance has {} features but the model expects {input_size}",
-                instance.len()
-            )
-            .into());
+        if self.activations {
+            let diagram =
+                predictor.activation_diagram(instance.view(), &DiagramOptions::default())?;
+            println!("{}", diagram.to_console());
         }
 
-        let classification = predictor.classify_single(instance.view());
+        let classification = predictor.classify_single(instance.view())?;
         evaluated(&classification);
 
         Ok(())

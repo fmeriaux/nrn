@@ -1,5 +1,8 @@
-//! Rendering a [`Figure`] to a text canvas with `textplots`.
+//! Rendering a [`Figure`] to a text canvas with `textplots`, and an
+//! [`ActivationDiagram`] to a colored list of layers.
 
+use crate::classification::Classification;
+use crate::plot::activations::{ActivationDiagram, DiagramLayer, Unit};
 use crate::plot::scene::{Color as SceneColor, Figure, Panel, Series};
 use rgb::RGB8;
 use std::error::Error;
@@ -226,8 +229,13 @@ fn legend_line(panel: &Panel) -> Option<String> {
 /// A filled circle in `color`, as a truecolor-escaped string matching the dots
 /// `textplots` draws for that series.
 fn swatch(color: SceneColor) -> String {
+    colored('\u{25cf}', color)
+}
+
+/// `glyph` wrapped in a truecolor escape so it prints in `color`, reset after.
+fn colored(glyph: char, color: SceneColor) -> String {
     format!(
-        "\u{1b}[38;2;{};{};{}m\u{25cf}\u{1b}[0m",
+        "\u{1b}[38;2;{};{};{}m{glyph}\u{1b}[0m",
         color.red, color.green, color.blue
     )
 }
@@ -261,6 +269,72 @@ fn render_panel(panel: &Panel, cfg: &ConsoleConfig) -> String {
     chart.to_string()
 }
 
+/// The hollow marker color of a silent (non-firing) neuron.
+const SILENT_COLOR: SceneColor = SceneColor::rgb(90, 90, 90);
+
+impl ActivationDiagram {
+    /// Renders the forward pass as a vertical list of layers from input to
+    /// output: each neuron a colored marker beside its value — filled and tinted
+    /// by activation intensity when firing, hollow when silent — followed by the
+    /// predicted class ranking. No connections are drawn.
+    pub fn to_console(&self) -> String {
+        let mut output = String::new();
+        for layer in &self.layers {
+            output.push_str(&render_layer(layer));
+            output.push('\n');
+        }
+        output.push_str(&render_prediction(&self.prediction));
+        output
+    }
+}
+
+/// One layer as a heading naming its role and neuron count, then one line per
+/// shown neuron.
+fn render_layer(layer: &DiagramLayer) -> String {
+    let mut block = layer.heading();
+    block.push('\n');
+    for unit in &layer.units {
+        block.push_str(&render_unit(unit));
+        block.push('\n');
+    }
+    block
+}
+
+/// One neuron: a filled marker tinted by intensity when firing, or a hollow
+/// marker flagged silent, beside its index and value.
+fn render_unit(unit: &Unit) -> String {
+    if unit.firing {
+        format!(
+            "  {} n{:<3} {:>9.4}",
+            colored('\u{25cf}', unit.marker_color()),
+            unit.index,
+            unit.value
+        )
+    } else {
+        format!(
+            "  {} n{:<3} {:>9.4}  (silent)",
+            colored('\u{25cb}', SILENT_COLOR),
+            unit.index,
+            unit.value
+        )
+    }
+}
+
+/// The predicted class ranking: one line per class with its category swatch and
+/// probability, the most likely first and arrow-marked.
+fn render_prediction(prediction: &Classification) -> String {
+    let mut block = String::from("Prediction\n");
+    for (rank, &(class, probability)) in prediction.ranking().iter().enumerate() {
+        let marker = if rank == 0 { "  <-" } else { "" };
+        block.push_str(&format!(
+            "  {} class {class}  {:>5.1}%{marker}\n",
+            swatch(SceneColor::category(class)),
+            probability * 100.0
+        ));
+    }
+    block
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,6 +359,77 @@ mod tests {
                     radius: 1,
                 },
             ],
+        }
+    }
+
+    mod activation_diagram {
+        use super::*;
+        use crate::activations::{Activation, RELU};
+        use crate::model::{NeuralNetwork, NeuronLayer};
+        use crate::plot::activations::DiagramOptions;
+        use ndarray::{Array1, Array2, array};
+
+        /// A single ReLU layer; neuron 1's negative pre-activation goes silent.
+        fn diagram() -> ActivationDiagram {
+            let net = NeuralNetwork {
+                layers: vec![NeuronLayer {
+                    weights: array![[1.0, 0.0], [-1.0, 0.0], [2.0, 0.0]],
+                    biases: array![0.0, 0.0, 0.0],
+                    activation: RELU.clone(),
+                }],
+            };
+            net.activation_diagram(array![1.0, 1.0].view(), &DiagramOptions::default())
+                .unwrap()
+        }
+
+        #[test]
+        fn to_console_heads_each_layer_with_its_role_and_count() {
+            let text = diagram().to_console();
+            assert!(text.contains("Input (2 features)"));
+            assert!(text.contains(&format!("{} (3 units)", RELU.name())));
+        }
+
+        #[test]
+        fn to_console_marks_firing_neurons_filled_and_silent_neurons_hollow() {
+            let text = diagram().to_console();
+            // The dead neuron (value 0) is hollow and flagged; active ones are filled.
+            assert!(text.contains('\u{25cb}'));
+            assert!(text.contains("(silent)"));
+            assert!(text.contains('\u{25cf}'));
+            // Concrete activation values are printed beside their neuron.
+            assert!(text.contains("n2"));
+            assert!(text.contains("2.0000"));
+        }
+
+        #[test]
+        fn to_console_flags_a_sampled_layer_in_its_heading() {
+            let weights = Array2::from_shape_fn((50, 2), |(r, _)| r as f32);
+            let net = NeuralNetwork {
+                layers: vec![NeuronLayer {
+                    weights,
+                    biases: Array1::zeros(50),
+                    activation: RELU.clone(),
+                }],
+            };
+            let options = DiagramOptions {
+                max_units: 8,
+                ..DiagramOptions::default()
+            };
+            let text = net
+                .activation_diagram(array![1.0, 1.0].view(), &options)
+                .unwrap()
+                .to_console();
+            assert!(text.contains("showing 8 of 50 units"));
+        }
+
+        #[test]
+        fn to_console_lists_the_ranked_prediction_with_the_top_class_marked() {
+            // Output activations [1, 0, 2]: class 2 leads.
+            let text = diagram().to_console();
+            let prediction = text.split("Prediction").nth(1).unwrap();
+            let first = prediction.lines().nth(1).unwrap();
+            assert!(first.contains("class 2"));
+            assert!(first.contains("<-"));
         }
     }
 

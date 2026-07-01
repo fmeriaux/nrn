@@ -31,6 +31,19 @@ impl Color {
     pub const TEST: Color = Color::rgb(44, 160, 44);
     /// The color of the decision boundary overlay.
     pub const BOUNDARY: Color = Color::rgb(20, 20, 20);
+
+    /// The color of a positive weight or activation.
+    pub const POSITIVE: Color = Color::rgb(8, 119, 189);
+    /// The color of a negative weight or activation.
+    pub const NEGATIVE: Color = Color::rgb(245, 147, 34);
+
+    /// This color scaled toward black by `factor`, clamped to `[0, 1]` — `1`
+    /// leaves it unchanged, `0` yields black.
+    pub fn scaled(self, factor: f32) -> Color {
+        let factor = factor.clamp(0.0, 1.0);
+        let scale = |channel: u8| (channel as f32 * factor).round() as u8;
+        Color::rgb(scale(self.red), scale(self.green), scale(self.blue))
+    }
 }
 
 /// A categorical palette (the matplotlib `tab10` colors) for per-class scatter points.
@@ -159,6 +172,17 @@ mod tests {
         // Wraps around past the end of the palette.
         assert_eq!(Color::category(10), CATEGORY_PALETTE[0]);
         assert_eq!(Color::category(13), CATEGORY_PALETTE[3]);
+    }
+
+    #[test]
+    fn scaled_dims_each_channel_toward_black() {
+        let color = Color::rgb(200, 100, 40);
+        // Half brightness halves every channel; the bounds are the extremes.
+        assert_eq!(color.scaled(0.5), Color::rgb(100, 50, 20));
+        assert_eq!(color.scaled(1.0), color);
+        assert_eq!(color.scaled(0.0), Color::rgb(0, 0, 0));
+        // Out-of-range factors clamp rather than overshoot.
+        assert_eq!(color.scaled(2.0), color);
     }
 
     #[test]

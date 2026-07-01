@@ -64,7 +64,7 @@ impl ResumeArgs {
         };
 
         let spinner = Spinner::start("Preparing dataset");
-        let data = hyperparameters.prepare(dataset, scaler);
+        let data = hyperparameters.prepare(dataset, scaler)?;
         spinner.finish();
 
         let callbacks = Callbacks::empty()
@@ -76,7 +76,7 @@ impl ResumeArgs {
             ))
             .with_opt(recorder);
 
-        let mut trainer = hyperparameters.build(model, data, callbacks);
+        let mut trainer = hyperparameters.build(model, data, callbacks)?;
         trainer.restore(from_epoch, optimizer_state, scheduler_state)?;
         trainer.train()?.into_result().map_err(DivergedRun::from)?;
 

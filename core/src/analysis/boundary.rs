@@ -67,7 +67,9 @@ impl Predictor {
 
         let n_dims = mins.len();
         let (grid_points, inputs) = make_grid_and_inputs(mins, maxs, resolution);
-        let predictions = self.predict(inputs.view());
+        let predictions = self
+            .predict(inputs.view())
+            .expect("grid dimensionality matches the network input size");
 
         // Flat-index stride to reach the next grid point along each dimension.
         let strides: Vec<usize> = (0..n_dims)

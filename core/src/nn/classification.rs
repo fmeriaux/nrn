@@ -1,7 +1,7 @@
 //! The outcome of running a trained classifier on a single instance: the class
 //! probabilities, ranked most likely first.
 
-use crate::model::Predictor;
+use crate::model::{PredictionError, Predictor};
 use ndarray::ArrayView1;
 use std::cmp::Ordering::Equal;
 
@@ -44,8 +44,17 @@ impl Classification {
 impl Predictor {
     /// Classifies a single raw input vector, returning the class probabilities
     /// ranked most likely first. The scaler is applied first when present.
-    pub fn classify_single(&self, input: ArrayView1<f32>) -> Classification {
-        Classification::from_outputs(self.predict_single(input).view())
+    ///
+    /// # Errors
+    /// [`PredictionError`](crate::model::PredictionError) when the input's length does not
+    /// match the scaler's fitted feature count or the network's input size.
+    pub fn classify_single(
+        &self,
+        input: ArrayView1<f32>,
+    ) -> Result<Classification, PredictionError> {
+        Ok(Classification::from_outputs(
+            self.predict_single(input)?.view(),
+        ))
     }
 }
 
@@ -53,7 +62,9 @@ impl Predictor {
 mod tests {
     use super::Classification;
     use crate::activations::RELU;
-    use crate::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec, Predictor};
+    use crate::model::{
+        FeatureCountMismatch, LayerPlan, NeuralNetwork, NeuronLayerSpec, PredictionError, Predictor,
+    };
     use ndarray::array;
 
     #[test]
@@ -61,7 +72,7 @@ mod tests {
         let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![4]), 2, &*RELU).unwrap();
         let predictor = Predictor::new(NeuralNetwork::initialization(2, &specs, 0), None);
 
-        let classification = predictor.classify_single(array![0.3, 0.7].view());
+        let classification = predictor.classify_single(array![0.3, 0.7].view()).unwrap();
 
         // A binary network yields the two complementary class probabilities,
         // ranked by descending probability and summing to one.
@@ -70,6 +81,25 @@ mod tests {
         assert!(ranking[0].1 >= ranking[1].1);
         let sum: f32 = ranking.iter().map(|(_, p)| p).sum();
         assert!((sum - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn classify_single_rejects_an_instance_of_the_wrong_size() {
+        let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![4]), 2, &*RELU).unwrap();
+        let predictor = Predictor::new(NeuralNetwork::initialization(2, &specs, 0), None);
+
+        // The network expects two features; a three-feature instance is rejected.
+        // Without a scaler the mismatch surfaces from the network.
+        let error = predictor
+            .classify_single(array![0.1, 0.2, 0.3].view())
+            .unwrap_err();
+        assert_eq!(
+            error,
+            PredictionError::Network(FeatureCountMismatch {
+                expected: 2,
+                found: 3
+            })
+        );
     }
 
     #[test]

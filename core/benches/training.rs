@@ -105,14 +105,16 @@ fn loss() -> Arc<dyn LossFunction> {
 fn run_epoch(model: &mut NeuralNetwork, w: &Workload, mini_batch: Option<MiniBatch>) {
     let mut optimizer = Adam::with_defaults(LearningRate::new(0.01).unwrap(), WeightDecay::ZERO);
     let mut scheduler = ConstantScheduler::new(LearningRate::new(0.01).unwrap());
-    model.train(
-        &w.dataset,
-        &loss(),
-        &mut optimizer as &mut dyn Optimizer,
-        &mut scheduler as &mut dyn Scheduler,
-        &GradientClipping::None,
-        mini_batch,
-    );
+    model
+        .train(
+            &w.dataset,
+            &loss(),
+            &mut optimizer as &mut dyn Optimizer,
+            &mut scheduler as &mut dyn Scheduler,
+            &GradientClipping::None,
+            mini_batch,
+        )
+        .unwrap();
 }
 
 fn bench_inference(c: &mut Criterion) {

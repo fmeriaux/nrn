@@ -11,11 +11,11 @@
 //!
 //! let mut data = array![[0.0, 5.0], [10.0, 20.0]];
 //! let scaler = MinMaxScaler::default().fit(data.view());
-//! scaler.apply_inplace(data.view_mut());
+//! scaler.apply_inplace(data.view_mut()).unwrap();
 //! assert!(data.iter().all(|&v| v >= 0.0 && v <= 1.0 + 1e-5));
 //! ```
 
-use crate::data::scalers::Scaler;
+use crate::data::scalers::{Scaler, ScalerFeatureMismatch};
 use ndarray::{Array1, ArrayView2, ArrayViewMut2, Axis};
 
 /// Scaler that linearly rescales data feature-wise to a target range using the min-max method.
@@ -89,23 +89,20 @@ impl Scaler for MinMaxScaler {
     ///
     /// This means that such features will be mapped to the lower bound of the target range.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the number of columns in `data` does not match the number of features
-    /// in the scaler (`min` and `max` length).
+    /// [`ScalerFeatureMismatch`] when the number of columns in `data` does not match the
+    /// number of features in the scaler (`min` and `max` length).
     ///
     /// # Arguments
     ///
     /// * `data` - Mutable 2D array view of data to scale in-place.
     ///
-    fn apply_inplace(&self, mut data: ArrayViewMut2<f32>) {
-        assert_eq!(
-            data.shape()[1],
-            self.min.len(),
-            "Shape mismatch: data columns ({}) != min/max length ({})",
-            data.shape()[1],
-            self.min.len()
-        );
+    fn apply_inplace(&self, mut data: ArrayViewMut2<f32>) -> Result<(), ScalerFeatureMismatch> {
+        let (expected, found) = (self.min.len(), data.shape()[1]);
+        (found == expected)
+            .then_some(())
+            .ok_or(ScalerFeatureMismatch { expected, found })?;
 
         let (min_range, max_range) = self.range;
         let scale = max_range - min_range;
@@ -118,6 +115,7 @@ impl Scaler for MinMaxScaler {
                 *v = ((*v - min) / denom) * scale + min_range;
             }
         }
+        Ok(())
     }
 }
 
@@ -137,12 +135,12 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Shape mismatch: data columns")]
     fn apply_rejects_feature_count_mismatch() {
-        // Fitted on 2 features, applied to 3-column data → guard must fire.
+        // Fitted on 2 features, applied to 3-column data → error, not a panic.
         let scaler = MinMaxScaler::default().fit(array![[0.0, 0.0], [1.0, 1.0]].view());
         let mut wrong = array![[0.0, 0.0, 0.0]];
-        scaler.apply_inplace(wrong.view_mut());
+        let error = scaler.apply_inplace(wrong.view_mut()).unwrap_err();
+        assert_eq!((error.expected, error.found), (2, 3));
     }
 
     #[test]
@@ -150,7 +148,7 @@ mod tests {
         let data = array![[0.0, 0.0], [10.0, 100.0]];
         let scaler = MinMaxScaler::default().fit(data.view());
         let mut scaled = data.clone();
-        scaler.apply_inplace(scaled.view_mut());
+        scaler.apply_inplace(scaled.view_mut()).unwrap();
         assert!((scaled[[0, 0]] - 0.0).abs() < 1e-5);
         assert!((scaled[[1, 0]] - 1.0).abs() < 1e-5);
         assert!((scaled[[0, 1]] - 0.0).abs() < 1e-5);
@@ -162,7 +160,7 @@ mod tests {
         let data = array![[1.0, 5.0], [2.0, 15.0], [3.0, 25.0]];
         let scaler = MinMaxScaler::default().fit(data.view());
         let mut scaled = data.clone();
-        scaler.apply_inplace(scaled.view_mut());
+        scaler.apply_inplace(scaled.view_mut()).unwrap();
         for &v in scaled.iter() {
             assert!((0.0..=1.0 + 1e-5).contains(&v), "Value {} out of [0, 1]", v);
         }
@@ -174,7 +172,7 @@ mod tests {
         let data = array![[5.0, 1.0], [5.0, 2.0], [5.0, 3.0]];
         let scaler = MinMaxScaler::default().fit(data.view());
         let mut scaled = data.clone();
-        scaler.apply_inplace(scaled.view_mut());
+        scaler.apply_inplace(scaled.view_mut()).unwrap();
         // Constant feature maps to range lower bound (0.0)
         assert!((scaled[[0, 0]] - 0.0).abs() < 1e-3);
     }
@@ -185,10 +183,10 @@ mod tests {
         let scaler = MinMaxScaler::default().fit(data.view());
 
         let mut single = ndarray::array![2.0, 20.0];
-        scaler.apply_single_inplace(single.view_mut());
+        scaler.apply_single_inplace(single.view_mut()).unwrap();
 
         let mut batch = array![[2.0, 20.0]];
-        scaler.apply_inplace(batch.view_mut());
+        scaler.apply_inplace(batch.view_mut()).unwrap();
 
         assert!((single[0] - batch[[0, 0]]).abs() < 1e-6);
         assert!((single[1] - batch[[0, 1]]).abs() < 1e-6);

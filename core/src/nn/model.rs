@@ -5,7 +5,7 @@
 //! construction of multi-layer perceptron and similar models.
 
 use crate::activations::{Activation, SIGMOID, SOFTMAX};
-use crate::data::scalers::{Scaler, ScalerMethod};
+use crate::data::scalers::{Scaler, ScalerFeatureMismatch, ScalerMethod};
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
 use ndarray_rand::rand::RngCore;
 use ndarray_rand::rand::SeedableRng;
@@ -227,23 +227,23 @@ impl NeuralNetwork {
     }
 
     /// Computes the forward pass through the network, returning the activations of each layer.
-    /// # Panics
-    /// - When the number of rows in `inputs` does not match the number of columns in the weights of the first layer.
+    /// # Errors
+    /// [`FeatureCountMismatch`] when the feature rows of `inputs` do not match [`Self::input_size`].
     /// # Arguments
     /// - `inputs`: A 2D array representing the inputs to the network.
-    pub fn forward(&self, inputs: ArrayView2<f32>) -> Vec<Array2<f32>> {
-        assert_eq!(
-            inputs.nrows(),
-            self.layers[0].weights.ncols(),
-            "Input shape does not match the first layer's weights shape."
-        );
+    pub fn forward(
+        &self,
+        inputs: ArrayView2<f32>,
+    ) -> Result<Vec<Array2<f32>>, FeatureCountMismatch> {
+        self.validate_features(inputs.nrows())?;
 
-        self.layers
+        Ok(self
+            .layers
             .iter()
             .fold(vec![inputs.to_owned()], |mut acc, layer| {
                 acc.push(layer.forward(acc.last().unwrap()));
                 acc
-            })
+            }))
     }
 
     /// Returns `true` when all layers are finite (no NaN or Inf in any weight or bias).
@@ -251,24 +251,45 @@ impl NeuralNetwork {
         self.layers.iter().all(|layer| layer.is_finite())
     }
 
+    /// Validates that an instance of `features` values matches the network's input size.
+    ///
+    /// # Errors
+    /// [`FeatureCountMismatch`] when `features` differs from [`Self::input_size`].
+    pub fn validate_features(&self, features: usize) -> Result<(), FeatureCountMismatch> {
+        let expected = self.input_size();
+        (features == expected)
+            .then_some(())
+            .ok_or(FeatureCountMismatch {
+                expected,
+                found: features,
+            })
+    }
+
     /// Predicts the output of the network given the inputs, returning the final activations.
     /// # Arguments
-    /// - `inputs`: A 2D array representing the inputs to the network.
-    pub fn predict(&self, inputs: ArrayView2<f32>) -> Array2<f32> {
-        let output = last_activation(&self.forward(inputs));
+    /// - `inputs`: A 2D array `(features, samples)` representing the inputs to the network.
+    /// # Errors
+    /// [`FeatureCountMismatch`] when the feature rows do not match [`Self::input_size`].
+    pub fn predict(&self, inputs: ArrayView2<f32>) -> Result<Array2<f32>, FeatureCountMismatch> {
+        let output = last_activation(&self.forward(inputs)?);
         assert!(
             output.iter().all(|v| v.is_finite()),
             "non-finite predictions (NaN or inf): the model likely diverged during training"
         );
-        output
+        Ok(output)
     }
 
     /// Predicts the output of the network given a single input vector, returning the final activation.
     /// # Arguments
     /// - `input`: A 1D array representing a single input vector to the network.
-    pub fn predict_single(&self, input: ArrayView1<f32>) -> Array1<f32> {
+    /// # Errors
+    /// [`FeatureCountMismatch`] when `input`'s length does not match [`Self::input_size`].
+    pub fn predict_single(
+        &self,
+        input: ArrayView1<f32>,
+    ) -> Result<Array1<f32>, FeatureCountMismatch> {
         let inputs = input.insert_axis(Axis(1));
-        self.predict(inputs).column(0).to_owned()
+        Ok(self.predict(inputs)?.column(0).to_owned())
     }
 }
 
@@ -288,22 +309,86 @@ impl Predictor {
     }
 
     /// Predicts on a single raw input vector, applying the scaler first when present.
-    pub fn predict_single(&self, input: ArrayView1<f32>) -> Array1<f32> {
+    ///
+    /// # Errors
+    /// [`PredictionError::Scaling`] when a scaler is present and the input does not match
+    /// its fitted feature count, or [`PredictionError::Network`] when it does not match the
+    /// network's input size.
+    pub fn predict_single(&self, input: ArrayView1<f32>) -> Result<Array1<f32>, PredictionError> {
         let mut input = input.to_owned();
         if let Some(scaler) = &self.scaler {
-            scaler.apply_single_inplace(input.view_mut());
+            scaler.apply_single_inplace(input.view_mut())?;
         }
-        self.network.predict_single(input.view())
+        Ok(self.network.predict_single(input.view())?)
     }
 
     /// Predicts on a batch of raw inputs `(features, samples)`, applying the scaler
     /// first when present.
-    pub fn predict(&self, inputs: ArrayView2<f32>) -> Array2<f32> {
+    ///
+    /// # Errors
+    /// [`PredictionError::Scaling`] when a scaler is present and the inputs do not match
+    /// its fitted feature count, or [`PredictionError::Network`] when they do not match the
+    /// network's input size.
+    pub fn predict(&self, inputs: ArrayView2<f32>) -> Result<Array2<f32>, PredictionError> {
         let mut inputs = inputs.to_owned();
         if let Some(scaler) = &self.scaler {
-            scaler.apply_inplace(inputs.view_mut().reversed_axes());
+            scaler.apply_inplace(inputs.view_mut().reversed_axes())?;
         }
-        self.network.predict(inputs.view())
+        Ok(self.network.predict(inputs.view())?)
+    }
+}
+
+/// An instance's feature count did not match the network's input size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FeatureCountMismatch {
+    /// The number of input features the network expects.
+    pub expected: usize,
+    /// The number of features the instance carries.
+    pub found: usize,
+}
+
+impl fmt::Display for FeatureCountMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "instance has {} features but the model expects {}",
+            self.found, self.expected
+        )
+    }
+}
+
+impl std::error::Error for FeatureCountMismatch {}
+
+/// A [`Predictor`] rejected an instance: either its scaler or its network found the
+/// wrong number of features.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PredictionError {
+    /// The scaler's fitted feature count did not match the input.
+    Scaling(ScalerFeatureMismatch),
+    /// The network's input size did not match the input.
+    Network(FeatureCountMismatch),
+}
+
+impl fmt::Display for PredictionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PredictionError::Scaling(e) => write!(f, "{e}"),
+            PredictionError::Network(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for PredictionError {}
+
+impl From<ScalerFeatureMismatch> for PredictionError {
+    fn from(error: ScalerFeatureMismatch) -> Self {
+        PredictionError::Scaling(error)
+    }
+}
+
+impl From<FeatureCountMismatch> for PredictionError {
+    fn from(error: FeatureCountMismatch) -> Self {
+        PredictionError::Network(error)
     }
 }
 
@@ -511,7 +596,7 @@ mod tests {
         let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 3);
         let model = NeuralNetwork::initialization(3, &specs, 0);
         let inputs = Array2::zeros((3, 5)); // (features, samples)
-        let output = model.predict(inputs.view());
+        let output = model.predict(inputs.view()).unwrap();
         assert_eq!(output.shape(), &[3, 5]); // (classes, samples)
     }
 
@@ -524,7 +609,7 @@ mod tests {
 
         // Any input should produce relu(1.0)=1.0 and relu(-1.0)=0.0
         let inputs = array![[5.0, 9.0], [2.0, 7.0], [8.0, 3.0]];
-        let output = model.predict(inputs.view());
+        let output = model.predict(inputs.view()).unwrap();
         for col in output.columns() {
             assert!((col[0] - 1.0).abs() < 1e-6);
             assert!((col[1] - 0.0).abs() < 1e-6);
@@ -536,7 +621,7 @@ mod tests {
         // weights = I, bias = 0, relu -> output == input for positive values
         let model = make_network(Array2::eye(3), Array1::zeros(3), RELU.clone());
         let inputs = array![[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]];
-        let output = model.predict(inputs.view());
+        let output = model.predict(inputs.view()).unwrap();
         assert!((&output - &inputs).mapv(f32::abs).iter().all(|&v| v < 1e-6));
     }
 
@@ -551,7 +636,7 @@ mod tests {
             [100.0, -100.0],
             [100.0, -100.0]
         ];
-        let output = model.predict(inputs.view());
+        let output = model.predict(inputs.view()).unwrap();
         for &v in output.iter() {
             assert!(
                 (0.0..=1.0).contains(&v),
@@ -567,8 +652,8 @@ mod tests {
         let model = NeuralNetwork::initialization(3, &specs, 0);
         let inputs = Array2::zeros((3, 5));
 
-        let activations = model.forward(inputs.view());
-        let predicted = model.predict(inputs.view());
+        let activations = model.forward(inputs.view()).unwrap();
+        let predicted = model.predict(inputs.view()).unwrap();
 
         assert_eq!(predicted, *activations.last().unwrap());
     }
@@ -579,7 +664,7 @@ mod tests {
         let mut model = make_network(Array2::zeros((1, 2)), Array1::zeros(1), SIGMOID.clone());
         model.layers[0].weights = array![[f32::NAN, 0.0]];
         let inputs = array![[1.0], [1.0]];
-        model.predict(inputs.view());
+        let _ = model.predict(inputs.view());
     }
 
     #[test]
@@ -621,10 +706,10 @@ mod tests {
         let model = NeuralNetwork::initialization(3, &specs, 0);
 
         let sample = array![1.0, 2.0, 3.0];
-        let single = model.predict_single(sample.view());
+        let single = model.predict_single(sample.view()).unwrap();
 
         let batch = array![[1.0], [2.0], [3.0]]; // (features, 1 sample)
-        let batch_output = model.predict(batch.view());
+        let batch_output = model.predict(batch.view()).unwrap();
 
         assert!(
             (single - batch_output.column(0))
