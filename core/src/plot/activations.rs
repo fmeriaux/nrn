@@ -51,6 +51,10 @@ pub struct Unit {
     pub intensity: f32,
     /// Whether the neuron's magnitude exceeds the silence threshold.
     pub firing: bool,
+    /// The output class this neuron carries when it belongs to the output layer,
+    /// where its `value` is that class's probability; `None` for input and hidden
+    /// neurons.
+    pub class: Option<usize>,
 }
 
 impl Unit {
@@ -160,7 +164,7 @@ pub struct ActivationDiagram {
     /// The layers from input to output, in order.
     pub layers: Vec<DiagramLayer>,
     /// The class probabilities, ranked most likely first.
-    pub prediction: Classification,
+    pub classification: Classification,
 }
 
 impl NeuralNetwork {
@@ -175,6 +179,7 @@ impl NeuralNetwork {
         options: &DiagramOptions,
     ) -> Result<ActivationDiagram, FeatureCountMismatch> {
         let activations = self.forward(input.insert_axis(Axis(1)))?;
+        let last_stage = activations.len() - 1;
         let shown: Vec<Vec<usize>> = activations
             .iter()
             .map(|values| shown_indices(values.column(0), options.max_units))
@@ -201,17 +206,24 @@ impl NeuralNetwork {
                         edges,
                     )
                 };
+                let mut units = units_for(column, &shown[stage]);
+                if stage == last_stage {
+                    label_output_classes(&mut units, column.len());
+                }
                 DiagramLayer {
                     role,
-                    units: units_for(column, &shown[stage]),
+                    units,
                     total_units: column.len(),
                     edges,
                 }
             })
             .collect();
 
-        let prediction = Classification::from_outputs(activations.last().unwrap().column(0));
-        Ok(ActivationDiagram { layers, prediction })
+        let classification = Classification::from_outputs(activations.last().unwrap().column(0));
+        Ok(ActivationDiagram {
+            layers,
+            classification,
+        })
     }
 }
 
@@ -268,9 +280,23 @@ fn units_for(column: ArrayView1<f32>, shown: &[usize]) -> Vec<Unit> {
                 value,
                 intensity: if peak > 0.0 { value.abs() / peak } else { 0.0 },
                 firing: value.abs() > FIRING_EPSILON,
+                class: None,
             }
         })
         .collect()
+}
+
+/// Tags each output neuron with the class it carries: a single output is the
+/// binary positive class (`1`), while several outputs each stand for the class at
+/// their own index. Their `value` is already that class's probability, so the
+/// intensity is reset to track that probability directly rather than the layer's
+/// peak — the bar and tint then read as confidence, not relative rank.
+fn label_output_classes(units: &mut [Unit], output_count: usize) {
+    let binary = output_count == 1;
+    for unit in units {
+        unit.class = Some(if binary { 1 } else { unit.index });
+        unit.intensity = unit.value.clamp(0.0, 1.0);
+    }
 }
 
 /// The connections from the previous layer's shown neurons to this layer's, with
@@ -393,11 +419,23 @@ mod tests {
 
     #[test]
     fn a_dead_relu_neuron_is_silent_with_zero_intensity() {
-        // Row 1's negative pre-activation is clamped to zero by ReLU.
-        let net = relu_layer(
-            array![[1.0, 0.0], [-1.0, 0.0], [2.0, 0.0]],
-            array![0.0, 0.0, 0.0],
-        );
+        // Row 1's negative pre-activation is clamped to zero by ReLU. Tested on a
+        // hidden layer, whose intensity is peak-normalized (an output layer's
+        // intensity tracks its probability instead).
+        let net = NeuralNetwork {
+            layers: vec![
+                NeuronLayer {
+                    weights: array![[1.0, 0.0], [-1.0, 0.0], [2.0, 0.0]],
+                    biases: array![0.0, 0.0, 0.0],
+                    activation: RELU.clone(),
+                },
+                NeuronLayer {
+                    weights: array![[1.0, 0.0, 0.0]],
+                    biases: array![0.0],
+                    activation: RELU.clone(),
+                },
+            ],
+        };
         let diagram = net
             .activation_diagram(array![1.0, 1.0].view(), &DiagramOptions::default())
             .unwrap();
@@ -535,12 +573,14 @@ mod tests {
             value: 1.0,
             intensity: 1.0,
             firing: true,
+            class: None,
         };
         let negative = Unit {
             index: 1,
             value: -1.0,
             intensity: 1.0,
             firing: true,
+            class: None,
         };
         // At full intensity the marker is its base hue, blue for positive and orange
         // for negative.
@@ -571,14 +611,57 @@ mod tests {
     }
 
     #[test]
-    fn the_prediction_ranks_the_output_activations() {
+    fn the_classification_ranks_the_output_activations() {
         let net = relu_layer(array![[1.0, 0.0], [3.0, 0.0]], array![0.0, 0.0]);
         let diagram = net
             .activation_diagram(array![1.0, 0.0].view(), &DiagramOptions::default())
             .unwrap();
 
         // Output activations [1.0, 3.0]: class 1 leads.
-        assert_eq!(diagram.prediction.top().0, 1);
+        assert_eq!(diagram.classification.top().0, 1);
+    }
+
+    #[test]
+    fn multi_output_neurons_carry_their_own_class() {
+        let net = relu_layer(array![[1.0, 0.0], [3.0, 0.0]], array![0.0, 0.0]);
+        let diagram = net
+            .activation_diagram(array![1.0, 0.0].view(), &DiagramOptions::default())
+            .unwrap();
+
+        // Two output neurons stand for classes 0 and 1 at their own index.
+        let output = diagram.layers.last().unwrap();
+        assert_eq!(output.units[0].class, Some(0));
+        assert_eq!(output.units[1].class, Some(1));
+        // Hidden and input neurons carry no class.
+        assert!(diagram.layers[0].units.iter().all(|u| u.class.is_none()));
+    }
+
+    #[test]
+    fn output_neuron_intensity_tracks_its_probability_not_the_layer_peak() {
+        // Output activations [0.3, 0.4]: read as probabilities, each neuron's
+        // intensity is its own value, not the smaller one scaled up against the
+        // peak (which would make the 0.3 class render at 0.75 intensity).
+        let net = relu_layer(array![[0.3, 0.0], [0.4, 0.0]], array![0.0, 0.0]);
+        let diagram = net
+            .activation_diagram(array![1.0, 0.0].view(), &DiagramOptions::default())
+            .unwrap();
+
+        let output = diagram.layers.last().unwrap();
+        assert_eq!(output.units[0].intensity, 0.3);
+        assert_eq!(output.units[1].intensity, 0.4);
+    }
+
+    #[test]
+    fn a_single_output_neuron_carries_the_binary_positive_class() {
+        let net = relu_layer(array![[1.0, 0.0]], array![0.0]);
+        let diagram = net
+            .activation_diagram(array![1.0, 1.0].view(), &DiagramOptions::default())
+            .unwrap();
+
+        // A lone output neuron is the sigmoid positive class (class 1).
+        let output = diagram.layers.last().unwrap();
+        assert_eq!(output.units.len(), 1);
+        assert_eq!(output.units[0].class, Some(1));
     }
 
     #[test]
@@ -596,7 +679,7 @@ mod tests {
 
         // Without a scaler the predictor feeds the raw input straight through.
         assert_eq!(from_predictor.layers[0].units, from_network.layers[0].units);
-        assert_eq!(from_predictor.prediction, from_network.prediction);
+        assert_eq!(from_predictor.classification, from_network.classification);
     }
 
     #[test]

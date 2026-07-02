@@ -261,48 +261,51 @@ closes neatly around the inner blob:
 | --- | --- |
 | ![Loss and accuracy converging](docs/images/ring-curves.png) | ![A curved boundary wrapping around the inner ring](docs/images/ring-boundary.gif) |
 
-**Peek inside the forward pass.** Add `--activations` to `predict` (or use `nrn plot activations`) to see
-how one instance lights up the network: each neuron is colored by how strongly it fires — positive in blue,
-negative in orange, hollow when silent — with the concrete value and an intensity bar beside it, ending in
-the ranked prediction.
+**Peek inside the forward pass.** Add `--activations` to `predict` to see how one instance lights up the
+network: each neuron is colored by how strongly it fires — positive in blue, negative in orange, hollow when
+silent — with the concrete value and an intensity bar beside it. The output layer reads its neurons as class
+probabilities, and the ranked decision follows as the classification, its winning class arrow-marked.
 
 ```sh
-nrn predict model-ring-seed1024-c2-f2-n500 --activations
+nrn predict model-ring --activations
 ```
 
 ```
 Input (2 features)
-  ● n0     -0.6008  ██████████
-  ● n1      1.3873  ████████████████████████
+  ● n0      0.7106  ████████████████████████
+  ● n1      0.3441  ████████████
 
 relu (16 units)
-  ○ n0      0.0000                      silent
-  ● n4      0.7730  ███████
-  ● n5      2.8036  ████████████████████████
+  ○ n0      0.0000                    silent
+  ● n5      1.7164  ████████████████████████
+  ● n10     0.5265  ███████
+  ● n15     1.2620  ██████████████████
   …
-  ● n15     0.6402  █████
 
 relu (8 units)
-  ● n1      4.7342  █████████████████
-  ● n2      6.6462  ████████████████████████
-  ○ n4      0.0000                      silent
+  ● n1      2.1787  ████████████████████████
+  ○ n2      0.0000                    silent
+  ● n5      2.1241  ███████████████████████
   …
 
 sigmoid (1 unit)
-  ● n0      1.0000  ████████████████████████
+  ● class 1    7.7%  ██
 
-Prediction
-  ● class 1  100.0%  ◀
-    class 0    0.0%
+📊 CLASSIFICATION
+   Class 0 ... 92.27%  ◀
+   Class 1 ...  7.73%
 ```
 
-For a horizontal node-link graph instead — neurons as circles labeled by index (input and output values
-annotated), connections colored by weight sign and weighted by magnitude, with a legend along the bottom —
-render it to an image with `nrn plot activations <model> --instance <file> --format image`
+`nrn plot activations` renders the same diagram as a pure figure (no ranked decision — that stays with
+`predict`). For a horizontal node-link graph instead — neurons as circles labeled by index, output neurons
+by class and probability, connections colored by weight sign and weighted by magnitude, with a legend along
+the bottom — render it to an image with `nrn plot activations <model> --instance <file> --format image`
 (`--max-units` keeps a wide layer's most active neurons, `--min-edge` prunes connections by contribution —
 `|weight × activation|`, so a strong weight from a silent neuron is dropped; defaults to `0.01` — `-o/--output`
 sets the file, defaulting to `activations-<model>.png` in the current directory). As with `predict`, omit
 `--instance` to type the features in at the prompt.
+
+![The same forward pass as a node-link graph: input features on the left, two hidden ReLU columns, and the sigmoid output read as class 1 at 7.7%](docs/images/ring-activations.png)
 
 ### 3 · Many classes at once: multi-class MLP
 

@@ -1,9 +1,9 @@
 //! Rendering an [`ActivationDiagram`] to a colored, vertical list of layers:
-//! each neuron a marker beside its value and an intensity bar, closing with the
-//! ranked prediction. No connections are drawn.
+//! each neuron a marker beside its value and an intensity bar. The output layer
+//! reads its neurons as class probabilities. No connections are drawn, and the
+//! ranked decision is left to the caller.
 
-use super::{colored, colored_str, swatch};
-use crate::classification::Classification;
+use super::{colored, colored_str};
 use crate::plot::activations::{ActivationDiagram, DiagramLayer, Unit};
 use crate::plot::scene::Color as SceneColor;
 
@@ -16,15 +16,15 @@ const BAR_WIDTH: usize = 24;
 impl ActivationDiagram {
     /// Renders the forward pass as a vertical list of layers from input to
     /// output: each neuron a colored marker beside its value — filled and tinted
-    /// by activation intensity when firing, hollow when silent — followed by the
-    /// predicted class ranking. No connections are drawn.
+    /// by activation intensity when firing, hollow when silent. The output layer's
+    /// neurons read as their class probability. No connections are drawn; the
+    /// ranked decision is presented separately by the caller.
     pub fn to_console(&self) -> String {
         let mut output = String::new();
         for layer in &self.layers {
             output.push_str(&render_layer(layer));
             output.push('\n');
         }
-        output.push_str(&render_prediction(&self.prediction));
         output
     }
 }
@@ -41,10 +41,19 @@ fn render_layer(layer: &DiagramLayer) -> String {
     block
 }
 
-/// One neuron: its marker, index and value, followed by a bar whose length tracks
-/// activation intensity when firing, or a right-aligned `silent` flag otherwise.
+/// One neuron. An output neuron reads as its class and probability; otherwise its
+/// marker, index and value, followed by a bar whose length tracks activation
+/// intensity when firing, or a right-aligned `silent` flag when not.
 fn render_unit(unit: &Unit) -> String {
-    if unit.firing {
+    if let Some(class) = unit.class {
+        let filled = (unit.intensity * BAR_WIDTH as f32).round() as usize;
+        let bar = colored_str(&"\u{2588}".repeat(filled), unit.marker_color());
+        format!(
+            "  {} class {class}  {:>5.1}%  {bar}",
+            colored('\u{25cf}', unit.marker_color()),
+            unit.value * 100.0
+        )
+    } else if unit.firing {
         let filled = (unit.intensity * BAR_WIDTH as f32).round() as usize;
         let bar = colored_str(&"\u{2588}".repeat(filled), unit.marker_color());
         format!(
@@ -64,27 +73,6 @@ fn render_unit(unit: &Unit) -> String {
     }
 }
 
-/// The predicted class ranking, most likely first: the top class carries its
-/// category swatch and an arrow, the rest are indented beneath it.
-fn render_prediction(prediction: &Classification) -> String {
-    let mut block = format!("{}\n", bold("Prediction"));
-    for (rank, &(class, probability)) in prediction.ranking().iter().enumerate() {
-        if rank == 0 {
-            block.push_str(&format!(
-                "  {} class {class}  {:>5.1}%  \u{25c0}\n",
-                swatch(SceneColor::category(class)),
-                probability * 100.0
-            ));
-        } else {
-            block.push_str(&format!(
-                "    class {class}  {:>5.1}%\n",
-                probability * 100.0
-            ));
-        }
-    }
-    block
-}
-
 /// `text` wrapped in the ANSI bold escape, reset after.
 fn bold(text: &str) -> String {
     format!("\u{1b}[1m{text}\u{1b}[0m")
@@ -98,14 +86,22 @@ mod tests {
     use crate::plot::activations::DiagramOptions;
     use ndarray::{Array1, Array2, array};
 
-    /// A single ReLU layer; neuron 1's negative pre-activation goes silent.
+    /// A hidden ReLU layer whose middle neuron dies, then a two-class output
+    /// layer resolving to probabilities `[0.3, 0.4]`.
     fn diagram() -> ActivationDiagram {
         let net = NeuralNetwork {
-            layers: vec![NeuronLayer {
-                weights: array![[1.0, 0.0], [-1.0, 0.0], [2.0, 0.0]],
-                biases: array![0.0, 0.0, 0.0],
-                activation: RELU.clone(),
-            }],
+            layers: vec![
+                NeuronLayer {
+                    weights: array![[1.0, 0.0], [-1.0, 0.0], [2.0, 0.0]],
+                    biases: array![0.0, 0.0, 0.0],
+                    activation: RELU.clone(),
+                },
+                NeuronLayer {
+                    weights: array![[0.3, 0.0, 0.0], [0.0, 0.0, 0.2]],
+                    biases: array![0.0, 0.0],
+                    activation: RELU.clone(),
+                },
+            ],
         };
         net.activation_diagram(array![1.0, 1.0].view(), &DiagramOptions::default())
             .unwrap()
@@ -121,7 +117,7 @@ mod tests {
     #[test]
     fn to_console_marks_firing_neurons_filled_and_silent_neurons_hollow() {
         let text = diagram().to_console();
-        // The dead neuron (value 0) is hollow and flagged; active ones are filled.
+        // The dead hidden neuron (value 0) is hollow and flagged; active ones are filled.
         assert!(text.contains('\u{25cb}'));
         assert!(text.contains("silent"));
         assert!(text.contains('\u{25cf}'));
@@ -131,9 +127,19 @@ mod tests {
     }
 
     #[test]
+    fn to_console_reads_the_output_layer_as_class_probabilities() {
+        let text = diagram().to_console();
+        // The output neurons read as their class and probability, not raw values.
+        assert!(text.contains("class 0"));
+        assert!(text.contains("class 1"));
+        assert!(text.contains("30.0%"));
+        assert!(text.contains("40.0%"));
+    }
+
+    #[test]
     fn to_console_draws_an_intensity_bar_for_a_firing_neuron() {
         let text = diagram().to_console();
-        // The peak-intensity neuron draws a full-width bar of block glyphs.
+        // The peak-intensity hidden neuron draws a full-width bar of block glyphs.
         assert!(text.contains(&"\u{2588}".repeat(BAR_WIDTH)));
     }
 
@@ -141,7 +147,7 @@ mod tests {
     fn to_console_renders_headings_in_bold() {
         let text = diagram().to_console();
         assert!(text.contains(&bold("Input (2 features)")));
-        assert!(text.contains(&bold("Prediction")));
+        assert!(text.contains(&bold(&format!("{} (2 units)", RELU.name()))));
     }
 
     #[test]
@@ -163,15 +169,5 @@ mod tests {
             .unwrap()
             .to_console();
         assert!(text.contains("showing the 8 most active of 50 units"));
-    }
-
-    #[test]
-    fn to_console_lists_the_ranked_prediction_with_the_top_class_marked() {
-        // Output activations [1, 0, 2]: class 2 leads.
-        let text = diagram().to_console();
-        let prediction = text.split("Prediction").nth(1).unwrap();
-        let first = prediction.lines().nth(1).unwrap();
-        assert!(first.contains("class 2"));
-        assert!(first.contains('\u{25c0}'));
     }
 }
