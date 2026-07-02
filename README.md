@@ -217,8 +217,9 @@ nrn predict model-uniform-seed1024-c2-f2-n500
 
 Feature 0 ▸ -30
 Feature 1 ▸ 60
+
 📊 CLASSIFICATION
-   Class 0 ... 99.22%
+   Class 0 ... 99.22% ◀
    Class 1 ...  0.78%
 ```
 
@@ -272,28 +273,28 @@ nrn predict model-ring --activations
 
 ```
 Input (2 features)
-  ● n0      0.7106  ████████████████████████
-  ● n1      0.3441  ████████████
+  ● n0      1.0612  ████████████████████████
+  ● n1      0.6778  ███████████████
 
 relu (16 units)
   ○ n0      0.0000                    silent
-  ● n5      1.7164  ████████████████████████
-  ● n10     0.5265  ███████
-  ● n15     1.2620  ██████████████████
+  ● n5      2.6572  ████████████████████████
+  ● n13     1.3679  ████████████
+  ● n15     2.1170  ███████████████████
   …
 
 relu (8 units)
-  ● n1      2.1787  ████████████████████████
-  ○ n2      0.0000                    silent
-  ● n5      2.1241  ███████████████████████
+  ● n1      7.2430  ████████████████████████
+  ○ n4      0.0000                    silent
+  ● n5      6.0790  ████████████████████
   …
 
 sigmoid (1 unit)
-  ● class 1    7.7%  ██
+  ● class 1   92.2%  ██████████████████████
 
 📊 CLASSIFICATION
-   Class 0 ... 92.27%  ◀
-   Class 1 ...  7.73%
+   Class 1 ... 92.22%  ◀
+   Class 0 ...  7.78%
 ```
 
 `nrn plot activations` renders the same diagram as a pure figure (no ranked decision — that stays with
@@ -305,7 +306,7 @@ the bottom — render it to an image with `nrn plot activations <model> --instan
 sets the file, defaulting to `activations-<model>.png` in the current directory). As with `predict`, omit
 `--instance` to type the features in at the prompt.
 
-![The same forward pass as a node-link graph: input features on the left, two hidden ReLU columns, and the sigmoid output read as class 1 at 7.7%](docs/images/ring-activations.png)
+![The same forward pass as a node-link graph: input features on the left, two hidden ReLU columns, and the sigmoid output read as class 1 at 92.2%](docs/images/ring-activations.png)
 
 ### 3 · Many classes at once: multi-class MLP
 

@@ -19,7 +19,7 @@ const LABEL_BAND: i32 = 30;
 const LEGEND_BAND: i32 = 54;
 /// Extra horizontal room on each side for the input and output value labels.
 const VALUE_GUTTER: i32 = 52;
-/// The outline color of a silent (non-firing) neuron on the white canvas.
+/// The outline color of a silent (non-firing) neuron on the diagram canvas.
 const SILENT_NODE: SceneColor = SceneColor::rgb(150, 150, 150);
 
 /// One entry's marker in the legend row.
@@ -47,10 +47,11 @@ impl ActivationDiagram {
         {
             let root =
                 BitMapBackend::with_buffer(&mut bytes, (cfg.width, cfg.height)).into_drawing_area();
-            root.fill(&WHITE)?;
+            root.fill(&rgb(SceneColor::CANVAS))?;
 
             let positions = self.node_positions(cfg);
             let radius = self.node_radius(cfg);
+            self.draw_bands(&root, &positions, cfg)?;
             self.draw_edges(&root, &positions)?;
             self.draw_nodes(&root, &positions, radius)?;
             self.draw_indices(&root, &positions, radius, cfg)?;
@@ -99,6 +100,39 @@ impl ActivationDiagram {
             field
         };
         (gap / 3).clamp(3, 14)
+    }
+
+    /// Shades every other layer column with a faint band, giving the node field
+    /// a vertical rhythm that reads as discrete layers rather than a flat canvas.
+    /// Each band spans from the midpoint to its neighbours, widening to the value
+    /// gutters at the input and output edges.
+    fn draw_bands(
+        &self,
+        root: &DrawingArea<BitMapBackend, Shift>,
+        positions: &[Vec<(i32, i32)>],
+        cfg: &ImageConfig,
+    ) -> Result<(), Box<dyn Error>> {
+        let xs: Vec<i32> = positions
+            .iter()
+            .filter_map(|column| column.first().map(|&(x, _)| x))
+            .collect();
+        let top = DIAGRAM_MARGIN;
+        let bottom = cfg.height as i32 - LEGEND_BAND;
+        let style = rgb(SceneColor::LAYER_BAND).filled();
+
+        for (column, &x) in xs.iter().enumerate().step_by(2) {
+            let left = if column == 0 {
+                x - VALUE_GUTTER
+            } else {
+                (xs[column - 1] + x) / 2
+            };
+            let right = match xs.get(column + 1) {
+                Some(&next) => (x + next) / 2,
+                None => x + VALUE_GUTTER,
+            };
+            root.draw(&Rectangle::new([(left, top), (right, bottom)], style))?;
+        }
+        Ok(())
     }
 
     /// Draws each connection as a line between the neurons it joins, colored by
@@ -356,8 +390,11 @@ mod tests {
         let image = diagram().to_image(&ImageConfig::new(300, 200)).unwrap();
         assert_eq!((image.width, image.height), (300, 200));
         assert_eq!(pixel_count(&image.bytes), 300 * 200);
-        // Nodes, edges and labels leave non-white pixels behind.
-        assert!(image.bytes.iter().any(|&byte| byte != 255));
+        // A corner outside the node field carries the soft canvas fill, not white.
+        let canvas = SceneColor::CANVAS;
+        assert_eq!(&image.bytes[0..3], &[canvas.red, canvas.green, canvas.blue]);
+        // Nodes, edges and labels are drawn darker than the canvas and its bands.
+        assert!(image.bytes.iter().any(|&byte| byte < 200));
     }
 
     #[test]

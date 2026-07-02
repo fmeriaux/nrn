@@ -32,6 +32,11 @@ impl Color {
     /// The color of the decision boundary overlay.
     pub const BOUNDARY: Color = Color::rgb(20, 20, 20);
 
+    /// The soft canvas a rasterized diagram is drawn on.
+    pub const CANVAS: Color = Color::rgb(246, 247, 250);
+    /// The band shading every other layer column of a diagram.
+    pub const LAYER_BAND: Color = Color::rgb(236, 239, 244);
+
     /// The color of a positive weight or activation.
     pub const POSITIVE: Color = Color::rgb(8, 119, 189);
     /// The color of a negative weight or activation.

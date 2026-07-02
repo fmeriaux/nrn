@@ -123,24 +123,16 @@ A backend-neutral figure IR with feature-gated renderers, in three stages:
 - **`activations.rs`** (always compiled) — a *separate* IR from `Figure`, for a single instance's
   forward pass rather than a chart: `ActivationDiagram` (per-layer `DiagramLayer`s of colored `Unit`s
   and weighted `Edge`s, plus the `Classification`). `NeuralNetwork::activation_diagram` /
-  `Predictor::activation_diagram` (the latter scales the input first) build it; a layer over
-  `DiagramOptions::max_units` keeps only its most active neurons (top-k by `|activation|`, then sorted
-  by index) and edges are pruned below `min_edge_magnitude` by *contribution* (`|weight × source
-  activation|`, not weight alone, so a strong weight out of a silent neuron is dropped). The output
-  layer's `Unit`s carry the class they stand for (`Unit::class`: a lone output is the binary positive
-  class, several outputs each their own index), so both renderers read the output neurons as class
-  probabilities rather than raw values. `Unit::marker_color` (sign → blue/orange, dimmed by intensity)
-  and `DiagramLayer::heading` (with a compact `short_heading` for the width-constrained image) are
-  shared by both renderers. The diagram deliberately does *not* render the ranked decision — that stays
-  with the CLI's `evaluated` presenter (via `Describe for Classification`), so the ranking has one home.
+  `Predictor::activation_diagram` (the latter scales the input first) build it, applying
+  `DiagramOptions` to cap the units shown per layer (`max_units`) and prune weak edges by contribution
+  (`min_edge_magnitude`). Output `Unit`s carry the class they represent, so both renderers read them as
+  class probabilities. The diagram deliberately does *not* render the ranked decision — that stays with
+  the CLI's `evaluated` presenter (via `Describe for Classification`), so the ranking has one home.
 - **`image/`** (`raster`, `plotters`) and **`console/`** (`console`, `textplots`) — the two renderers,
   each a folder split by IR: `mod.rs` owns the shared config (`ImageConfig` / `ConsoleConfig`) and
-  color helpers, `figure.rs` renders `Figure`, `diagram.rs` renders `ActivationDiagram`. `Figure::to_image`
-  produces a `RasterImage`, and `ActivationDiagram::to_image` draws a horizontal node-link graph (nodes
-  tinted by activation, labeled by index — output nodes by class and probability, edges colored by weight
-  sign with width/opacity by magnitude, plus a legend).
-  `Figure::to_console` produces a `String`, and `ActivationDiagram::to_console` lists the layers
-  vertically (nodes only, no edges), the output layer read as class probabilities. Pure rendering — the
+  color helpers, `figure.rs` renders `Figure`, `diagram.rs` renders `ActivationDiagram`. `Figure` becomes
+  a `RasterImage` or a `String`; `ActivationDiagram::to_image` draws a horizontal node-link graph and
+  `ActivationDiagram::to_console` lists the layers vertically (nodes only, no edges). Pure rendering — the
   caller persists the bytes (`io`) or prints the text. Animations are streamed frame-by-frame to a GIF by
   `io`'s `GifWriter` (no in-memory frame buffer).
 
