@@ -25,7 +25,9 @@ const MARKER_FLOOR: f32 = 0.35;
 pub struct DiagramOptions {
     /// Maximum neurons shown per layer; larger layers are sampled evenly.
     pub max_units: usize,
-    /// Connections whose normalized magnitude falls below this are dropped.
+    /// Connections whose normalized contribution `|weight × source activation|`
+    /// falls below this are dropped, so a strong weight from a silent neuron
+    /// (contributing nothing to this instance) is pruned away.
     pub min_edge_magnitude: f32,
 }
 
@@ -175,6 +177,7 @@ impl NeuralNetwork {
                     let layer = &self.layers[stage - 1];
                     let edges = edges_for(
                         &layer.weights,
+                        activations[stage - 1].column(0),
                         &shown[stage - 1],
                         &shown[stage],
                         options.min_edge_magnitude,
@@ -252,22 +255,41 @@ fn units_for(column: ArrayView1<f32>, shown: &[usize]) -> Vec<Unit> {
         .collect()
 }
 
-/// The connections from the previous layer's shown neurons to this layer's,
-/// normalized by the layer's peak weight magnitude and pruned below `min_magnitude`.
-/// `weights` is `(this layer's neurons, previous layer's neurons)`.
+/// The connections from the previous layer's shown neurons to this layer's, with
+/// the drawn width tracking each weight's magnitude (normalized by the layer's
+/// peak weight) and pruning by contribution: a connection whose
+/// `|weight × source activation|`, normalized by the layer's peak contribution,
+/// falls below `min_magnitude` is dropped. `weights` is
+/// `(this layer's neurons, previous layer's neurons)` and `prev_activations`
+/// carries every source neuron's activation.
 fn edges_for(
     weights: &Array2<f32>,
+    prev_activations: ArrayView1<f32>,
     shown_prev: &[usize],
     shown_cur: &[usize],
     min_magnitude: f32,
 ) -> Vec<Edge> {
-    let peak = weights.iter().fold(0.0_f32, |max, &w| max.max(w.abs()));
+    let weight_peak = weights.iter().fold(0.0_f32, |max, &w| max.max(w.abs()));
+    let contribution_peak = weights
+        .indexed_iter()
+        .fold(0.0_f32, |max, ((_, prev), &w)| {
+            max.max((w * prev_activations[prev]).abs())
+        });
     let mut edges = Vec::new();
     for (target, &cur) in shown_cur.iter().enumerate() {
         for (source, &prev) in shown_prev.iter().enumerate() {
             let weight = weights[(cur, prev)];
-            let magnitude = if peak > 0.0 { weight.abs() / peak } else { 0.0 };
-            if magnitude >= min_magnitude {
+            let contribution = if contribution_peak > 0.0 {
+                (weight * prev_activations[prev]).abs() / contribution_peak
+            } else {
+                0.0
+            };
+            if contribution >= min_magnitude {
+                let magnitude = if weight_peak > 0.0 {
+                    weight.abs() / weight_peak
+                } else {
+                    0.0
+                };
                 edges.push(Edge {
                     source,
                     target,
@@ -440,6 +462,42 @@ mod tests {
         assert!(layer.edges.iter().all(|e| e.magnitude >= 0.75));
         assert_eq!(layer.edges.len(), 1);
         assert_eq!(layer.edges[0].magnitude, 1.0);
+    }
+
+    #[test]
+    fn the_edge_threshold_prunes_by_contribution_not_weight_alone() {
+        // Layer 1 leaves neuron 0 firing (1.0) and neuron 1 silent (0.0). Layer 2
+        // weights a tiny link from the firing neuron and a strong one from the
+        // silent one: contribution flows only through neuron 0, so that is the
+        // edge a weight-only threshold would have wrongly dropped.
+        let net = NeuralNetwork {
+            layers: vec![
+                NeuronLayer {
+                    weights: array![[1.0], [-1.0]],
+                    biases: array![0.0, 0.0],
+                    activation: RELU.clone(),
+                },
+                NeuronLayer {
+                    weights: array![[0.1, 5.0]],
+                    biases: array![0.0],
+                    activation: RELU.clone(),
+                },
+            ],
+        };
+        let options = DiagramOptions {
+            min_edge_magnitude: 0.5,
+            ..DiagramOptions::default()
+        };
+        let diagram = net
+            .activation_diagram(array![1.0].view(), &options)
+            .unwrap();
+
+        // Only the connection from the firing neuron survives; the strong weight
+        // out of the silent neuron carries no contribution and is pruned.
+        let output = &diagram.layers[2];
+        assert_eq!(output.edges.len(), 1);
+        assert_eq!(output.edges[0].source, 0);
+        assert_eq!(output.edges[0].weight, 0.1);
     }
 
     #[test]

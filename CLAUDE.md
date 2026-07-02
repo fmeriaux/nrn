@@ -124,7 +124,9 @@ A backend-neutral figure IR with feature-gated renderers, in three stages:
   forward pass rather than a chart: `ActivationDiagram` (per-layer `DiagramLayer`s of colored `Unit`s
   and weighted `Edge`s, plus the `Classification`). `NeuralNetwork::activation_diagram` /
   `Predictor::activation_diagram` (the latter scales the input first) build it; large layers are
-  sampled evenly to `DiagramOptions::max_units` and weak edges pruned below `min_edge_magnitude`.
+  sampled evenly to `DiagramOptions::max_units` and edges pruned below `min_edge_magnitude` by
+  *contribution* (`|weight × source activation|`, not weight alone, so a strong weight out of a silent
+  neuron is dropped).
   `Unit::marker_color` (sign → blue/orange, dimmed by intensity) and `DiagramLayer::heading` are shared
   by both renderers.
 - **`image/`** (`raster`, `plotters`) and **`console/`** (`console`, `textplots`) — the two renderers,

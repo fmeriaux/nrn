@@ -299,7 +299,8 @@ Prediction
 For a horizontal node-link graph instead — neurons as circles (input and output values annotated), connections
 colored by weight sign and weighted by magnitude, with a legend along the bottom — render it to an image with
 `nrn plot activations <model> --instance <file> --format image`
-(`--max-units` samples wide layers down, `--min-edge` prunes weak connections, `-o/--output` sets the file,
+(`--max-units` samples wide layers down, `--min-edge` prunes connections by contribution — `|weight × activation|`,
+so a strong weight from a silent neuron is dropped — `-o/--output` sets the file,
 defaulting to `activations-<model>.png` in the current directory). As with `predict`, omit `--instance` to
 type the features in at the prompt.
 

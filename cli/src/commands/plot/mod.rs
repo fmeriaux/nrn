@@ -76,7 +76,7 @@ pub(super) struct DiagramArgs {
     #[arg(long, default_value_t = 24, value_parser = clap::value_parser!(u16).range(1..=256))]
     max_units: u16,
 
-    /// Drop connections whose normalized magnitude is below this (image only)
+    /// Drop connections whose normalized contribution (|weight x activation|) is below this (image only)
     #[arg(long, default_value_t = 0.0)]
     min_edge: f32,
 }
