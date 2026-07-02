@@ -127,13 +127,15 @@ A backend-neutral figure IR with feature-gated renderers, in three stages:
   sampled evenly to `DiagramOptions::max_units` and weak edges pruned below `min_edge_magnitude`.
   `Unit::marker_color` (sign → blue/orange, dimmed by intensity) and `DiagramLayer::heading` are shared
   by both renderers.
-- **`image.rs`** (`raster`, `plotters`) → `Figure::to_image` produces a `RasterImage`, and
-  `ActivationDiagram::to_image` draws a horizontal node-link graph (nodes tinted by activation, edges
-  colored by weight sign with width/opacity by magnitude); **`console.rs`** (`console`, `textplots`)
-  → `Figure::to_console` produces a `String`, and `ActivationDiagram::to_console` lists the layers
-  vertically (nodes only, no edges). Pure rendering — the caller persists the bytes (`io`) or prints
-  the text. Animations are streamed frame-by-frame to a GIF by `io`'s `GifWriter` (no in-memory frame
-  buffer).
+- **`image/`** (`raster`, `plotters`) and **`console/`** (`console`, `textplots`) — the two renderers,
+  each a folder split by IR: `mod.rs` owns the shared config (`ImageConfig` / `ConsoleConfig`) and
+  color helpers, `figure.rs` renders `Figure`, `diagram.rs` renders `ActivationDiagram`. `Figure::to_image`
+  produces a `RasterImage`, and `ActivationDiagram::to_image` draws a horizontal node-link graph (nodes
+  tinted by activation with input/output values annotated, edges colored by weight sign with width/opacity
+  by magnitude, plus a legend). `Figure::to_console` produces a `String`, and `ActivationDiagram::to_console`
+  lists the layers vertically (nodes only, no edges). Pure rendering — the caller persists the bytes (`io`)
+  or prints the text. Animations are streamed frame-by-frame to a GIF by `io`'s `GifWriter` (no in-memory
+  frame buffer).
 
 ### I/O (`core/src/io/`, behind `io` feature)
 
