@@ -16,8 +16,8 @@ The project uses [Task](https://taskfile.dev) (`brew install go-task/tap/go-task
 Useful extras:
 
 ```sh
-cargo test <name>               # single test by name, across workspace
-cargo test -p nrn <name>        # core crate only
+cargo nextest run <name>        # single test by name, across workspace
+cargo nextest run -p nrn <name> # core crate only
 task lint                       # rustfmt --check + clippy (-D warnings), with & without features
 task audit                      # cargo-audit advisory scan
 task coverage / coverage-html   # cargo-llvm-cov summary / HTML report

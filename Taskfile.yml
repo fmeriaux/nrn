@@ -25,9 +25,10 @@ tasks:
       - cargo build
 
   test:
-    desc: Run all tests across the workspace
+    desc: Run all tests across the workspace (nextest + doctests; requires cargo-nextest)
     cmds:
-      - cargo test --workspace
+      - cargo nextest run --workspace
+      - cargo test --workspace --doc
 
   fmt:
     desc: Format all source files

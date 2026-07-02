@@ -50,11 +50,15 @@ task coverage-check    # fail under the line-coverage threshold (CI gate)
 task audit             # cargo-audit advisory scan
 ```
 
+`task test` runs the suite through [cargo-nextest](https://nexte.st) (a process per test, parallelized)
+plus the doctests, which nextest doesn't cover. Install it with `cargo install cargo-nextest --locked`
+or `brew install cargo-nextest`.
+
 Single tests, as usual:
 
 ```sh
-cargo test <name>           # by name, across the workspace
-cargo test -p nrn <name>    # core crate only
+cargo nextest run <name>        # by name, across the workspace
+cargo nextest run -p nrn <name> # core crate only
 ```
 
 ## Testing
