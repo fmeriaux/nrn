@@ -235,7 +235,7 @@ impl NeuralNetwork {
         &self,
         inputs: ArrayView2<f32>,
     ) -> Result<Vec<Array2<f32>>, FeatureCountMismatch> {
-        self.validate_features(inputs.nrows())?;
+        self.validate_inputs(inputs)?;
 
         Ok(self
             .layers
@@ -251,18 +251,16 @@ impl NeuralNetwork {
         self.layers.iter().all(|layer| layer.is_finite())
     }
 
-    /// Validates that an instance of `features` values matches the network's input size.
+    /// Validates that `inputs` `(features, samples)` carry the feature count this network expects.
     ///
     /// # Errors
-    /// [`FeatureCountMismatch`] when `features` differs from [`Self::input_size`].
-    pub fn validate_features(&self, features: usize) -> Result<(), FeatureCountMismatch> {
+    /// [`FeatureCountMismatch`] when the feature rows differ from [`Self::input_size`].
+    pub fn validate_inputs(&self, inputs: ArrayView2<f32>) -> Result<(), FeatureCountMismatch> {
         let expected = self.input_size();
-        (features == expected)
+        let found = inputs.nrows();
+        (found == expected)
             .then_some(())
-            .ok_or(FeatureCountMismatch {
-                expected,
-                found: features,
-            })
+            .ok_or(FeatureCountMismatch { expected, found })
     }
 
     /// Predicts the output of the network given the inputs, returning the final activations.

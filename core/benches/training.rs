@@ -54,7 +54,7 @@ fn make_dataset(n_features: usize, n_classes: usize, n_samples: usize) -> ModelD
             0.0
         }
     });
-    ModelDataset { inputs, targets }
+    ModelDataset::new(inputs, targets)
 }
 
 fn small_workload() -> Workload {
@@ -121,7 +121,7 @@ fn bench_inference(c: &mut Criterion) {
     let mut group = c.benchmark_group("inference");
     for (name, w) in [("small", small_workload()), ("mnist", mnist_workload())] {
         group.bench_function(name, |b| {
-            b.iter(|| black_box(w.model.predict(w.dataset.inputs.view())));
+            b.iter(|| black_box(w.model.predict(w.dataset.inputs().view())));
         });
     }
     group.finish();

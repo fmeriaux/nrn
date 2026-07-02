@@ -47,8 +47,8 @@ impl Evaluator {
         model: &NeuralNetwork,
         dataset: &ModelDataset,
     ) -> Result<Evaluation, FeatureCountMismatch> {
-        let predictions = model.predict(dataset.inputs.view())?;
-        Ok(self.eval_predictions(predictions.view(), dataset.targets.view()))
+        let predictions = model.predict(dataset.inputs().view())?;
+        Ok(self.eval_predictions(predictions.view(), dataset.targets().view()))
     }
 
     /// Evaluates precomputed predictions against the true targets.
@@ -86,7 +86,7 @@ mod tests {
     }
 
     fn dataset(inputs: ndarray::Array2<f32>, targets: ndarray::Array2<f32>) -> ModelDataset {
-        ModelDataset { inputs, targets }
+        ModelDataset::new(inputs, targets)
     }
 
     fn evaluator() -> Evaluator {
@@ -115,8 +115,8 @@ mod tests {
 
         let from_dataset = evaluator().eval_dataset(&model, &data).unwrap();
         let from_preds = evaluator().eval_predictions(
-            model.predict(data.inputs.view()).unwrap().view(),
-            data.targets.view(),
+            model.predict(data.inputs().view()).unwrap().view(),
+            data.targets().view(),
         );
 
         assert_eq!(from_dataset.loss, from_preds.loss);

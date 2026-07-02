@@ -117,8 +117,8 @@ fn full_pipeline_roundtrips_through_safetensors() {
             )
             .unwrap();
         if epoch % 5 == 0 {
-            let predictions = model.predict(model_dataset.inputs.view()).unwrap();
-            let loss = loss_fn.compute(predictions.view(), model_dataset.targets.view());
+            let predictions = model.predict(model_dataset.inputs().view()).unwrap();
+            let loss = loss_fn.compute(predictions.view(), model_dataset.targets().view());
             let evaluation = EvaluationSet {
                 train: Evaluation {
                     loss,
@@ -144,8 +144,8 @@ fn full_pipeline_roundtrips_through_safetensors() {
     model.save(&model_path).unwrap();
     let reloaded_model = NeuralNetwork::load(&model_path).unwrap();
     assert_eq!(
-        model.predict(model_dataset.inputs.view()),
-        reloaded_model.predict(model_dataset.inputs.view())
+        model.predict(model_dataset.inputs().view()),
+        reloaded_model.predict(model_dataset.inputs().view())
     );
 
     let archive = run.archive().unwrap();
@@ -155,7 +155,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let last_model = archive.model_at(archive.len() - 1).unwrap();
     assert_eq!(
         last_recorded_predictions.unwrap(),
-        last_model.predict(model_dataset.inputs.view()).unwrap()
+        last_model.predict(model_dataset.inputs().view()).unwrap()
     );
 
     // Adam has internal state, so each checkpoint also has an optimizer.safetensors.

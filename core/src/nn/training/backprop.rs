@@ -37,8 +37,6 @@ impl MiniBatch {
 
 impl NeuralNetwork {
     /// Trains the network for one epoch using the provided dataset.
-    /// # Panics
-    /// - When the number of columns in `inputs` does not match the number of columns in `targets`.
     /// # Errors
     /// [`FeatureCountMismatch`] when the dataset's feature rows do not match [`Self::input_size`].
     /// # Arguments
@@ -58,23 +56,16 @@ impl NeuralNetwork {
         clipping: &GradientClipping,
         mini_batch: Option<MiniBatch>,
     ) -> Result<(), FeatureCountMismatch> {
-        let n_samples = dataset.inputs.ncols();
-        assert_eq!(
-            n_samples,
-            dataset.targets.ncols(),
-            "Inputs and targets must have the same number of samples."
-        );
-
         // Scheduler steps once per epoch regardless of batch size
         let lr = scheduler.step();
         optimizer.set_learning_rate(lr);
 
         match mini_batch {
             None => {
-                let activations = self.forward(dataset.inputs.view())?;
+                let activations = self.forward(dataset.inputs().view())?;
                 self.update_parameters(
                     &activations,
-                    dataset.targets.view(),
+                    dataset.targets().view(),
                     loss_function,
                     optimizer,
                     clipping,
@@ -82,10 +73,10 @@ impl NeuralNetwork {
             }
             Some(MiniBatch { size, mut rng }) => {
                 for batch in dataset.batches(size, &mut rng) {
-                    let activations = self.forward(batch.inputs.view())?;
+                    let activations = self.forward(batch.inputs().view())?;
                     self.update_parameters(
                         &activations,
-                        batch.targets.view(),
+                        batch.targets().view(),
                         loss_function,
                         optimizer,
                         clipping,
@@ -380,7 +371,7 @@ mod tests {
             for c in 0..40 {
                 targets[[c % 3, c]] = 1.0;
             }
-            let dataset = ModelDataset { inputs, targets };
+            let dataset = ModelDataset::new(inputs, targets);
 
             let loss: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
             let lr = LearningRate::new(0.05).unwrap();

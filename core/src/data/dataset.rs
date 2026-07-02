@@ -26,10 +26,10 @@ pub struct Dataset {
 }
 
 pub struct ModelDataset {
-    /// A 2D array view where each column is a sample and each row is a feature
-    pub inputs: Array2<f32>,
+    /// A 2D array where each column is a sample and each row is a feature
+    inputs: Array2<f32>,
     /// A 2D array where each column is a sample and each row is a target (one-hot encoded for multi-class)
-    pub targets: Array2<f32>,
+    targets: Array2<f32>,
 }
 
 /// A structure representing a split dataset for training, validation, and testing.
@@ -268,7 +268,7 @@ impl Dataset {
             self.labels.to_owned().insert_axis(Axis(0))
         };
 
-        ModelDataset { inputs, targets }
+        ModelDataset::new(inputs, targets)
     }
 
     /// Builds a dataset from encoded `images` and their `labels`, stamped with
@@ -339,9 +339,11 @@ impl Dataset {
         indices.shuffle(&mut StdRng::seed_from_u64(seed));
 
         let size = |ratio: f32| (n_samples as f32 * ratio).round() as usize;
-        let select = |idx: &[usize]| ModelDataset {
-            inputs: model.inputs.select(Axis(1), idx),
-            targets: model.targets.select(Axis(1), idx),
+        let select = |idx: &[usize]| {
+            ModelDataset::new(
+                model.inputs.select(Axis(1), idx),
+                model.targets.select(Axis(1), idx),
+            )
         };
 
         let test_size = size(test_ratio);
@@ -361,6 +363,30 @@ impl Dataset {
 }
 
 impl ModelDataset {
+    /// Pairs column-major `inputs` `(features, samples)` with their `targets`
+    /// `(targets, samples)`.
+    ///
+    /// # Panics
+    /// - When `inputs` and `targets` disagree on the sample count (columns).
+    pub fn new(inputs: Array2<f32>, targets: Array2<f32>) -> Self {
+        assert_eq!(
+            inputs.ncols(),
+            targets.ncols(),
+            "Inputs and targets must have the same number of samples."
+        );
+        ModelDataset { inputs, targets }
+    }
+
+    /// Returns the inputs, `(features, samples)`.
+    pub fn inputs(&self) -> &Array2<f32> {
+        &self.inputs
+    }
+
+    /// Returns the targets, `(targets, samples)`.
+    pub fn targets(&self) -> &Array2<f32> {
+        &self.targets
+    }
+
     /// Returns a lazy iterator over shuffled mini-batches of `size` samples each.
     /// The last batch may be smaller if `n_samples` is not divisible by `size`.
     /// Each batch is allocated on demand rather than all upfront.
@@ -380,10 +406,10 @@ impl ModelDataset {
             let end = (pos + size).min(n);
             let chunk = &indices[pos..end];
             pos = end;
-            Some(ModelDataset {
-                inputs: self.inputs.select(Axis(1), chunk),
-                targets: self.targets.select(Axis(1), chunk),
-            })
+            Some(ModelDataset::new(
+                self.inputs.select(Axis(1), chunk),
+                self.targets.select(Axis(1), chunk),
+            ))
         })
     }
 
@@ -467,6 +493,20 @@ mod tests {
         for i in 0..3 {
             assert_eq!(model_dataset.targets[[i, i]], 1.0);
         }
+    }
+
+    #[test]
+    fn model_dataset_new_pairs_aligned_inputs_and_targets() {
+        let dataset = ModelDataset::new(Array2::zeros((3, 4)), Array2::zeros((2, 4)));
+        assert_eq!(dataset.inputs().shape(), &[3, 4]);
+        assert_eq!(dataset.targets().shape(), &[2, 4]);
+    }
+
+    #[test]
+    #[should_panic(expected = "same number of samples")]
+    fn model_dataset_new_rejects_mismatched_sample_counts() {
+        // 4 input columns but 3 target columns: the invariant must reject this.
+        ModelDataset::new(Array2::zeros((3, 4)), Array2::zeros((2, 3)));
     }
 
     #[test]

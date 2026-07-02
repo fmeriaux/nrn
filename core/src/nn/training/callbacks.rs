@@ -176,10 +176,7 @@ mod tests {
     }
 
     fn sample_split() -> ModelSplit {
-        let dataset = || ModelDataset {
-            inputs: array![[0.1, 0.9], [0.2, 0.8]],
-            targets: array![[1.0, 0.0]],
-        };
+        let dataset = || ModelDataset::new(array![[0.1, 0.9], [0.2, 0.8]], array![[1.0, 0.0]]);
         ModelSplit {
             train: dataset(),
             validation: None,

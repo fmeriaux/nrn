@@ -451,7 +451,7 @@ impl HyperParameters {
         data: TrainingData,
         callbacks: Callbacks,
     ) -> Result<Trainer, FeatureCountMismatch> {
-        model.validate_features(data.split.train.inputs.nrows())?;
+        model.validate_inputs(data.split.train.inputs().view())?;
 
         let optimizer = self.optimizer.instantiate(self.lr, self.weight_decay);
         let scheduler = self
@@ -771,7 +771,7 @@ mod tests {
         assert!(
             data.split
                 .train
-                .inputs
+                .inputs()
                 .iter()
                 .all(|&v| (-1e-5..=1.0 + 1e-5).contains(&v))
         );
@@ -791,6 +791,6 @@ mod tests {
         let hp = spec_with_scaler(None);
         let data = hp.prepare(ramp_dataset(), Some(supplied)).unwrap();
 
-        assert!(data.split.train.inputs.iter().all(|&v| v < 0.5));
+        assert!(data.split.train.inputs().iter().all(|&v| v < 0.5));
     }
 }
