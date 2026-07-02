@@ -53,6 +53,7 @@ impl ActivationDiagram {
             let radius = self.node_radius(cfg);
             self.draw_edges(&root, &positions)?;
             self.draw_nodes(&root, &positions, radius)?;
+            self.draw_indices(&root, &positions, radius, cfg)?;
             self.draw_values(&root, &positions, radius, cfg)?;
             self.draw_labels(&root, &positions, cfg)?;
             self.draw_legend(&root, cfg)?;
@@ -146,6 +147,31 @@ impl ActivationDiagram {
         Ok(())
     }
 
+    /// Labels every neuron with its index below its marker, in a reduced font,
+    /// so the sampled neurons of a large layer stay identifiable.
+    fn draw_indices(
+        &self,
+        root: &DrawingArea<BitMapBackend, Shift>,
+        positions: &[Vec<(i32, i32)>],
+        radius: i32,
+        cfg: &ImageConfig,
+    ) -> Result<(), Box<dyn Error>> {
+        let font = (cfg.font_style, (cfg.font_size * 2 / 3).max(10))
+            .into_font()
+            .color(&BLACK)
+            .pos(Pos::new(HPos::Center, VPos::Top));
+        for (layer, positions) in self.layers.iter().zip(positions) {
+            for (unit, &(x, y)) in layer.units.iter().zip(positions) {
+                root.draw(&Text::new(
+                    format!("n{}", unit.index),
+                    (x, y + radius + 2),
+                    font.clone(),
+                ))?;
+            }
+        }
+        Ok(())
+    }
+
     /// Captions each column with its layer role and writes the predicted top
     /// class along the top edge.
     fn draw_labels(
@@ -169,7 +195,7 @@ impl ActivationDiagram {
                     .into_font()
                     .color(&BLACK)
                     .pos(Pos::new(hpos, VPos::Top));
-                root.draw(&Text::new(layer.heading(), (x, DIAGRAM_MARGIN), font))?;
+                root.draw(&Text::new(layer.short_heading(), (x, DIAGRAM_MARGIN), font))?;
             }
         }
 

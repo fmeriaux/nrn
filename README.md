@@ -296,13 +296,13 @@ Prediction
     class 0    0.0%
 ```
 
-For a horizontal node-link graph instead — neurons as circles (input and output values annotated), connections
-colored by weight sign and weighted by magnitude, with a legend along the bottom — render it to an image with
-`nrn plot activations <model> --instance <file> --format image`
-(`--max-units` samples wide layers down, `--min-edge` prunes connections by contribution — `|weight × activation|`,
-so a strong weight from a silent neuron is dropped — `-o/--output` sets the file,
-defaulting to `activations-<model>.png` in the current directory). As with `predict`, omit `--instance` to
-type the features in at the prompt.
+For a horizontal node-link graph instead — neurons as circles labeled by index (input and output values
+annotated), connections colored by weight sign and weighted by magnitude, with a legend along the bottom —
+render it to an image with `nrn plot activations <model> --instance <file> --format image`
+(`--max-units` keeps a wide layer's most active neurons, `--min-edge` prunes connections by contribution —
+`|weight × activation|`, so a strong weight from a silent neuron is dropped; defaults to `0.01` — `-o/--output`
+sets the file, defaulting to `activations-<model>.png` in the current directory). As with `predict`, omit
+`--instance` to type the features in at the prompt.
 
 ### 3 · Many classes at once: multi-class MLP
 

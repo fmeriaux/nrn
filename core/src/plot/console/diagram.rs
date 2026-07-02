@@ -162,7 +162,7 @@ mod tests {
             .activation_diagram(array![1.0, 1.0].view(), &options)
             .unwrap()
             .to_console();
-        assert!(text.contains("showing 8 of 50 units"));
+        assert!(text.contains("showing the 8 most active of 50 units"));
     }
 
     #[test]

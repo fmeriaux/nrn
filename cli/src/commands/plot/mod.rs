@@ -77,7 +77,7 @@ pub(super) struct DiagramArgs {
     max_units: u16,
 
     /// Drop connections whose normalized contribution (|weight x activation|) is below this (image only)
-    #[arg(long, default_value_t = 0.0)]
+    #[arg(long, default_value_t = 0.01)]
     min_edge: f32,
 }
 

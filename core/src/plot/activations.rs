@@ -4,8 +4,8 @@
 //! [`NeuralNetwork::activation_diagram`] runs the instance through the network
 //! and records, for every layer, each neuron's activation and the connections
 //! feeding it. Renderers (console, image) consume the diagram behind their own
-//! feature flags. Layers larger than [`DiagramOptions::max_units`] are sampled
-//! evenly so the model stays drawable.
+//! feature flags. Layers larger than [`DiagramOptions::max_units`] keep only
+//! their most active neurons so the model stays drawable.
 
 use crate::classification::Classification;
 use crate::data::scalers::Scaler;
@@ -23,7 +23,7 @@ const MARKER_FLOOR: f32 = 0.35;
 /// How an [`ActivationDiagram`] caps and prunes a network too large to draw in full.
 #[derive(Clone, Copy, Debug)]
 pub struct DiagramOptions {
-    /// Maximum neurons shown per layer; larger layers are sampled evenly.
+    /// Maximum neurons shown per layer; larger layers keep only their most active.
     pub max_units: usize,
     /// Connections whose normalized contribution `|weight × source activation|`
     /// falls below this are dropped, so a strong weight from a silent neuron
@@ -128,13 +128,27 @@ impl DiagramLayer {
         };
         if self.is_sampled() {
             format!(
-                "{name} (showing {} of {} {noun}s)",
+                "{name} (showing the {} most active of {} {noun}s)",
                 self.units.len(),
                 self.total_units
             )
         } else {
             let plural = if self.total_units == 1 { "" } else { "s" };
             format!("{name} ({} {noun}{plural})", self.total_units)
+        }
+    }
+
+    /// A compact heading for space-constrained renderers: the role name and its
+    /// neuron count, marking a sampled layer as `shown/total active`.
+    pub fn short_heading(&self) -> String {
+        let name = match &self.role {
+            LayerRole::Input => "Input",
+            LayerRole::Activated(activation) => activation.as_str(),
+        };
+        if self.is_sampled() {
+            format!("{name} ({}/{} active)", self.units.len(), self.total_units)
+        } else {
+            format!("{name} ({})", self.total_units)
         }
     }
 }
@@ -163,7 +177,7 @@ impl NeuralNetwork {
         let activations = self.forward(input.insert_axis(Axis(1)))?;
         let shown: Vec<Vec<usize>> = activations
             .iter()
-            .map(|values| shown_indices(values.nrows(), options.max_units))
+            .map(|values| shown_indices(values.column(0), options.max_units))
             .collect();
 
         let layers = activations
@@ -222,17 +236,21 @@ impl Predictor {
     }
 }
 
-/// The neuron indices shown for a layer of `n` neurons under `cap`: every neuron
-/// when it fits, otherwise `cap` indices spread evenly across the layer.
-fn shown_indices(n: usize, cap: usize) -> Vec<usize> {
+/// The neuron indices shown for a layer under `cap`: every neuron when the layer
+/// fits, otherwise the `cap` most active — largest activation magnitude, ties
+/// broken by the earlier index — returned in ascending index order for a stable
+/// top-to-bottom layout.
+fn shown_indices(column: ArrayView1<f32>, cap: usize) -> Vec<usize> {
     let cap = cap.max(1);
+    let n = column.len();
     if n <= cap {
         return (0..n).collect();
     }
-    if cap == 1 {
-        return vec![0];
-    }
-    (0..cap).map(|i| i * (n - 1) / (cap - 1)).collect()
+    let mut indices: Vec<usize> = (0..n).collect();
+    indices.sort_by(|&a, &b| column[b].abs().total_cmp(&column[a].abs()).then(a.cmp(&b)));
+    indices.truncate(cap);
+    indices.sort_unstable();
+    indices
 }
 
 /// The shown neurons of `column`, with activation magnitude normalized to `[0, 1]`
@@ -321,15 +339,24 @@ mod tests {
 
     #[test]
     fn shown_indices_returns_every_neuron_when_it_fits() {
-        assert_eq!(shown_indices(3, 8), vec![0, 1, 2]);
-        assert_eq!(shown_indices(4, 4), vec![0, 1, 2, 3]);
+        assert_eq!(
+            shown_indices(array![0.0, 1.0, 2.0].view(), 8),
+            vec![0, 1, 2]
+        );
+        assert_eq!(
+            shown_indices(array![0.0, 1.0, 2.0, 3.0].view(), 4),
+            vec![0, 1, 2, 3]
+        );
     }
 
     #[test]
-    fn shown_indices_spreads_evenly_when_capped() {
-        assert_eq!(shown_indices(10, 4), vec![0, 3, 6, 9]);
-        // A cap of one keeps the first neuron.
-        assert_eq!(shown_indices(10, 1), vec![0]);
+    fn shown_indices_keeps_the_most_active_neurons_in_index_order() {
+        // The two strongest by magnitude are index 1 (|-0.9|) and index 3 (0.8),
+        // returned in ascending index order rather than activation order.
+        let column = array![0.1, -0.9, 0.2, 0.8, -0.3];
+        assert_eq!(shown_indices(column.view(), 2), vec![1, 3]);
+        // A cap of one keeps the single most active neuron.
+        assert_eq!(shown_indices(column.view(), 1), vec![1]);
     }
 
     #[test]
@@ -434,8 +461,9 @@ mod tests {
         assert_eq!(layer.total_units, 50);
         assert_eq!(layer.units.len(), 8);
         assert!(layer.is_sampled());
-        // Sampled units keep their original neuron index, not their shown position.
-        assert_eq!(layer.units[0].index, 0);
+        // Activations equal the neuron index here, so the eight most active are
+        // the highest indices, kept in ascending order.
+        assert_eq!(layer.units[0].index, 42);
         assert_eq!(layer.units[7].index, 49);
         // Edges only connect the shown neurons: 8 targets x 2 sources.
         assert_eq!(layer.edges.len(), 16);

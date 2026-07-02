@@ -88,7 +88,10 @@ mod tests {
     fn format_defaults_to_console_and_max_units_to_twenty_four() {
         let args = parse(&[]);
         assert_eq!(args.format, Format::Console);
-        assert_eq!(args.diagram.options().unwrap().max_units, 24);
+        let options = args.diagram.options().unwrap();
+        assert_eq!(options.max_units, 24);
+        // A small positive floor prunes dead connections out of the box.
+        assert_eq!(options.min_edge_magnitude, 0.01);
     }
 
     #[test]
