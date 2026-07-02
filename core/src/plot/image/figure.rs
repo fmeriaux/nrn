@@ -1,6 +1,7 @@
-//! Rasterizing a [`Figure`] to an RGB image with `plotters`.
+//! Rasterizing a [`Figure`] to an RGB image, stacking its panels vertically.
 
-use crate::plot::scene::{Color as SceneColor, Figure, Panel, Series};
+use super::{ImageConfig, RasterImage, rgb};
+use crate::plot::scene::{Figure, Panel, Series};
 use plotters::backend::BitMapBackend;
 use plotters::chart::{ChartBuilder, ChartContext};
 use plotters::coord::Shift;
@@ -8,53 +9,6 @@ use plotters::coord::cartesian::Cartesian2d;
 use plotters::coord::types::RangedCoordf32;
 use plotters::prelude::*;
 use std::error::Error;
-
-/// Rendering options for rasterizing a [`Figure`].
-pub struct ImageConfig<'a> {
-    /// Width of the image in pixels.
-    pub width: u32,
-    /// Height of the image in pixels.
-    pub height: u32,
-    /// Font family for titles, labels and legends, e.g. "sans-serif".
-    pub font_style: &'a str,
-    /// Font size for text elements.
-    pub font_size: u32,
-    /// Size of the area reserved for axis labels and legends.
-    pub area_size: u32,
-}
-
-impl Default for ImageConfig<'_> {
-    fn default() -> Self {
-        Self {
-            width: 1200,
-            height: 900,
-            font_style: "sans-serif",
-            font_size: 20,
-            area_size: 40,
-        }
-    }
-}
-
-impl ImageConfig<'_> {
-    /// An image configuration of the given size, with default fonts and spacing.
-    pub fn new(width: u32, height: u32) -> Self {
-        Self {
-            width,
-            height,
-            ..Default::default()
-        }
-    }
-}
-
-/// A rendered RGB image: a row-major buffer of `width × height` 8-bit RGB triples.
-pub struct RasterImage {
-    /// Row-major RGB pixel data, three bytes per pixel.
-    pub bytes: Vec<u8>,
-    /// Image width in pixels.
-    pub width: u32,
-    /// Image height in pixels.
-    pub height: u32,
-}
 
 impl Figure {
     /// Rasterizes the figure to a [`RasterImage`], stacking its panels vertically in order.
@@ -79,11 +33,6 @@ impl Figure {
             height: cfg.height,
         })
     }
-}
-
-/// The plotters color for a scene color.
-fn rgb(color: SceneColor) -> RGBColor {
-    RGBColor(color.red, color.green, color.blue)
 }
 
 /// Draws a single panel — mesh, series and optional legend — onto its region.

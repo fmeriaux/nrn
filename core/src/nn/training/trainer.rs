@@ -13,6 +13,11 @@ use crate::optimizers::{Optimizer, OptimizerState};
 use crate::schedulers::{Scheduler, SchedulerState};
 use std::sync::Arc;
 
+/// Panic message for the per-epoch shape invariant that
+/// [`HyperParameters::build`](super::HyperParameters::build) establishes: the model and
+/// dataset were checked to have compatible feature shapes.
+const COMPATIBLE_SHAPES: &str = "model and dataset shapes were matched in HyperParameters::build";
+
 /// The result of a completed [`Trainer::train`].
 pub struct TrainingReport {
     pub outcome: TrainingOutcome,
@@ -135,15 +140,17 @@ impl Trainer {
         let mut final_evaluation = None;
 
         for epoch in (self.epoch_start + 1)..=(self.epoch_start + self.epochs) {
-            self.model.train(
-                &self.split.train,
-                &self.loss,
-                self.optimizer.as_mut(),
-                self.scheduler.as_mut(),
-                &self.clipping,
-                self.batch_size
-                    .map(|size| MiniBatch::new(size, self.seed, epoch)),
-            );
+            self.model
+                .train(
+                    &self.split.train,
+                    &self.loss,
+                    self.optimizer.as_mut(),
+                    self.scheduler.as_mut(),
+                    &self.clipping,
+                    self.batch_size
+                        .map(|size| MiniBatch::new(size, self.seed, epoch)),
+                )
+                .expect(COMPATIBLE_SHAPES);
 
             final_epoch = epoch;
             final_evaluation = None;
@@ -163,7 +170,9 @@ impl Trainer {
 
             if let Some(ref mut es) = early_stopping
                 && let Some(validation) = &self.split.validation
-                && es.check(validation, &self.model, &evaluator)
+                && es
+                    .check(validation, &self.model, &evaluator)
+                    .expect(COMPATIBLE_SHAPES)
             {
                 outcome = TrainingOutcome::EarlyStopped {
                     restored: es.best_model.is_some(),
@@ -212,7 +221,9 @@ impl Trainer {
         if !self.model.is_finite() {
             return Ok(None);
         }
-        let eval = evaluator.eval_set(&self.model, &self.split);
+        let eval = evaluator
+            .eval_set(&self.model, &self.split)
+            .expect(COMPATIBLE_SHAPES);
         self.callbacks.on_checkpoint(
             &self.model,
             self.optimizer.as_ref(),
@@ -450,12 +461,14 @@ mod tests {
     }
 
     fn trainer(hyperparameters: HyperParameters, counts: Rc<RefCell<Counts>>) -> Trainer {
-        let data = hyperparameters.prepare(sample_dataset(), None);
-        hyperparameters.build(
-            sample_model(),
-            data,
-            Callbacks::new(vec![Box::new(CountingCallback(counts))]),
-        )
+        let data = hyperparameters.prepare(sample_dataset(), None).unwrap();
+        hyperparameters
+            .build(
+                sample_model(),
+                data,
+                Callbacks::new(vec![Box::new(CountingCallback(counts))]),
+            )
+            .unwrap()
     }
 
     /// Builds a [`Trainer`] for a callback whose only registered hook is the
@@ -466,12 +479,14 @@ mod tests {
         callback: impl TrainerCallback + 'static,
     ) -> Trainer {
         let hyperparameters = sample_hyperparameters(epochs, checkpoint_interval, 0.01, None, 0.0);
-        let data = hyperparameters.prepare(sample_dataset(), None);
-        hyperparameters.build(
-            sample_model(),
-            data,
-            Callbacks::new(vec![Box::new(callback)]),
-        )
+        let data = hyperparameters.prepare(sample_dataset(), None).unwrap();
+        hyperparameters
+            .build(
+                sample_model(),
+                data,
+                Callbacks::new(vec![Box::new(callback)]),
+            )
+            .unwrap()
     }
 
     #[test]
@@ -718,12 +733,14 @@ mod tests {
         .unwrap();
 
         let counts = Rc::new(RefCell::new(Counts::default()));
-        let data = hyperparameters.prepare(sample_dataset(), None);
-        let mut trainer = hyperparameters.build(
-            sample_model(),
-            data,
-            Callbacks::new(vec![Box::new(CountingCallback(counts.clone()))]),
-        );
+        let data = hyperparameters.prepare(sample_dataset(), None).unwrap();
+        let mut trainer = hyperparameters
+            .build(
+                sample_model(),
+                data,
+                Callbacks::new(vec![Box::new(CountingCallback(counts.clone()))]),
+            )
+            .unwrap();
 
         trainer
             .restore(10, optimizer_state, scheduler_state)
@@ -765,8 +782,10 @@ mod tests {
         )
         .unwrap();
 
-        let data = hyperparameters.prepare(sample_dataset(), None);
-        let mut trainer = hyperparameters.build(sample_model(), data, Callbacks::empty());
+        let data = hyperparameters.prepare(sample_dataset(), None).unwrap();
+        let mut trainer = hyperparameters
+            .build(sample_model(), data, Callbacks::empty())
+            .unwrap();
 
         // Stateless SGD / constant scheduler ignore the provided state (default no-ops).
         let optimizer_state = Some(OptimizerState {
@@ -807,8 +826,10 @@ mod tests {
         )
         .unwrap();
 
-        let data = hyperparameters.prepare(sample_dataset(), None);
-        let mut trainer = hyperparameters.build(sample_model(), data, Callbacks::empty());
+        let data = hyperparameters.prepare(sample_dataset(), None).unwrap();
+        let mut trainer = hyperparameters
+            .build(sample_model(), data, Callbacks::empty())
+            .unwrap();
 
         trainer
             .restore(4, None, Some(SchedulerState { current_step: 2 }))
@@ -824,8 +845,10 @@ mod tests {
 
         // Adam optimizer (from `sample_hyperparameters`).
         let hyperparameters = sample_hyperparameters(1, 0, 0.01, None, 0.0);
-        let data = hyperparameters.prepare(sample_dataset(), None);
-        let mut trainer = hyperparameters.build(sample_model(), data, Callbacks::empty());
+        let data = hyperparameters.prepare(sample_dataset(), None).unwrap();
+        let mut trainer = hyperparameters
+            .build(sample_model(), data, Callbacks::empty())
+            .unwrap();
 
         // Missing `time_step` metadata makes Adam's restore fail; the trainer
         // surfaces it as a callback error.

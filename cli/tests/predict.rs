@@ -59,6 +59,24 @@ fn ranks_classes_from_stdin() {
 }
 
 #[test]
+fn activations_flag_prints_the_diagram_above_the_classification() {
+    let tmp = workspace();
+    write_predictor(tmp.path(), 2, None);
+
+    nrn(tmp.path())
+        .args(["predict", "model", "--activations"])
+        .write_stdin("0.3\n0.7\n")
+        .assert()
+        .success()
+        // The forward-pass diagram, its output neuron read as a class probability,
+        .stdout(contains("Input (2 features)"))
+        .stdout(contains("class 1"))
+        // then the ranked classification with the winning class arrow-marked.
+        .stdout(contains("CLASSIFICATION"))
+        .stdout(contains('\u{25c0}'));
+}
+
+#[test]
 fn errors_on_premature_end_of_input() {
     let tmp = workspace();
     write_predictor(tmp.path(), 2, None);

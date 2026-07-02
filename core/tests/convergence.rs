@@ -49,13 +49,14 @@ fn xor_converges_to_low_loss() {
         None,
     )
     .unwrap();
-    let data = hyperparameters.prepare(xor_dataset(), None);
+    let data = hyperparameters.prepare(xor_dataset(), None).unwrap();
     let report = hyperparameters
         .build(
             NeuralNetwork::initialization(2, &specs, 42),
             data,
             Callbacks::new(vec![]),
         )
+        .unwrap()
         .train()
         .unwrap();
 
@@ -106,13 +107,14 @@ fn xor_converges_with_mini_batch() {
         None,
     )
     .unwrap();
-    let data = hyperparameters.prepare(xor_dataset(), None);
+    let data = hyperparameters.prepare(xor_dataset(), None).unwrap();
     let report = hyperparameters
         .build(
             NeuralNetwork::initialization(2, &specs, 42),
             data,
             Callbacks::new(vec![]),
         )
+        .unwrap()
         .train()
         .unwrap();
 
@@ -165,13 +167,16 @@ fn three_class_converges_to_low_loss() {
         None,
     )
     .unwrap();
-    let data = hyperparameters.prepare(three_class_dataset(), None);
+    let data = hyperparameters
+        .prepare(three_class_dataset(), None)
+        .unwrap();
     let report = hyperparameters
         .build(
             NeuralNetwork::initialization(2, &specs, 42),
             data,
             Callbacks::new(vec![]),
         )
+        .unwrap()
         .train()
         .unwrap();
 

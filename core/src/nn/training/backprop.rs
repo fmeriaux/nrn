@@ -1,7 +1,7 @@
 use crate::data::ModelDataset;
 use crate::gradients::{GradientClipping, Gradients};
 use crate::loss_functions::{CrossEntropyLoss, LossFunction};
-use crate::model::{NeuralNetwork, last_activation};
+use crate::model::{FeatureCountMismatch, NeuralNetwork, last_activation};
 use crate::optimizers::Optimizer;
 use crate::schedulers::Scheduler;
 use ndarray::{Array2, ArrayView2, Axis};
@@ -37,8 +37,8 @@ impl MiniBatch {
 
 impl NeuralNetwork {
     /// Trains the network for one epoch using the provided dataset.
-    /// # Panics
-    /// - When the number of columns in `inputs` does not match the number of columns in `targets`.
+    /// # Errors
+    /// [`FeatureCountMismatch`] when the dataset's feature rows do not match [`Self::input_size`].
     /// # Arguments
     /// - `dataset`: The dataset containing inputs and targets for training.
     /// - `loss_function`: The loss function to use for computing the loss and its gradient.
@@ -55,24 +55,17 @@ impl NeuralNetwork {
         scheduler: &mut dyn Scheduler,
         clipping: &GradientClipping,
         mini_batch: Option<MiniBatch>,
-    ) {
-        let n_samples = dataset.inputs.ncols();
-        assert_eq!(
-            n_samples,
-            dataset.targets.ncols(),
-            "Inputs and targets must have the same number of samples."
-        );
-
+    ) -> Result<(), FeatureCountMismatch> {
         // Scheduler steps once per epoch regardless of batch size
         let lr = scheduler.step();
         optimizer.set_learning_rate(lr);
 
         match mini_batch {
             None => {
-                let activations = self.forward(dataset.inputs.view());
+                let activations = self.forward(dataset.inputs().view())?;
                 self.update_parameters(
                     &activations,
-                    dataset.targets.view(),
+                    dataset.targets().view(),
                     loss_function,
                     optimizer,
                     clipping,
@@ -80,10 +73,10 @@ impl NeuralNetwork {
             }
             Some(MiniBatch { size, mut rng }) => {
                 for batch in dataset.batches(size, &mut rng) {
-                    let activations = self.forward(batch.inputs.view());
+                    let activations = self.forward(batch.inputs().view())?;
                     self.update_parameters(
                         &activations,
-                        batch.targets.view(),
+                        batch.targets().view(),
                         loss_function,
                         optimizer,
                         clipping,
@@ -91,6 +84,8 @@ impl NeuralNetwork {
                 }
             }
         }
+
+        Ok(())
     }
 
     /// Updates the weights and biases of the network using the computed gradients from backpropagation.
@@ -181,7 +176,7 @@ mod tests {
         targets: &Array2<f32>,
         loss_fn: &Arc<dyn LossFunction>,
     ) -> f32 {
-        let pred = model.predict(inputs.view());
+        let pred = model.predict(inputs.view()).unwrap();
         loss_fn.compute(pred.view(), targets.view())
     }
 
@@ -207,7 +202,7 @@ mod tests {
         // 5% tolerates f32 noise while still catching real bugs (which cause >20% error)
         let tolerance = 5e-2_f32;
 
-        let activations = model.forward(inputs.view());
+        let activations = model.forward(inputs.view()).unwrap();
         let analytical_grads = model.backward(&activations, targets.view(), &loss_fn);
 
         // Floor the denominator (~largest gradient scale) to avoid amplifying
@@ -282,7 +277,7 @@ mod tests {
         let eps = 1e-4_f32;
         let tolerance = 5e-2_f32;
 
-        let activations = model.forward(inputs.view());
+        let activations = model.forward(inputs.view()).unwrap();
         let analytical_grads = model.backward(&activations, targets.view(), &loss_fn);
 
         let check = |analytical: f32, numerical: f32, label: &str| {
@@ -344,7 +339,7 @@ mod tests {
         let targets = array![[1.0, 0.0]];
 
         let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
-        let activations = model.forward(inputs.view());
+        let activations = model.forward(inputs.view()).unwrap();
         // The forward output is genuinely saturated, so this exercises the clamp.
         assert_eq!(last_activation(&activations), array![[1.0, 0.0]]);
 
@@ -376,7 +371,7 @@ mod tests {
             for c in 0..40 {
                 targets[[c % 3, c]] = 1.0;
             }
-            let dataset = ModelDataset { inputs, targets };
+            let dataset = ModelDataset::new(inputs, targets);
 
             let loss: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
             let lr = LearningRate::new(0.05).unwrap();
@@ -384,14 +379,16 @@ mod tests {
             let mut scheduler = ConstantScheduler::new(lr);
 
             for epoch in 0..5 {
-                model.train(
-                    &dataset,
-                    &loss,
-                    &mut optimizer as &mut dyn Optimizer,
-                    &mut scheduler as &mut dyn Scheduler,
-                    &GradientClipping::None,
-                    Some(MiniBatch::new(16, 7, epoch)),
-                );
+                model
+                    .train(
+                        &dataset,
+                        &loss,
+                        &mut optimizer as &mut dyn Optimizer,
+                        &mut scheduler as &mut dyn Scheduler,
+                        &GradientClipping::None,
+                        Some(MiniBatch::new(16, 7, epoch)),
+                    )
+                    .unwrap();
             }
             model
         }

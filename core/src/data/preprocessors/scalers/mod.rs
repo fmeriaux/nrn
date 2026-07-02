@@ -6,6 +6,27 @@ pub use z_score::ZScoreScaler;
 
 use ndarray::{ArrayView2, ArrayViewMut1, ArrayViewMut2, Axis};
 
+/// An input's feature count did not match the scaler's fitted feature count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScalerFeatureMismatch {
+    /// The number of features the scaler was fitted on.
+    pub expected: usize,
+    /// The number of features the input carries.
+    pub found: usize,
+}
+
+impl std::fmt::Display for ScalerFeatureMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "input has {} features but the scaler expects {}",
+            self.found, self.expected
+        )
+    }
+}
+
+impl std::error::Error for ScalerFeatureMismatch {}
+
 /// Scaling transforms the input data to a specific range or distribution,
 /// which often improves the performance and convergence of models.
 ///
@@ -27,9 +48,11 @@ pub trait Scaler: Send + Sync {
     /// # Parameters
     ///
     /// * `input` - A mutable 2D array view representing dataset features.
-    ///   The shape must be compatible with the scaler's expected input.
     ///
-    fn apply_inplace(&self, input: ArrayViewMut2<f32>);
+    /// # Errors
+    /// [`ScalerFeatureMismatch`] when the input's feature columns do not match the
+    /// scaler's fitted feature count.
+    fn apply_inplace(&self, input: ArrayViewMut2<f32>) -> Result<(), ScalerFeatureMismatch>;
 
     /// Applies the scaling transformation to a single 1D array (vector) in-place.
     ///
@@ -40,9 +63,12 @@ pub trait Scaler: Send + Sync {
     /// This method expands the 1D input into a 2D view, applies the transformation in-place,
     /// and modifies the original vector without allocation.
     ///
-    fn apply_single_inplace(&self, input: ArrayViewMut1<f32>) {
+    /// # Errors
+    /// [`ScalerFeatureMismatch`] when the input's length does not match the scaler's
+    /// fitted feature count.
+    fn apply_single_inplace(&self, input: ArrayViewMut1<f32>) -> Result<(), ScalerFeatureMismatch> {
         let mut expanded = input.insert_axis(Axis(0));
-        self.apply_inplace(expanded.view_mut());
+        self.apply_inplace(expanded.view_mut())
     }
 }
 
@@ -59,7 +85,7 @@ pub trait Scaler: Send + Sync {
 ///
 /// let mut data = array![[0.0, 5.0], [10.0, 20.0]];
 /// let scaler = ScalerMethod::MinMax(MinMaxScaler::default().fit(data.view()));
-/// scaler.apply_inplace(data.view_mut());
+/// scaler.apply_inplace(data.view_mut()).unwrap();
 /// assert!(data.iter().all(|&v| v >= 0.0 && v <= 1.0 + 1e-5));
 /// ```
 #[derive(Clone, Debug)]
@@ -108,7 +134,7 @@ impl Scaler for ScalerMethod {
         }
     }
 
-    fn apply_inplace(&self, input: ArrayViewMut2<f32>) {
+    fn apply_inplace(&self, input: ArrayViewMut2<f32>) -> Result<(), ScalerFeatureMismatch> {
         match self {
             ScalerMethod::MinMax(s) => s.apply_inplace(input),
             ScalerMethod::ZScore(s) => s.apply_inplace(input),
@@ -129,7 +155,7 @@ mod tests {
         let scaler = MinMaxScaler::default().fit(data.view());
 
         let mut vector = array![0.0, 5.0, 10.0];
-        scaler.apply_single_inplace(vector.view_mut());
+        scaler.apply_single_inplace(vector.view_mut()).unwrap();
 
         assert!((vector[0] - 0.0).abs() < 1e-5);
         assert!((vector[1] - 0.5).abs() < 1e-5);
@@ -144,7 +170,7 @@ mod tests {
         assert_eq!(method.name(), "min-max");
 
         let mut to_scale = data.clone();
-        method.apply_inplace(to_scale.view_mut());
+        method.apply_inplace(to_scale.view_mut()).unwrap();
         assert!(to_scale.iter().all(|&v| (0.0..=1.0 + 1e-5).contains(&v)));
     }
 
@@ -170,7 +196,7 @@ mod tests {
         // Features run along columns (fit averages over Axis(0)); each should be
         // centred near zero mean after standardization.
         let mut to_scale = data.clone();
-        method.apply_inplace(to_scale.view_mut());
+        method.apply_inplace(to_scale.view_mut()).unwrap();
         for col in to_scale.columns() {
             let mean: f32 = col.sum() / col.len() as f32;
             assert!(mean.abs() < 1e-5, "column mean was {}", mean);

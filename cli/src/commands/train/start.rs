@@ -78,7 +78,7 @@ impl StartArgs {
         };
 
         let spinner = Spinner::start("Preparing dataset");
-        let data = hyperparameters.prepare(dataset, None);
+        let data = hyperparameters.prepare(dataset, None)?;
         spinner.finish();
 
         let recorder = if hyperparameters.checkpoint_interval() > 0 {
@@ -107,7 +107,7 @@ impl StartArgs {
             .with_opt(recorder);
 
         hyperparameters
-            .build(model, data, callbacks)
+            .build(model, data, callbacks)?
             .train()?
             .into_result()
             .map_err(DivergedRun::from)?;

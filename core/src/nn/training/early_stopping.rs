@@ -1,6 +1,6 @@
 use super::evaluator::Evaluator;
 use crate::data::ModelDataset;
-use crate::model::NeuralNetwork;
+use crate::model::{FeatureCountMismatch, NeuralNetwork};
 use std::fmt;
 
 /// Declarative early-stopping settings, part of a [`crate::training::HyperParameters`] spec.
@@ -84,15 +84,18 @@ impl EarlyStopping {
 
     /// Evaluates `model` on `validation` and checks whether training should
     /// be stopped based on the resulting loss.
+    ///
+    /// # Errors
+    /// [`FeatureCountMismatch`] when `model`'s input size does not match `validation`.
     pub fn check(
         &mut self,
         validation: &ModelDataset,
         model: &NeuralNetwork,
         evaluator: &Evaluator,
-    ) -> bool {
-        let loss = evaluator.eval_dataset(model, validation).loss;
+    ) -> Result<bool, FeatureCountMismatch> {
+        let loss = evaluator.eval_dataset(model, validation)?.loss;
 
-        self.observe(loss, model)
+        Ok(self.observe(loss, model))
     }
 
     /// Checks if training should be stopped based on the current loss.

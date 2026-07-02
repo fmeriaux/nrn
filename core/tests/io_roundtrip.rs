@@ -67,7 +67,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
     // --- Scaler (serialized as JSON, not safetensors) -------------------
     let scaler = ScalerMethod::MinMax(MinMaxScaler::default().fit(dataset.features().view()));
     let mut expected = dataset.features().clone();
-    scaler.apply_inplace(expected.view_mut());
+    scaler.apply_inplace(expected.view_mut()).unwrap();
 
     let scaler_path = dir.join("scaler");
     let record: ScalerRecord = scaler.into();
@@ -75,7 +75,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let reloaded_scaler: ScalerMethod = ScalerRecord::load(&scaler_path).unwrap().into();
 
     let mut actual = dataset.features().clone();
-    reloaded_scaler.apply_inplace(actual.view_mut());
+    reloaded_scaler.apply_inplace(actual.view_mut()).unwrap();
     assert_eq!(expected, actual);
 
     // --- Model + training run (incremental writer → directory load) --
@@ -106,17 +106,19 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let mut last_recorded_predictions = None;
 
     for epoch in 0..10 {
-        model.train(
-            &model_dataset,
-            &loss_fn,
-            &mut optimizer,
-            &mut scheduler,
-            &clipping,
-            None,
-        );
+        model
+            .train(
+                &model_dataset,
+                &loss_fn,
+                &mut optimizer,
+                &mut scheduler,
+                &clipping,
+                None,
+            )
+            .unwrap();
         if epoch % 5 == 0 {
-            let predictions = model.predict(model_dataset.inputs.view());
-            let loss = loss_fn.compute(predictions.view(), model_dataset.targets.view());
+            let predictions = model.predict(model_dataset.inputs().view()).unwrap();
+            let loss = loss_fn.compute(predictions.view(), model_dataset.targets().view());
             let evaluation = EvaluationSet {
                 train: Evaluation {
                     loss,
@@ -142,8 +144,8 @@ fn full_pipeline_roundtrips_through_safetensors() {
     model.save(&model_path).unwrap();
     let reloaded_model = NeuralNetwork::load(&model_path).unwrap();
     assert_eq!(
-        model.predict(model_dataset.inputs.view()),
-        reloaded_model.predict(model_dataset.inputs.view())
+        model.predict(model_dataset.inputs().view()),
+        reloaded_model.predict(model_dataset.inputs().view())
     );
 
     let archive = run.archive().unwrap();
@@ -153,7 +155,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let last_model = archive.model_at(archive.len() - 1).unwrap();
     assert_eq!(
         last_recorded_predictions.unwrap(),
-        last_model.predict(model_dataset.inputs.view())
+        last_model.predict(model_dataset.inputs().view()).unwrap()
     );
 
     // Adam has internal state, so each checkpoint also has an optimizer.safetensors.

@@ -54,7 +54,7 @@ fn make_dataset(n_features: usize, n_classes: usize, n_samples: usize) -> ModelD
             0.0
         }
     });
-    ModelDataset { inputs, targets }
+    ModelDataset::new(inputs, targets)
 }
 
 fn small_workload() -> Workload {
@@ -105,21 +105,23 @@ fn loss() -> Arc<dyn LossFunction> {
 fn run_epoch(model: &mut NeuralNetwork, w: &Workload, mini_batch: Option<MiniBatch>) {
     let mut optimizer = Adam::with_defaults(LearningRate::new(0.01).unwrap(), WeightDecay::ZERO);
     let mut scheduler = ConstantScheduler::new(LearningRate::new(0.01).unwrap());
-    model.train(
-        &w.dataset,
-        &loss(),
-        &mut optimizer as &mut dyn Optimizer,
-        &mut scheduler as &mut dyn Scheduler,
-        &GradientClipping::None,
-        mini_batch,
-    );
+    model
+        .train(
+            &w.dataset,
+            &loss(),
+            &mut optimizer as &mut dyn Optimizer,
+            &mut scheduler as &mut dyn Scheduler,
+            &GradientClipping::None,
+            mini_batch,
+        )
+        .unwrap();
 }
 
 fn bench_inference(c: &mut Criterion) {
     let mut group = c.benchmark_group("inference");
     for (name, w) in [("small", small_workload()), ("mnist", mnist_workload())] {
         group.bench_function(name, |b| {
-            b.iter(|| black_box(w.model.predict(w.dataset.inputs.view())));
+            b.iter(|| black_box(w.model.predict(w.dataset.inputs().view())));
         });
     }
     group.finish();

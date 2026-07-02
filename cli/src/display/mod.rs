@@ -26,6 +26,7 @@ mod theme;
 pub(crate) use artifacts::Artifacts;
 pub(crate) use hyperparameters::HyperParametersView;
 pub(crate) use icons::*;
+pub(crate) use instance::PromptInstance;
 pub(crate) use progress::{Encoding, Epochs, Frames, Spinner};
 pub(crate) use terminal::{play_frames, preview};
 
@@ -161,7 +162,7 @@ pub(crate) fn recording<E: Named + Describe>(entity: &E) {
 
 /// The inline prompt for the `index`-th feature value, leaving the cursor on the
 /// same line so the typed value follows it.
-pub(crate) fn prompt(index: usize) {
+pub(crate) fn prompt_feature(index: usize) {
     print!(
         "{} {} {} ",
         theme::title("Feature"),

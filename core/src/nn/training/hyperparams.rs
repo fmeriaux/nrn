@@ -3,11 +3,11 @@ use super::early_stopping::{EarlyStoppingConfig, EarlyStoppingConfigError};
 use super::preprocessing::TrainingData;
 use super::trainer::Trainer;
 use crate::data::Dataset;
-use crate::data::scalers::{ScalerKind, ScalerMethod};
+use crate::data::scalers::{ScalerFeatureMismatch, ScalerKind, ScalerMethod};
 use crate::gradients::{GradientClipping, GradientClippingError};
 use crate::learning_rate::{LearningRate, LearningRateError};
 use crate::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
-use crate::model::NeuralNetwork;
+use crate::model::{FeatureCountMismatch, NeuralNetwork};
 use crate::optimizers::{Adam, Optimizer, StochasticGradientDescent};
 use crate::schedulers::{
     ConstantScheduler, CosineAnnealing, CosineAnnealingError, Scheduler, StepDecay, StepDecayError,
@@ -418,7 +418,15 @@ impl HyperParameters {
     /// split is always well-formed), then scales it. An explicit `scaler` is applied
     /// unchanged; otherwise this spec's [`scaler`](Self::scaler) kind is fitted on
     /// the train split.
-    pub fn prepare(&self, dataset: Dataset, scaler: Option<ScalerMethod>) -> TrainingData {
+    ///
+    /// # Errors
+    /// [`ScalerFeatureMismatch`] when an explicit `scaler` does not match the dataset's
+    /// feature count (e.g. resuming with a dataset of a different width).
+    pub fn prepare(
+        &self,
+        dataset: Dataset,
+        scaler: Option<ScalerMethod>,
+    ) -> Result<TrainingData, ScalerFeatureMismatch> {
         let split = dataset.split(self.val_ratio, self.test_ratio, self.seed);
         let scaler = scaler.or_else(|| self.scaler.map(|kind| split.train.fit_scaler(kind)));
         TrainingData::new(split, scaler)
@@ -431,7 +439,20 @@ impl HyperParameters {
     ///
     /// The trainer starts from epoch 0; to resume a run, call
     /// [`Trainer::restore`](crate::training::Trainer::restore) on the result.
-    pub fn build(self, model: NeuralNetwork, data: TrainingData, callbacks: Callbacks) -> Trainer {
+    ///
+    /// # Errors
+    /// [`FeatureCountMismatch`] when `model`'s input size does not match the dataset's
+    /// feature count. The two are supplied separately (e.g. resuming a run with a fresh
+    /// dataset), so this is the one place their compatibility is checked; once past it,
+    /// every forward pass over the split is guaranteed to fit.
+    pub fn build(
+        self,
+        model: NeuralNetwork,
+        data: TrainingData,
+        callbacks: Callbacks,
+    ) -> Result<Trainer, FeatureCountMismatch> {
+        model.validate_inputs(data.split.train.inputs().view())?;
+
         let optimizer = self.optimizer.instantiate(self.lr, self.weight_decay);
         let scheduler = self
             .scheduler
@@ -439,7 +460,7 @@ impl HyperParameters {
             .expect("schedule parameters were validated in HyperParameters::new");
         let loss = self.loss.instantiate();
 
-        Trainer {
+        Ok(Trainer {
             model,
             callbacks,
             split: data.split,
@@ -453,7 +474,7 @@ impl HyperParameters {
             early_stopping: self.early_stopping,
             epoch_start: 0,
             seed: self.seed,
-        }
+        })
     }
 }
 
@@ -742,7 +763,7 @@ mod tests {
     #[test]
     fn prepare_fits_the_configured_scaler_on_the_train_split() {
         let hp = spec_with_scaler(Some(ScalerKind::MinMax));
-        let data = hp.prepare(ramp_dataset(), None);
+        let data = hp.prepare(ramp_dataset(), None).unwrap();
 
         // A scaler was fitted from the spec's kind, and applying it lands the train
         // inputs in [0, 1] — the signature of the MinMax kind that was configured.
@@ -750,7 +771,7 @@ mod tests {
         assert!(
             data.split
                 .train
-                .inputs
+                .inputs()
                 .iter()
                 .all(|&v| (-1e-5..=1.0 + 1e-5).contains(&v))
         );
@@ -768,8 +789,8 @@ mod tests {
         );
 
         let hp = spec_with_scaler(None);
-        let data = hp.prepare(ramp_dataset(), Some(supplied));
+        let data = hp.prepare(ramp_dataset(), Some(supplied)).unwrap();
 
-        assert!(data.split.train.inputs.iter().all(|&v| v < 0.5));
+        assert!(data.split.train.inputs().iter().all(|&v| v < 0.5));
     }
 }

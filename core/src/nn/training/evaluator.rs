@@ -2,7 +2,7 @@ use crate::accuracies::Accuracy;
 use crate::data::{ModelDataset, ModelSplit};
 use crate::evaluation::{Evaluation, EvaluationSet};
 use crate::loss_functions::LossFunction;
-use crate::model::NeuralNetwork;
+use crate::model::{FeatureCountMismatch, NeuralNetwork};
 use ndarray::ArrayView2;
 use std::sync::Arc;
 
@@ -19,23 +19,36 @@ impl Evaluator {
     }
 
     /// Evaluates the model on the training, validation (if available), and test datasets.
-    pub fn eval_set(&self, model: &NeuralNetwork, split: &ModelSplit) -> EvaluationSet {
-        EvaluationSet {
-            train: self.eval_dataset(model, &split.train),
+    ///
+    /// # Errors
+    /// [`FeatureCountMismatch`] when `model`'s input size does not match the split's features.
+    pub fn eval_set(
+        &self,
+        model: &NeuralNetwork,
+        split: &ModelSplit,
+    ) -> Result<EvaluationSet, FeatureCountMismatch> {
+        Ok(EvaluationSet {
+            train: self.eval_dataset(model, &split.train)?,
             validation: split
                 .validation
                 .as_ref()
-                .map(|v| self.eval_dataset(model, v)),
-            test: self.eval_dataset(model, &split.test),
-        }
+                .map(|v| self.eval_dataset(model, v))
+                .transpose()?,
+            test: self.eval_dataset(model, &split.test)?,
+        })
     }
 
     /// Evaluates the model on a single dataset.
-    pub fn eval_dataset(&self, model: &NeuralNetwork, dataset: &ModelDataset) -> Evaluation {
-        self.eval_predictions(
-            model.predict(dataset.inputs.view()).view(),
-            dataset.targets.view(),
-        )
+    ///
+    /// # Errors
+    /// [`FeatureCountMismatch`] when `model`'s input size does not match the dataset's features.
+    pub fn eval_dataset(
+        &self,
+        model: &NeuralNetwork,
+        dataset: &ModelDataset,
+    ) -> Result<Evaluation, FeatureCountMismatch> {
+        let predictions = model.predict(dataset.inputs().view())?;
+        Ok(self.eval_predictions(predictions.view(), dataset.targets().view()))
     }
 
     /// Evaluates precomputed predictions against the true targets.
@@ -73,7 +86,7 @@ mod tests {
     }
 
     fn dataset(inputs: ndarray::Array2<f32>, targets: ndarray::Array2<f32>) -> ModelDataset {
-        ModelDataset { inputs, targets }
+        ModelDataset::new(inputs, targets)
     }
 
     fn evaluator() -> Evaluator {
@@ -100,10 +113,10 @@ mod tests {
         let model = constant_half_model();
         let data = dataset(array![[0.2, 0.8], [0.3, 0.7]], array![[1.0, 0.0]]);
 
-        let from_dataset = evaluator().eval_dataset(&model, &data);
+        let from_dataset = evaluator().eval_dataset(&model, &data).unwrap();
         let from_preds = evaluator().eval_predictions(
-            model.predict(data.inputs.view()).view(),
-            data.targets.view(),
+            model.predict(data.inputs().view()).unwrap().view(),
+            data.targets().view(),
         );
 
         assert_eq!(from_dataset.loss, from_preds.loss);
@@ -119,7 +132,7 @@ mod tests {
             test: dataset(array![[0.4, 0.6], [0.5, 0.5]], array![[0.0, 1.0]]),
         };
 
-        let set = evaluator().eval_set(&model, &split);
+        let set = evaluator().eval_set(&model, &split).unwrap();
 
         assert!(set.validation.is_none());
         assert!(set.train.loss.is_finite());
@@ -135,7 +148,7 @@ mod tests {
             test: dataset(array![[0.4, 0.6], [0.5, 0.5]], array![[0.0, 1.0]]),
         };
 
-        let set = evaluator().eval_set(&model, &split);
+        let set = evaluator().eval_set(&model, &split).unwrap();
 
         assert!(set.validation.is_some());
     }
