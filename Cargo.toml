@@ -6,3 +6,9 @@ members = ["cli","core"]
 # Floor set by the let-chains used in the code (stabilized in Rust 1.88);
 # edition 2024 alone would only require 1.85.
 rust-version = "1.88"
+
+# Build every dependency optimized while our own crates stay unoptimized for
+# fast, debuggable compiles. The compute-heavy training tests run inside deps
+# (ndarray's matmul), so that is where the speedup lands.
+[profile.dev.package."*"]
+opt-level = 3
