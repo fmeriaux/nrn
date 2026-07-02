@@ -1,5 +1,5 @@
 use super::{DiagramArgs, Format, ImageSize};
-use crate::actions::load_or_read_instance;
+use crate::actions::acquire_instance;
 use crate::display::{Artifacts, loaded, saved};
 use crate::path::PathExt;
 use clap::Args;
@@ -39,7 +39,7 @@ impl ActivationsArgs {
         loaded(&predictor);
 
         let image_path = self.image_path();
-        let instance = load_or_read_instance(self.instance, predictor.network.input_size())?;
+        let instance = acquire_instance(self.instance, predictor.network.input_size())?;
 
         let diagram = predictor.activation_diagram(instance.view(), &options)?;
 

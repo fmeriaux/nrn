@@ -1,4 +1,4 @@
-use super::{Describe, Named, error, prompt, theme};
+use super::{Describe, Named, error, prompt_feature, theme};
 use ndarray::Array1;
 use nrn::data::Instance;
 use std::error::Error;
@@ -14,19 +14,19 @@ impl Describe for Instance {
     }
 }
 
-/// Reading an [`Instance`] interactively from stdin.
-pub(crate) trait ReadInstance {
-    /// Reads exactly `input_size` feature values from stdin, one per line,
+/// Prompting for an [`Instance`] interactively from stdin.
+pub(crate) trait PromptInstance {
+    /// Prompts for exactly `input_size` feature values from stdin, one per line,
     /// reprompting on an unparseable line and erroring on premature end of input.
-    fn read(input_size: usize) -> Result<Instance, Box<dyn Error>>;
+    fn prompt(input_size: usize) -> Result<Instance, Box<dyn Error>>;
 }
 
-impl ReadInstance for Instance {
-    fn read(input_size: usize) -> Result<Instance, Box<dyn Error>> {
+impl PromptInstance for Instance {
+    fn prompt(input_size: usize) -> Result<Instance, Box<dyn Error>> {
         let mut values = Vec::with_capacity(input_size);
 
         while values.len() < input_size {
-            prompt(values.len());
+            prompt_feature(values.len());
 
             let mut raw = String::new();
             if stdin().read_line(&mut raw)? == 0 {

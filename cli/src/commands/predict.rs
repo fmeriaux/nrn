@@ -1,4 +1,4 @@
-use crate::actions::load_or_read_instance;
+use crate::actions::acquire_instance;
 use crate::display::{evaluated, loaded};
 use clap::Args;
 use nrn::model::Predictor;
@@ -24,7 +24,7 @@ impl PredictArgs {
         let predictor = Predictor::load(&self.model)?;
         loaded(&predictor);
 
-        let instance = load_or_read_instance(self.instance, predictor.network.input_size())?;
+        let instance = acquire_instance(self.instance, predictor.network.input_size())?;
 
         let classification = if self.activations {
             let diagram =
