@@ -1,11 +1,9 @@
-use crate::display::{error, evaluated, loaded, prompt};
+use crate::actions::load_or_read_instance;
+use crate::display::{evaluated, loaded};
 use clap::Args;
-use ndarray::Array1;
-use nrn::data::Instance;
 use nrn::model::Predictor;
 use nrn::plot::DiagramOptions;
 use std::error::Error;
-use std::io::stdin;
 
 #[derive(Args, Debug)]
 pub struct PredictArgs {
@@ -26,16 +24,7 @@ impl PredictArgs {
         let predictor = Predictor::load(&self.model)?;
         loaded(&predictor);
 
-        let input_size = predictor.network.input_size();
-
-        let instance = match self.instance {
-            Some(instance_file) => {
-                let instance = Instance::load(&instance_file)?;
-                loaded(&instance);
-                instance
-            }
-            None => read_instance(input_size)?,
-        };
+        let instance = load_or_read_instance(self.instance, predictor.network.input_size())?;
 
         if self.activations {
             let diagram =
@@ -48,32 +37,4 @@ impl PredictArgs {
 
         Ok(())
     }
-}
-
-/// Reads exactly `input_size` feature values from stdin, one per line, reprompting
-/// on an unparseable line and erroring on premature end of input.
-fn read_instance(input_size: usize) -> Result<Instance, Box<dyn Error>> {
-    let mut values = Vec::with_capacity(input_size);
-
-    while values.len() < input_size {
-        prompt(values.len());
-
-        let mut raw = String::new();
-        if stdin().read_line(&mut raw)? == 0 {
-            return Err(format!(
-                "unexpected end of input: read {} of {input_size} features",
-                values.len()
-            )
-            .into());
-        }
-
-        match raw.trim().parse::<f32>() {
-            Ok(value) => values.push(value),
-            Err(err) => error!("{err}"),
-        }
-    }
-
-    println!();
-
-    Ok(Instance::new(Array1::from_vec(values)))
 }

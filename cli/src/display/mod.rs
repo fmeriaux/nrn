@@ -26,6 +26,7 @@ mod theme;
 pub(crate) use artifacts::Artifacts;
 pub(crate) use hyperparameters::HyperParametersView;
 pub(crate) use icons::*;
+pub(crate) use instance::ReadInstance;
 pub(crate) use progress::{Encoding, Epochs, Frames, Spinner};
 pub(crate) use terminal::{play_frames, preview};
 

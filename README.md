@@ -297,7 +297,8 @@ Prediction
 
 For a horizontal node-link graph instead — neurons as circles, connections colored by weight sign and weighted
 by magnitude — render it to an image with `nrn plot activations <model> --instance <file> --format image`
-(`--max-units` samples wide layers down, `--min-edge` prunes weak connections).
+(`--max-units` samples wide layers down, `--min-edge` prunes weak connections). As with `predict`, omit
+`--instance` to type the features in at the prompt.
 
 ### 3 · Many classes at once: multi-class MLP
 

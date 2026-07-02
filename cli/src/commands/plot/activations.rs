@@ -1,7 +1,7 @@
 use super::{Format, ImageSize};
+use crate::actions::load_or_read_instance;
 use crate::display::{Artifacts, loaded, saved};
 use clap::Args;
-use nrn::data::Instance;
 use nrn::model::Predictor;
 use nrn::plot::DiagramOptions;
 use std::error::Error;
@@ -12,9 +12,9 @@ pub struct ActivationsArgs {
     /// Model directory to visualize (network plus its optional scaler)
     model: String,
 
-    /// Instance file to run through the network
+    /// Instance file to run through the network; when omitted, the features are read from stdin
     #[arg(short, long)]
-    instance: String,
+    instance: Option<String>,
 
     /// Maximum neurons drawn per layer; larger layers are sampled evenly
     #[arg(long, default_value_t = 24, value_parser = clap::value_parser!(u16).range(1..=256))]
@@ -41,8 +41,7 @@ impl ActivationsArgs {
         let predictor = Predictor::load(&self.model)?;
         loaded(&predictor);
 
-        let instance = Instance::load(&self.instance)?;
-        loaded(&instance);
+        let instance = load_or_read_instance(self.instance, predictor.network.input_size())?;
 
         let options = DiagramOptions {
             max_units: self.max_units as usize,
@@ -75,7 +74,7 @@ mod tests {
     }
 
     fn parse(extra: &[&str]) -> ActivationsArgs {
-        let mut argv = vec!["activations", "model.dir", "--instance", "x.safetensors"];
+        let mut argv = vec!["activations", "model.dir"];
         argv.extend_from_slice(extra);
         Cli::parse_from(argv).args
     }
@@ -96,7 +95,7 @@ mod tests {
     }
 
     #[test]
-    fn instance_is_required() {
-        assert!(Cli::try_parse_from(["activations", "model.dir"]).is_err());
+    fn instance_is_optional() {
+        assert!(parse(&[]).instance.is_none());
     }
 }
