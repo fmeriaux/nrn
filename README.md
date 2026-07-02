@@ -263,7 +263,8 @@ closes neatly around the inner blob:
 
 **Peek inside the forward pass.** Add `--activations` to `predict` (or use `nrn plot activations`) to see
 how one instance lights up the network: each neuron is colored by how strongly it fires — positive in blue,
-negative in orange, hollow when silent — with the concrete value beside it, ending in the ranked prediction.
+negative in orange, hollow when silent — with the concrete value and an intensity bar beside it, ending in
+the ranked prediction.
 
 ```sh
 nrn predict model-ring-seed1024-c2-f2-n500 --activations
@@ -271,34 +272,36 @@ nrn predict model-ring-seed1024-c2-f2-n500 --activations
 
 ```
 Input (2 features)
-  ● n0     -0.6008
-  ● n1      1.3873
+  ● n0     -0.6008  ██████████
+  ● n1      1.3873  ████████████████████████
 
 relu (16 units)
-  ○ n0      0.0000  (silent)
-  ● n4      0.7730
-  ● n5      2.8036
+  ○ n0      0.0000                      silent
+  ● n4      0.7730  ███████
+  ● n5      2.8036  ████████████████████████
   …
-  ● n15     0.6402
+  ● n15     0.6402  █████
 
 relu (8 units)
-  ● n1      4.7342
-  ● n2      6.6462
-  ○ n4      0.0000  (silent)
+  ● n1      4.7342  █████████████████
+  ● n2      6.6462  ████████████████████████
+  ○ n4      0.0000                      silent
   …
 
 sigmoid (1 unit)
-  ● n0      1.0000
+  ● n0      1.0000  ████████████████████████
 
 Prediction
-  ● class 1  100.0%  <-
-  ● class 0    0.0%
+  ● class 1  100.0%  ◀
+    class 0    0.0%
 ```
 
-For a horizontal node-link graph instead — neurons as circles, connections colored by weight sign and weighted
-by magnitude — render it to an image with `nrn plot activations <model> --instance <file> --format image`
-(`--max-units` samples wide layers down, `--min-edge` prunes weak connections). As with `predict`, omit
-`--instance` to type the features in at the prompt.
+For a horizontal node-link graph instead — neurons as circles (input and output values annotated), connections
+colored by weight sign and weighted by magnitude, with a legend along the bottom — render it to an image with
+`nrn plot activations <model> --instance <file> --format image`
+(`--max-units` samples wide layers down, `--min-edge` prunes weak connections, `-o/--output` sets the file,
+defaulting to `activations-<model>.png` in the current directory). As with `predict`, omit `--instance` to
+type the features in at the prompt.
 
 ### 3 · Many classes at once: multi-class MLP
 

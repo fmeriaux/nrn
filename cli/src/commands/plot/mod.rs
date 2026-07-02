@@ -13,7 +13,7 @@ use crate::display::preview;
 use activations::ActivationsArgs;
 use clap::{Args, Subcommand, ValueEnum};
 use dataset::DatasetArgs;
-use nrn::plot::{Figure, ImageConfig};
+use nrn::plot::{DiagramOptions, Figure, ImageConfig};
 use run::RunArgs;
 use std::error::Error;
 use std::path::{Path, PathBuf};
@@ -66,6 +66,34 @@ impl ImageSize {
     /// The raster configuration for this size.
     pub(super) fn config(&self) -> ImageConfig<'static> {
         ImageConfig::new(self.width as u32, self.height as u32)
+    }
+}
+
+/// How a large network is capped and pruned when drawn as an activation diagram.
+#[derive(Args, Debug, Clone, Copy)]
+pub(super) struct DiagramArgs {
+    /// Maximum neurons drawn per layer; larger layers are sampled evenly
+    #[arg(long, default_value_t = 24, value_parser = clap::value_parser!(u16).range(1..=256))]
+    max_units: u16,
+
+    /// Drop connections whose normalized magnitude is below this (image only)
+    #[arg(long, default_value_t = 0.0)]
+    min_edge: f32,
+}
+
+impl DiagramArgs {
+    /// The diagram options for these flags.
+    ///
+    /// # Errors
+    /// When `--min-edge` falls outside `[0.0, 1.0]`.
+    pub(super) fn options(&self) -> Result<DiagramOptions, Box<dyn Error>> {
+        if !(0.0..=1.0).contains(&self.min_edge) {
+            return Err("--min-edge must be between 0.0 and 1.0".into());
+        }
+        Ok(DiagramOptions {
+            max_units: self.max_units as usize,
+            min_edge_magnitude: self.min_edge,
+        })
     }
 }
 

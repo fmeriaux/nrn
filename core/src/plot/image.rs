@@ -93,15 +93,33 @@ fn rgb(color: SceneColor) -> RGBColor {
 const DIAGRAM_MARGIN: i32 = 60;
 /// Extra vertical room above the node field for the per-column layer labels.
 const LABEL_BAND: i32 = 30;
+/// Extra vertical room below the node field for the two-row legend.
+const LEGEND_BAND: i32 = 54;
+/// Extra horizontal room on each side for the input and output value labels.
+const VALUE_GUTTER: i32 = 52;
 /// The outline color of a silent (non-firing) neuron on the white canvas.
 const SILENT_NODE: SceneColor = SceneColor::rgb(150, 150, 150);
+
+/// One entry's marker in the legend row.
+enum LegendMark {
+    /// A filled neuron marker in the given color.
+    Filled(SceneColor),
+    /// A hollow neuron marker (a silent neuron).
+    Hollow,
+    /// A connection segment in the given color.
+    Line(SceneColor),
+    /// No marker, just the label.
+    None,
+}
 
 impl ActivationDiagram {
     /// Rasterizes the diagram as a horizontal node-link graph: one column of
     /// neurons per layer from input (left) to output (right), each neuron a
     /// circle tinted by activation intensity (hollow when silent) and each
     /// connection a line colored by weight sign, its width and opacity scaled by
-    /// magnitude. The predicted top class is captioned above.
+    /// magnitude. The input and output neurons are annotated with their values,
+    /// the predicted top class is captioned above, and a legend runs along the
+    /// bottom.
     pub fn to_image(&self, cfg: &ImageConfig) -> Result<RasterImage, Box<dyn Error>> {
         let mut bytes = vec![255u8; (cfg.width * cfg.height * 3) as usize];
         {
@@ -113,7 +131,9 @@ impl ActivationDiagram {
             let radius = self.node_radius(cfg);
             self.draw_edges(&root, &positions)?;
             self.draw_nodes(&root, &positions, radius)?;
+            self.draw_values(&root, &positions, radius, cfg)?;
             self.draw_labels(&root, &positions, cfg)?;
+            self.draw_legend(&root, cfg)?;
 
             root.present()?;
         }
@@ -128,10 +148,10 @@ impl ActivationDiagram {
     /// The pixel center of every shown neuron, indexed `[layer][unit]`: layers
     /// span the width left to right, neurons span the height top to bottom.
     fn node_positions(&self, cfg: &ImageConfig) -> Vec<Vec<(i32, i32)>> {
-        let left = DIAGRAM_MARGIN;
-        let right = cfg.width as i32 - DIAGRAM_MARGIN;
+        let left = DIAGRAM_MARGIN + VALUE_GUTTER;
+        let right = cfg.width as i32 - DIAGRAM_MARGIN - VALUE_GUTTER;
         let top = DIAGRAM_MARGIN + LABEL_BAND;
-        let bottom = cfg.height as i32 - DIAGRAM_MARGIN;
+        let bottom = cfg.height as i32 - DIAGRAM_MARGIN - LEGEND_BAND;
 
         self.layers
             .iter()
@@ -148,7 +168,7 @@ impl ActivationDiagram {
     /// The neuron radius: a third of the densest column's vertical spacing,
     /// clamped to a legible range.
     fn node_radius(&self, cfg: &ImageConfig) -> i32 {
-        let field = cfg.height as i32 - 2 * DIAGRAM_MARGIN - LABEL_BAND;
+        let field = cfg.height as i32 - 2 * DIAGRAM_MARGIN - LABEL_BAND - LEGEND_BAND;
         let densest = self.layers.iter().map(|l| l.units.len()).max().unwrap_or(1);
         let gap = if densest > 1 {
             field / (densest as i32 - 1)
@@ -212,18 +232,22 @@ impl ActivationDiagram {
         positions: &[Vec<(i32, i32)>],
         cfg: &ImageConfig,
     ) -> Result<(), Box<dyn Error>> {
-        let centered = (cfg.font_style, cfg.font_size)
-            .into_font()
-            .color(&BLACK)
-            .pos(Pos::new(HPos::Center, VPos::Top));
+        let last = self.layers.len().saturating_sub(1);
 
-        for (layer, column) in self.layers.iter().zip(positions) {
-            if let Some(&(x, _)) = column.first() {
-                root.draw(&Text::new(
-                    layer.heading(),
-                    (x, DIAGRAM_MARGIN),
-                    centered.clone(),
-                ))?;
+        for (column, (layer, positions)) in self.layers.iter().zip(positions).enumerate() {
+            if let Some(&(x, _)) = positions.first() {
+                // Anchor the edge columns inward so the input and output headings
+                // stay on the canvas rather than overflowing the margins.
+                let hpos = match column {
+                    0 => HPos::Left,
+                    c if c == last => HPos::Right,
+                    _ => HPos::Center,
+                };
+                let font = (cfg.font_style, cfg.font_size)
+                    .into_font()
+                    .color(&BLACK)
+                    .pos(Pos::new(hpos, VPos::Top));
+                root.draw(&Text::new(layer.heading(), (x, DIAGRAM_MARGIN), font))?;
             }
         }
 
@@ -231,6 +255,118 @@ impl ActivationDiagram {
         let caption = format!("Prediction: class {class} ({:.1}%)", probability * 100.0);
         let corner = (cfg.font_style, cfg.font_size).into_font().color(&BLACK);
         root.draw(&Text::new(caption, (DIAGRAM_MARGIN, 16), corner))?;
+        Ok(())
+    }
+
+    /// Annotates the input and output neurons with their numeric values: input
+    /// features to the left of their column, output activations to the right.
+    fn draw_values(
+        &self,
+        root: &DrawingArea<BitMapBackend, Shift>,
+        positions: &[Vec<(i32, i32)>],
+        radius: i32,
+        cfg: &ImageConfig,
+    ) -> Result<(), Box<dyn Error>> {
+        let last = self.layers.len().saturating_sub(1);
+        let gap = radius + 8;
+
+        for (column, hpos, dx) in [(0, HPos::Right, -gap), (last, HPos::Left, gap)] {
+            // A single-layer diagram has no distinct output column to label twice.
+            if column == last && last == 0 {
+                break;
+            }
+            let font = (cfg.font_style, cfg.font_size)
+                .into_font()
+                .color(&BLACK)
+                .pos(Pos::new(hpos, VPos::Center));
+            for (unit, &(x, y)) in self.layers[column].units.iter().zip(&positions[column]) {
+                let value = format!("{:.4}", unit.value);
+                root.draw(&Text::new(value, (x + dx, y), font.clone()))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Draws a two-row legend along the bottom: the neuron encoding (blue for a
+    /// positive value, orange for negative, hollow when silent) and the
+    /// connection encoding (blue/orange by weight sign, thicker with magnitude).
+    fn draw_legend(
+        &self,
+        root: &DrawingArea<BitMapBackend, Shift>,
+        cfg: &ImageConfig,
+    ) -> Result<(), Box<dyn Error>> {
+        let top = cfg.height as i32 - LEGEND_BAND;
+        self.draw_legend_row(
+            root,
+            cfg,
+            top,
+            "neuron",
+            &[
+                (LegendMark::Filled(SceneColor::POSITIVE), "positive value"),
+                (LegendMark::Filled(SceneColor::NEGATIVE), "negative value"),
+                (LegendMark::Hollow, "silent"),
+            ],
+        )?;
+        self.draw_legend_row(
+            root,
+            cfg,
+            top + 24,
+            "weight",
+            &[
+                (LegendMark::Line(SceneColor::POSITIVE), "positive"),
+                (LegendMark::Line(SceneColor::NEGATIVE), "negative"),
+                (LegendMark::None, "thicker = larger magnitude"),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Draws one legend row at `y`: a prefix, then each marker beside its label.
+    fn draw_legend_row(
+        &self,
+        root: &DrawingArea<BitMapBackend, Shift>,
+        cfg: &ImageConfig,
+        y: i32,
+        prefix: &str,
+        entries: &[(LegendMark, &str)],
+    ) -> Result<(), Box<dyn Error>> {
+        let font = (cfg.font_style, cfg.font_size)
+            .into_font()
+            .color(&BLACK)
+            .pos(Pos::new(HPos::Left, VPos::Center));
+        let char_width = cfg.font_size as i32 * 6 / 10;
+        let radius = 6;
+        let segment = 22;
+
+        // Align both rows' first marker past a fixed-width prefix column.
+        root.draw(&Text::new(
+            format!("{prefix}:"),
+            (DIAGRAM_MARGIN, y),
+            font.clone(),
+        ))?;
+        let mut x = DIAGRAM_MARGIN + 8 * char_width;
+
+        for (mark, text) in entries {
+            let text_x = match mark {
+                LegendMark::Filled(color) => {
+                    root.draw(&Circle::new((x + radius, y), radius, rgb(*color).filled()))?;
+                    x + 2 * radius + 8
+                }
+                LegendMark::Hollow => {
+                    let outline = ShapeStyle::from(rgb(SILENT_NODE)).stroke_width(2);
+                    root.draw(&Circle::new((x + radius, y), radius, outline))?;
+                    x + 2 * radius + 8
+                }
+                LegendMark::Line(color) => {
+                    let style = ShapeStyle::from(rgb(*color)).stroke_width(3);
+                    root.draw(&PathElement::new(vec![(x, y), (x + segment, y)], style))?;
+                    x + segment + 8
+                }
+                LegendMark::None => x,
+            };
+            root.draw(&Text::new(text.to_string(), (text_x, y), font.clone()))?;
+            x = text_x + text.len() as i32 * char_width + 28;
+        }
         Ok(())
     }
 }

@@ -234,10 +234,20 @@ fn swatch(color: SceneColor) -> String {
 
 /// `glyph` wrapped in a truecolor escape so it prints in `color`, reset after.
 fn colored(glyph: char, color: SceneColor) -> String {
+    colored_str(&glyph.to_string(), color)
+}
+
+/// `text` wrapped in a truecolor escape so it prints in `color`, reset after.
+fn colored_str(text: &str, color: SceneColor) -> String {
     format!(
-        "\u{1b}[38;2;{};{};{}m{glyph}\u{1b}[0m",
+        "\u{1b}[38;2;{};{};{}m{text}\u{1b}[0m",
         color.red, color.green, color.blue
     )
+}
+
+/// `text` wrapped in the ANSI bold escape, reset after.
+fn bold(text: &str) -> String {
+    format!("\u{1b}[1m{text}\u{1b}[0m")
 }
 
 /// The `textplots` color for a scene color.
@@ -272,6 +282,9 @@ fn render_panel(panel: &Panel, cfg: &ConsoleConfig) -> String {
 /// The hollow marker color of a silent (non-firing) neuron.
 const SILENT_COLOR: SceneColor = SceneColor::rgb(90, 90, 90);
 
+/// The full width, in block glyphs, of a neuron's activation-intensity bar.
+const BAR_WIDTH: usize = 24;
+
 impl ActivationDiagram {
     /// Renders the forward pass as a vertical list of layers from input to
     /// output: each neuron a colored marker beside its value — filled and tinted
@@ -288,10 +301,10 @@ impl ActivationDiagram {
     }
 }
 
-/// One layer as a heading naming its role and neuron count, then one line per
-/// shown neuron.
+/// One layer as a bold heading naming its role and neuron count, then one line
+/// per shown neuron.
 fn render_layer(layer: &DiagramLayer) -> String {
-    let mut block = layer.heading();
+    let mut block = bold(&layer.heading());
     block.push('\n');
     for unit in &layer.units {
         block.push_str(&render_unit(unit));
@@ -300,19 +313,22 @@ fn render_layer(layer: &DiagramLayer) -> String {
     block
 }
 
-/// One neuron: a filled marker tinted by intensity when firing, or a hollow
-/// marker flagged silent, beside its index and value.
+/// One neuron: its marker, index and value, followed by a bar whose length tracks
+/// activation intensity when firing, or a right-aligned `silent` flag otherwise.
 fn render_unit(unit: &Unit) -> String {
     if unit.firing {
+        let filled = (unit.intensity * BAR_WIDTH as f32).round() as usize;
+        let bar = colored_str(&"\u{2588}".repeat(filled), unit.marker_color());
         format!(
-            "  {} n{:<3} {:>9.4}",
+            "  {} n{:<3} {:>9.4}  {bar}",
             colored('\u{25cf}', unit.marker_color()),
             unit.index,
             unit.value
         )
     } else {
+        let flag = colored_str(&format!("{:>BAR_WIDTH$}", "silent"), SILENT_COLOR);
         format!(
-            "  {} n{:<3} {:>9.4}  (silent)",
+            "  {} n{:<3} {:>9.4}  {flag}",
             colored('\u{25cb}', SILENT_COLOR),
             unit.index,
             unit.value
@@ -320,17 +336,23 @@ fn render_unit(unit: &Unit) -> String {
     }
 }
 
-/// The predicted class ranking: one line per class with its category swatch and
-/// probability, the most likely first and arrow-marked.
+/// The predicted class ranking, most likely first: the top class carries its
+/// category swatch and an arrow, the rest are indented beneath it.
 fn render_prediction(prediction: &Classification) -> String {
-    let mut block = String::from("Prediction\n");
+    let mut block = format!("{}\n", bold("Prediction"));
     for (rank, &(class, probability)) in prediction.ranking().iter().enumerate() {
-        let marker = if rank == 0 { "  <-" } else { "" };
-        block.push_str(&format!(
-            "  {} class {class}  {:>5.1}%{marker}\n",
-            swatch(SceneColor::category(class)),
-            probability * 100.0
-        ));
+        if rank == 0 {
+            block.push_str(&format!(
+                "  {} class {class}  {:>5.1}%  \u{25c0}\n",
+                swatch(SceneColor::category(class)),
+                probability * 100.0
+            ));
+        } else {
+            block.push_str(&format!(
+                "    class {class}  {:>5.1}%\n",
+                probability * 100.0
+            ));
+        }
     }
     block
 }
@@ -394,11 +416,25 @@ mod tests {
             let text = diagram().to_console();
             // The dead neuron (value 0) is hollow and flagged; active ones are filled.
             assert!(text.contains('\u{25cb}'));
-            assert!(text.contains("(silent)"));
+            assert!(text.contains("silent"));
             assert!(text.contains('\u{25cf}'));
             // Concrete activation values are printed beside their neuron.
             assert!(text.contains("n2"));
             assert!(text.contains("2.0000"));
+        }
+
+        #[test]
+        fn to_console_draws_an_intensity_bar_for_a_firing_neuron() {
+            let text = diagram().to_console();
+            // The peak-intensity neuron draws a full-width bar of block glyphs.
+            assert!(text.contains(&"\u{2588}".repeat(BAR_WIDTH)));
+        }
+
+        #[test]
+        fn to_console_renders_headings_in_bold() {
+            let text = diagram().to_console();
+            assert!(text.contains(&bold("Input (2 features)")));
+            assert!(text.contains(&bold("Prediction")));
         }
 
         #[test]
@@ -429,7 +465,7 @@ mod tests {
             let prediction = text.split("Prediction").nth(1).unwrap();
             let first = prediction.lines().nth(1).unwrap();
             assert!(first.contains("class 2"));
-            assert!(first.contains("<-"));
+            assert!(first.contains('\u{25c0}'));
         }
     }
 

@@ -1,11 +1,11 @@
-use super::{Format, ImageSize};
+use super::{DiagramArgs, Format, ImageSize};
 use crate::actions::load_or_read_instance;
 use crate::display::{Artifacts, loaded, saved};
+use crate::path::PathExt;
 use clap::Args;
 use nrn::model::Predictor;
-use nrn::plot::DiagramOptions;
 use std::error::Error;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Args, Debug)]
 pub struct ActivationsArgs {
@@ -16,17 +16,16 @@ pub struct ActivationsArgs {
     #[arg(short, long)]
     instance: Option<String>,
 
-    /// Maximum neurons drawn per layer; larger layers are sampled evenly
-    #[arg(long, default_value_t = 24, value_parser = clap::value_parser!(u16).range(1..=256))]
-    max_units: u16,
-
-    /// Drop connections whose normalized magnitude is below this (image only)
-    #[arg(long, default_value_t = 0.0)]
-    min_edge: f32,
+    /// Output path for the image, without extension; defaults to `activations-{model}` in the current directory (image only)
+    #[arg(short, long)]
+    output: Option<String>,
 
     /// Output format
     #[arg(long, value_enum, default_value_t = Format::default())]
     format: Format,
+
+    #[command(flatten)]
+    diagram: DiagramArgs,
 
     #[command(flatten)]
     size: ImageSize,
@@ -34,31 +33,37 @@ pub struct ActivationsArgs {
 
 impl ActivationsArgs {
     pub fn run(self) -> Result<(), Box<dyn Error>> {
-        if !(0.0..=1.0).contains(&self.min_edge) {
-            return Err("--min-edge must be between 0.0 and 1.0".into());
-        }
+        let options = self.diagram.options()?;
 
         let predictor = Predictor::load(&self.model)?;
         loaded(&predictor);
 
+        let image_path = self.image_path();
         let instance = load_or_read_instance(self.instance, predictor.network.input_size())?;
 
-        let options = DiagramOptions {
-            max_units: self.max_units as usize,
-            min_edge_magnitude: self.min_edge,
-        };
         let diagram = predictor.activation_diagram(instance.view(), &options)?;
 
         match self.format {
             Format::Console => println!("{}", diagram.to_console()),
             Format::Image => {
-                let base = Path::new(&self.model).join("activations");
-                let path = diagram.to_image(&self.size.config())?.save(base)?;
+                let path = diagram.to_image(&self.size.config())?.save(image_path)?;
                 saved(&Artifacts::single("Activation Diagram", path));
             }
         }
 
         Ok(())
+    }
+
+    /// The output path for the rendered diagram: `--output` when given, otherwise
+    /// `activations-{model}` in the current directory (the extension is set by the
+    /// writer).
+    fn image_path(&self) -> PathBuf {
+        self.output.clone().map(PathBuf::from).unwrap_or_else(|| {
+            PathBuf::from(format!(
+                "activations-{}",
+                Path::new(&self.model).file_stem_string()
+            ))
+        })
     }
 }
 
@@ -83,19 +88,37 @@ mod tests {
     fn format_defaults_to_console_and_max_units_to_twenty_four() {
         let args = parse(&[]);
         assert_eq!(args.format, Format::Console);
-        assert_eq!(args.max_units, 24);
+        assert_eq!(args.diagram.options().unwrap().max_units, 24);
     }
 
     #[test]
     fn flags_override_the_defaults() {
         let args = parse(&["--format", "image", "--max-units", "8", "--min-edge", "0.2"]);
         assert_eq!(args.format, Format::Image);
-        assert_eq!(args.max_units, 8);
-        assert_eq!(args.min_edge, 0.2);
+        let options = args.diagram.options().unwrap();
+        assert_eq!(options.max_units, 8);
+        assert_eq!(options.min_edge_magnitude, 0.2);
+    }
+
+    #[test]
+    fn a_min_edge_outside_the_unit_range_is_rejected() {
+        assert!(parse(&["--min-edge", "1.5"]).diagram.options().is_err());
     }
 
     #[test]
     fn instance_is_optional() {
         assert!(parse(&[]).instance.is_none());
+    }
+
+    #[test]
+    fn image_defaults_to_the_current_directory_named_after_the_model() {
+        // The default model argument is `model.dir`, whose stem is `model`.
+        assert_eq!(parse(&[]).image_path(), Path::new("activations-model"));
+    }
+
+    #[test]
+    fn output_overrides_the_default_image_path() {
+        let args = parse(&["--output", "diagrams/run1"]);
+        assert_eq!(args.image_path(), Path::new("diagrams/run1"));
     }
 }
