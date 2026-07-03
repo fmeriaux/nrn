@@ -11,7 +11,7 @@ use crate::classification::Classification;
 use crate::data::scalers::Scaler;
 use crate::model::{FeatureCountMismatch, NeuralNetwork, PredictionError, Predictor};
 use crate::plot::scene::Color;
-use ndarray::{Array2, ArrayView1, Axis};
+use ndarray::{ArrayView1, ArrayView2, Axis};
 
 /// Activation magnitudes at or below this count as a silent neuron.
 const FIRING_EPSILON: f32 = 1e-6;
@@ -193,16 +193,21 @@ impl NeuralNetwork {
                 let (role, edges) = if stage == 0 {
                     (LayerRole::Input, Vec::new())
                 } else {
-                    let layer = &self.layers[stage - 1];
-                    let edges = edges_for(
-                        &layer.weights,
-                        activations[stage - 1].column(0),
-                        &shown[stage - 1],
-                        &shown[stage],
-                        options.min_edge_magnitude,
-                    );
+                    let layer = &self.layers()[stage - 1];
+                    let edges = match layer.weight_matrix() {
+                        Some(weights) => edges_for(
+                            weights,
+                            activations[stage - 1].column(0),
+                            &shown[stage - 1],
+                            &shown[stage],
+                            options.min_edge_magnitude,
+                        ),
+                        None => Vec::new(),
+                    };
                     (
-                        LayerRole::Activated(layer.activation.name().to_string()),
+                        LayerRole::Activated(
+                            layer.activation_name().unwrap_or_default().to_string(),
+                        ),
                         edges,
                     )
                 };
@@ -307,7 +312,7 @@ fn label_output_classes(units: &mut [Unit], output_count: usize) {
 /// `(this layer's neurons, previous layer's neurons)` and `prev_activations`
 /// carries every source neuron's activation.
 fn edges_for(
-    weights: &Array2<f32>,
+    weights: ArrayView2<f32>,
     prev_activations: ArrayView1<f32>,
     shown_prev: &[usize],
     shown_cur: &[usize],
@@ -350,17 +355,12 @@ fn edges_for(
 mod tests {
     use super::*;
     use crate::activations::{Activation, RELU};
-    use crate::model::{NeuralNetwork, NeuronLayer};
+    use crate::layers::Dense;
+    use crate::model::NeuralNetwork;
     use ndarray::{Array1, Array2, array};
 
-    fn relu_layer(weights: Array2<f32>, biases: Array1<f32>) -> NeuralNetwork {
-        NeuralNetwork {
-            layers: vec![NeuronLayer {
-                weights,
-                biases,
-                activation: RELU.clone(),
-            }],
-        }
+    fn relu_network(weights: Array2<f32>, biases: Array1<f32>) -> NeuralNetwork {
+        NeuralNetwork::single(Dense::new(weights, biases, RELU.clone()))
     }
 
     #[test]
@@ -387,7 +387,7 @@ mod tests {
 
     #[test]
     fn diagram_has_an_input_layer_then_one_layer_per_neuron_layer() {
-        let net = relu_layer(array![[1.0, 0.0], [2.0, 0.0]], array![0.0, 0.0]);
+        let net = relu_network(array![[1.0, 0.0], [2.0, 0.0]], array![0.0, 0.0]);
         let diagram = net
             .activation_diagram(array![1.0, 1.0].view(), &DiagramOptions::default())
             .unwrap();
@@ -403,7 +403,7 @@ mod tests {
 
     #[test]
     fn input_layer_carries_the_raw_instance_values() {
-        let net = relu_layer(array![[1.0, 0.0]], array![0.0]);
+        let net = relu_network(array![[1.0, 0.0]], array![0.0]);
         let diagram = net
             .activation_diagram(array![-0.5, 2.0].view(), &DiagramOptions::default())
             .unwrap();
@@ -422,20 +422,16 @@ mod tests {
         // Row 1's negative pre-activation is clamped to zero by ReLU. Tested on a
         // hidden layer, whose intensity is peak-normalized (an output layer's
         // intensity tracks its probability instead).
-        let net = NeuralNetwork {
-            layers: vec![
-                NeuronLayer {
-                    weights: array![[1.0, 0.0], [-1.0, 0.0], [2.0, 0.0]],
-                    biases: array![0.0, 0.0, 0.0],
-                    activation: RELU.clone(),
-                },
-                NeuronLayer {
-                    weights: array![[1.0, 0.0, 0.0]],
-                    biases: array![0.0],
-                    activation: RELU.clone(),
-                },
-            ],
-        };
+        let net = NeuralNetwork::single(Dense::new(
+            array![[1.0, 0.0], [-1.0, 0.0], [2.0, 0.0]],
+            array![0.0, 0.0, 0.0],
+            RELU.clone(),
+        ))
+        .with_layer(Dense::new(
+            array![[1.0, 0.0, 0.0]],
+            array![0.0],
+            RELU.clone(),
+        ));
         let diagram = net
             .activation_diagram(array![1.0, 1.0].view(), &DiagramOptions::default())
             .unwrap();
@@ -454,7 +450,7 @@ mod tests {
 
     #[test]
     fn edges_keep_weight_sign_and_normalize_magnitude_by_layer_peak() {
-        let net = relu_layer(
+        let net = relu_network(
             array![[1.0, 0.0], [-1.0, 0.0], [2.0, 0.0]],
             array![0.0, 0.0, 0.0],
         );
@@ -486,7 +482,7 @@ mod tests {
     #[test]
     fn large_layers_are_sampled_down_to_the_cap() {
         let weights = Array2::from_shape_fn((50, 2), |(r, _)| r as f32);
-        let net = relu_layer(weights, Array1::zeros(50));
+        let net = relu_network(weights, Array1::zeros(50));
         let options = DiagramOptions {
             max_units: 8,
             ..DiagramOptions::default()
@@ -511,7 +507,7 @@ mod tests {
 
     #[test]
     fn a_weak_edge_threshold_prunes_low_magnitude_connections() {
-        let net = relu_layer(
+        let net = relu_network(
             array![[1.0, 0.0], [-1.0, 0.0], [2.0, 0.0]],
             array![0.0, 0.0, 0.0],
         );
@@ -536,20 +532,12 @@ mod tests {
         // weights a tiny link from the firing neuron and a strong one from the
         // silent one: contribution flows only through neuron 0, so that is the
         // edge a weight-only threshold would have wrongly dropped.
-        let net = NeuralNetwork {
-            layers: vec![
-                NeuronLayer {
-                    weights: array![[1.0], [-1.0]],
-                    biases: array![0.0, 0.0],
-                    activation: RELU.clone(),
-                },
-                NeuronLayer {
-                    weights: array![[0.1, 5.0]],
-                    biases: array![0.0],
-                    activation: RELU.clone(),
-                },
-            ],
-        };
+        let net = NeuralNetwork::single(Dense::new(
+            array![[1.0], [-1.0]],
+            array![0.0, 0.0],
+            RELU.clone(),
+        ))
+        .with_layer(Dense::new(array![[0.1, 5.0]], array![0.0], RELU.clone()));
         let options = DiagramOptions {
             min_edge_magnitude: 0.5,
             ..DiagramOptions::default()
@@ -612,7 +600,7 @@ mod tests {
 
     #[test]
     fn the_classification_ranks_the_output_activations() {
-        let net = relu_layer(array![[1.0, 0.0], [3.0, 0.0]], array![0.0, 0.0]);
+        let net = relu_network(array![[1.0, 0.0], [3.0, 0.0]], array![0.0, 0.0]);
         let diagram = net
             .activation_diagram(array![1.0, 0.0].view(), &DiagramOptions::default())
             .unwrap();
@@ -623,7 +611,7 @@ mod tests {
 
     #[test]
     fn multi_output_neurons_carry_their_own_class() {
-        let net = relu_layer(array![[1.0, 0.0], [3.0, 0.0]], array![0.0, 0.0]);
+        let net = relu_network(array![[1.0, 0.0], [3.0, 0.0]], array![0.0, 0.0]);
         let diagram = net
             .activation_diagram(array![1.0, 0.0].view(), &DiagramOptions::default())
             .unwrap();
@@ -641,7 +629,7 @@ mod tests {
         // Output activations [0.3, 0.4]: read as probabilities, each neuron's
         // intensity is its own value, not the smaller one scaled up against the
         // peak (which would make the 0.3 class render at 0.75 intensity).
-        let net = relu_layer(array![[0.3, 0.0], [0.4, 0.0]], array![0.0, 0.0]);
+        let net = relu_network(array![[0.3, 0.0], [0.4, 0.0]], array![0.0, 0.0]);
         let diagram = net
             .activation_diagram(array![1.0, 0.0].view(), &DiagramOptions::default())
             .unwrap();
@@ -653,7 +641,7 @@ mod tests {
 
     #[test]
     fn a_single_output_neuron_carries_the_binary_positive_class() {
-        let net = relu_layer(array![[1.0, 0.0]], array![0.0]);
+        let net = relu_network(array![[1.0, 0.0]], array![0.0]);
         let diagram = net
             .activation_diagram(array![1.0, 1.0].view(), &DiagramOptions::default())
             .unwrap();
@@ -666,7 +654,7 @@ mod tests {
 
     #[test]
     fn a_scaler_free_predictor_diagram_matches_the_bare_network() {
-        let net = relu_layer(array![[1.0, 0.0], [3.0, 0.0]], array![0.0, 0.0]);
+        let net = relu_network(array![[1.0, 0.0], [3.0, 0.0]], array![0.0, 0.0]);
         let predictor = Predictor::new(net.clone(), None);
         let options = DiagramOptions::default();
 
@@ -684,7 +672,7 @@ mod tests {
 
     #[test]
     fn a_predictor_diagram_rejects_an_instance_of_the_wrong_size() {
-        let net = relu_layer(array![[1.0, 0.0], [3.0, 0.0]], array![0.0, 0.0]);
+        let net = relu_network(array![[1.0, 0.0], [3.0, 0.0]], array![0.0, 0.0]);
         let predictor = Predictor::new(net, None);
 
         // The network expects two features; a one-feature instance is rejected.

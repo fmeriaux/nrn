@@ -5,6 +5,7 @@ pub mod evaluation;
 pub mod evaluation_history;
 pub mod gradients;
 pub mod initializations;
+pub mod layers;
 pub mod learning_rate;
 pub mod loss_functions;
 pub mod model;

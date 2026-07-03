@@ -1,24 +1,25 @@
-use crate::gradients::Gradients;
 use crate::learning_rate::LearningRate;
-use crate::model::NeuronLayer;
-use crate::optimizers::{Optimizer, OptimizerState, OptimizerStateError};
+use crate::optimizers::{Optimizer, OptimizerState, OptimizerStateError, ParameterUpdates};
 use crate::weight_decay::WeightDecay;
-use ndarray::{Array1, Array2};
-use std::collections::HashMap;
+use ndarray::{ArrayD, Zip};
+use std::collections::{BTreeMap, HashMap};
 
-/// Adam optimizer state, maintaining first and second moment estimates.
-struct AdamState {
-    /// First moment estimates for weights, averaging past gradients.
-    m_weights: Array2<f32>,
-    /// Second moment estimates for weights, variances of past gradients.
-    v_weights: Array2<f32>,
-    /// First moment estimates for biases, averaging past gradients.
-    m_biases: Array1<f32>,
-    /// Second moment estimates for biases, variances of past gradients.
-    v_biases: Array1<f32>,
+/// Adam moment estimates for a single parameter: the first moment (average of past
+/// gradients) and the second moment (average of their squares).
+struct AdamMoments {
+    /// First moment estimate, averaging past gradients.
+    m: ArrayD<f32>,
+    /// Second moment estimate, the variance of past gradients.
+    v: ArrayD<f32>,
 }
 
-/// Provides the Adam optimization algorithm for updating neural network weights and biases.
+/// Which moment estimate a state tensor name refers to.
+enum MomentField {
+    M,
+    V,
+}
+
+/// Provides the Adam optimization algorithm for updating neural network parameters.
 pub struct Adam {
     /// Learning rate for the optimizer.
     learning_rate: LearningRate,
@@ -28,13 +29,12 @@ pub struct Adam {
     beta2: f32,
     /// Small constant for numerical stability.
     epsilon: f32,
-    /// Decoupled weight-decay coefficient (AdamW). Applied to weights only, never
-    /// biases.
+    /// Decoupled weight-decay coefficient (AdamW). Applied to decaying parameters only.
     weight_decay: WeightDecay,
     /// Step counter for bias correction.
     time_step: u32,
-    /// Internal state for each layer, storing moment estimates.
-    states: HashMap<usize, AdamState>,
+    /// Internal state for each layer: one [`AdamMoments`] per parameter, in parameter order.
+    states: HashMap<usize, Vec<AdamMoments>>,
 }
 
 impl Adam {
@@ -71,23 +71,6 @@ impl Adam {
         // to 0, leaving epsilon as the sole denominator and inflating the effective step.
         Self::new(learning_rate, 0.9, 0.999, 1e-5, weight_decay)
     }
-
-    fn init_state(&mut self, layer_index: usize, layer: &NeuronLayer) {
-        let m_weights = Array2::<f32>::zeros(layer.weights.dim());
-        let v_weights = Array2::<f32>::zeros(layer.weights.dim());
-        let m_biases = Array1::<f32>::zeros(layer.biases.dim());
-        let v_biases = Array1::<f32>::zeros(layer.biases.dim());
-
-        self.states.insert(
-            layer_index,
-            AdamState {
-                m_weights,
-                v_weights,
-                m_biases,
-                v_biases,
-            },
-        );
-    }
 }
 
 impl Optimizer for Adam {
@@ -107,42 +90,65 @@ impl Optimizer for Adam {
         self.learning_rate = learning_rate;
     }
 
-    fn update(&mut self, layer_index: usize, layer: &mut NeuronLayer, gradients: &Gradients) {
-        if !self.states.contains_key(&layer_index) {
-            self.init_state(layer_index, layer);
+    fn update(&mut self, layer_index: usize, updates: &mut ParameterUpdates<'_>) {
+        let lr = self.learning_rate.value();
+        let (beta1, beta2, epsilon, weight_decay) =
+            (self.beta1, self.beta2, self.epsilon, self.weight_decay);
+        let beta1_correction = 1.0 - beta1.powi(self.time_step as i32);
+        let beta2_correction = 1.0 - beta2.powi(self.time_step as i32);
+
+        let moments = self.states.entry(layer_index).or_insert_with(|| {
+            updates
+                .iter()
+                .map(|update| AdamMoments {
+                    m: ArrayD::zeros(update.parameter.value.raw_dim()),
+                    v: ArrayD::zeros(update.parameter.value.raw_dim()),
+                })
+                .collect()
+        });
+
+        // A restored state must describe exactly this layer's parameters; a shorter or
+        // longer moment list means the checkpoint does not belong to this model, which
+        // would otherwise leave some parameters silently un-updated.
+        assert_eq!(
+            moments.len(),
+            updates.len(),
+            "Adam state for layer {layer_index} has {} parameters, but the layer has {}",
+            moments.len(),
+            updates.len(),
+        );
+
+        for (update, moment) in updates.iter_mut().zip(moments.iter_mut()) {
+            assert_eq!(
+                moment.m.shape(),
+                update.parameter.value.shape(),
+                "Adam moment shape does not match parameter shape for layer {layer_index}",
+            );
+            // Decoupled weight decay (AdamW): shrink decaying parameters before the
+            // gradient step. A factor of `1.0` leaves non-decaying parameters untouched.
+            let decay = if weight_decay.is_active() && update.parameter.decays {
+                1.0 - lr * weight_decay.value()
+            } else {
+                1.0
+            };
+
+            // Fuse the moment updates, bias correction, decay, and parameter step into a
+            // single in-place pass. On tiny parameters this pays the array traversal once
+            // instead of allocating a temporary per sub-expression.
+            Zip::from(update.parameter.value.view_mut())
+                .and(&mut moment.m)
+                .and(&mut moment.v)
+                .and(update.gradient)
+                .for_each(|param, m, v, &g| {
+                    // Biased first and second moment estimates.
+                    *m = *m * beta1 + g * (1.0 - beta1);
+                    *v = *v * beta2 + g * g * (1.0 - beta2);
+                    // Bias-corrected estimates.
+                    let m_hat = *m / beta1_correction;
+                    let v_hat = *v / beta2_correction;
+                    *param = *param * decay - m_hat * lr / (v_hat.sqrt() + epsilon);
+                });
         }
-
-        let state = self.states.get_mut(&layer_index).unwrap();
-        let (dw, db) = (&gradients.dw, &gradients.db);
-
-        // Update biased first moment estimate
-        state.m_weights = &state.m_weights * self.beta1 + dw * (1.0 - self.beta1);
-        state.m_biases = &state.m_biases * self.beta1 + db * (1.0 - self.beta1);
-
-        // Update biased second moment estimate
-        state.v_weights = &state.v_weights * self.beta2 + &(dw * dw) * (1.0 - self.beta2);
-        state.v_biases = &state.v_biases * self.beta2 + &(db * db) * (1.0 - self.beta2);
-
-        let beta1_correction = 1.0 - self.beta1.powi(self.time_step as i32);
-        let beta2_correction = 1.0 - self.beta2.powi(self.time_step as i32);
-
-        // Compute bias-corrected first and second moment estimates
-        let m_hat_weights = &state.m_weights / beta1_correction;
-        let m_hat_biases = &state.m_biases / beta1_correction;
-        let v_hat_weights = &state.v_weights / beta2_correction;
-        let v_hat_biases = &state.v_biases / beta2_correction;
-
-        // Decoupled weight decay (AdamW): shrink the weights before the gradient
-        // step. Biases are not decayed.
-        if self.weight_decay.is_active() {
-            layer.weights *= 1.0 - self.learning_rate.value() * self.weight_decay.value();
-        }
-
-        // Update weights and biases
-        layer.weights -= &(m_hat_weights * self.learning_rate.value()
-            / (v_hat_weights.mapv(f32::sqrt) + self.epsilon));
-        layer.biases -= &(m_hat_biases * self.learning_rate.value()
-            / (v_hat_biases.mapv(f32::sqrt) + self.epsilon));
     }
 
     fn step(&mut self) {
@@ -150,24 +156,18 @@ impl Optimizer for Adam {
     }
 
     fn to_state(&self) -> Option<OptimizerState> {
-        let mut tensors = Vec::with_capacity(self.states.len() * 4);
-        for (layer_index, state) in &self.states {
-            tensors.push((
-                format!("layer{layer_index}.m_weights"),
-                state.m_weights.clone().into_dyn(),
-            ));
-            tensors.push((
-                format!("layer{layer_index}.v_weights"),
-                state.v_weights.clone().into_dyn(),
-            ));
-            tensors.push((
-                format!("layer{layer_index}.m_biases"),
-                state.m_biases.clone().into_dyn(),
-            ));
-            tensors.push((
-                format!("layer{layer_index}.v_biases"),
-                state.v_biases.clone().into_dyn(),
-            ));
+        let mut tensors = Vec::with_capacity(self.states.len() * 2);
+        for (layer_index, moments) in &self.states {
+            for (param_index, moment) in moments.iter().enumerate() {
+                tensors.push((
+                    format!("layer{layer_index}.param{param_index}.m"),
+                    moment.m.clone(),
+                ));
+                tensors.push((
+                    format!("layer{layer_index}.param{param_index}.v"),
+                    moment.v.clone(),
+                ));
+            }
         }
 
         let mut metadata = HashMap::new();
@@ -186,91 +186,96 @@ impl Optimizer for Adam {
                 key: "time_step".to_string(),
             })?;
 
-        let mut partials: HashMap<usize, PartialAdamState> = HashMap::new();
+        // Group tensors by layer, then by parameter index (kept sorted for a stable
+        // parameter order) before assembling the per-parameter moments.
+        let mut partials: HashMap<usize, BTreeMap<usize, PartialMoments>> = HashMap::new();
 
         for (name, array) in &state.tensors {
-            let Some((layer, field)) = name.split_once('.') else {
+            let Some((layer_index, param_index, field)) = parse_moment_name(name) else {
                 continue;
             };
-            let Some(layer_index) = layer.strip_prefix("layer").and_then(|s| s.parse().ok()) else {
-                continue;
-            };
-
-            let partial = partials.entry(layer_index).or_default();
+            let partial = partials
+                .entry(layer_index)
+                .or_default()
+                .entry(param_index)
+                .or_default();
             match field {
-                "m_weights" => partial.m_weights = Some(to_array2(name, array)?),
-                "v_weights" => partial.v_weights = Some(to_array2(name, array)?),
-                "m_biases" => partial.m_biases = Some(to_array1(name, array)?),
-                "v_biases" => partial.v_biases = Some(to_array1(name, array)?),
-                _ => continue,
+                MomentField::M => partial.m = Some(array.clone()),
+                MomentField::V => partial.v = Some(array.clone()),
             }
         }
 
-        for (layer_index, partial) in partials {
-            self.states
-                .insert(layer_index, partial.into_state(layer_index)?);
+        for (layer_index, params) in partials {
+            let mut moments = Vec::with_capacity(params.len());
+            for (param_index, partial) in params {
+                moments.push(partial.into_moments(layer_index, param_index)?);
+            }
+            self.states.insert(layer_index, moments);
         }
 
         Ok(())
     }
 }
 
-/// Per-layer Adam moment tensors collected from an [`OptimizerState`] while
-/// loading, before being assembled into an [`AdamState`].
-#[derive(Default)]
-struct PartialAdamState {
-    m_weights: Option<Array2<f32>>,
-    v_weights: Option<Array2<f32>>,
-    m_biases: Option<Array1<f32>>,
-    v_biases: Option<Array1<f32>>,
+/// Parses a moment tensor name of the form `layer{L}.param{J}.{m|v}` into its layer
+/// index, parameter index, and field. Returns `None` for any other shape.
+fn parse_moment_name(name: &str) -> Option<(usize, usize, MomentField)> {
+    let mut parts = name.split('.');
+    let layer_index = parts.next()?.strip_prefix("layer")?.parse().ok()?;
+    let param_index = parts.next()?.strip_prefix("param")?.parse().ok()?;
+    let field = match parts.next()? {
+        "m" => MomentField::M,
+        "v" => MomentField::V,
+        _ => return None,
+    };
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((layer_index, param_index, field))
 }
 
-impl PartialAdamState {
-    fn into_state(self, layer_index: usize) -> Result<AdamState, OptimizerStateError> {
-        let missing =
-            |field: &str| OptimizerStateError::MissingTensor(format!("layer{layer_index}.{field}"));
+/// Per-parameter Adam moment tensors collected from an [`OptimizerState`] while loading,
+/// before being assembled into an [`AdamMoments`].
+#[derive(Default)]
+struct PartialMoments {
+    m: Option<ArrayD<f32>>,
+    v: Option<ArrayD<f32>>,
+}
 
-        Ok(AdamState {
-            m_weights: self.m_weights.ok_or_else(|| missing("m_weights"))?,
-            v_weights: self.v_weights.ok_or_else(|| missing("v_weights"))?,
-            m_biases: self.m_biases.ok_or_else(|| missing("m_biases"))?,
-            v_biases: self.v_biases.ok_or_else(|| missing("v_biases"))?,
+impl PartialMoments {
+    fn into_moments(
+        self,
+        layer_index: usize,
+        param_index: usize,
+    ) -> Result<AdamMoments, OptimizerStateError> {
+        let missing = |field: &str| {
+            OptimizerStateError::MissingTensor(format!(
+                "layer{layer_index}.param{param_index}.{field}"
+            ))
+        };
+
+        Ok(AdamMoments {
+            m: self.m.ok_or_else(|| missing("m"))?,
+            v: self.v.ok_or_else(|| missing("v"))?,
         })
     }
-}
-
-fn to_array2(name: &str, array: &ndarray::ArrayD<f32>) -> Result<Array2<f32>, OptimizerStateError> {
-    array
-        .clone()
-        .into_dimensionality()
-        .map_err(|_| OptimizerStateError::WrongRank {
-            tensor: name.to_string(),
-            expected: 2,
-        })
-}
-
-fn to_array1(name: &str, array: &ndarray::ArrayD<f32>) -> Result<Array1<f32>, OptimizerStateError> {
-    array
-        .clone()
-        .into_dimensionality()
-        .map_err(|_| OptimizerStateError::WrongRank {
-            tensor: name.to_string(),
-            expected: 1,
-        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::activations::RELU;
+    use crate::gradients::LayerGradients;
+    use crate::layers::Dense;
     use ndarray::{Array1, Array2, array};
 
-    fn layer(weights: Array2<f32>, biases: Array1<f32>) -> NeuronLayer {
-        NeuronLayer {
-            weights,
-            biases,
-            activation: RELU.clone(),
-        }
+    fn layer(weights: Array2<f32>, biases: Array1<f32>) -> Dense {
+        Dense::new(weights, biases, RELU.clone())
+    }
+
+    /// Layer gradients for a dense layer: a rank-2 weight gradient and a rank-1 bias gradient.
+    fn grads(dw: Array2<f32>, db: Array1<f32>) -> LayerGradients {
+        LayerGradients(vec![dw.into_dyn(), db.into_dyn()])
     }
 
     #[test]
@@ -303,28 +308,20 @@ mod tests {
         assert_eq!(opt.name(), "Adam");
         assert_eq!(opt.learning_rate().value(), lr);
         let mut l = layer(array![[1.0, 1.0]], array![1.0]);
-        let grads = Gradients {
-            dw: array![[2.0, -3.0]],
-            db: array![0.5],
-        };
-        opt.update(0, &mut l, &grads);
-        assert!((l.weights[[0, 0]] - (1.0 - lr)).abs() < 1e-4); // +grad → decrease
-        assert!((l.weights[[0, 1]] - (1.0 + lr)).abs() < 1e-4); // -grad → increase
-        assert!((l.biases[0] - (1.0 - lr)).abs() < 1e-4);
+        opt.update_layer(0, &mut l, &grads(array![[2.0, -3.0]], array![0.5]));
+        assert!((l.weights()[[0, 0]] - (1.0 - lr)).abs() < 1e-4); // +grad → decrease
+        assert!((l.weights()[[0, 1]] - (1.0 + lr)).abs() < 1e-4); // -grad → increase
+        assert!((l.biases()[0] - (1.0 - lr)).abs() < 1e-4);
     }
 
     #[test]
     fn adam_zero_gradient_leaves_params_unchanged() {
         let mut opt = Adam::with_defaults(0.1.try_into().unwrap(), WeightDecay::ZERO);
         let mut l = layer(array![[1.0, -2.0]], array![3.0]);
-        let grads = Gradients {
-            dw: Array2::zeros((1, 2)),
-            db: Array1::zeros(1),
-        };
-        opt.update(0, &mut l, &grads);
-        assert!((l.weights[[0, 0]] - 1.0).abs() < 1e-6);
-        assert!((l.weights[[0, 1]] - (-2.0)).abs() < 1e-6);
-        assert!((l.biases[0] - 3.0).abs() < 1e-6);
+        opt.update_layer(0, &mut l, &grads(Array2::zeros((1, 2)), Array1::zeros(1)));
+        assert!((l.weights()[[0, 0]] - 1.0).abs() < 1e-6);
+        assert!((l.weights()[[0, 1]] - (-2.0)).abs() < 1e-6);
+        assert!((l.biases()[0] - 3.0).abs() < 1e-6);
     }
 
     #[test]
@@ -333,15 +330,11 @@ mod tests {
         let mut opt = Adam::with_defaults(0.1.try_into().unwrap(), WeightDecay::ZERO);
         let mut l = layer(array![[5.0]], array![0.0]);
         for _ in 0..200 {
-            let w = l.weights[[0, 0]];
-            let grads = Gradients {
-                dw: array![[w]],
-                db: array![0.0],
-            };
-            opt.update(0, &mut l, &grads);
+            let w = l.weights()[[0, 0]];
+            opt.update_layer(0, &mut l, &grads(array![[w]], array![0.0]));
             opt.step();
         }
-        let w = l.weights[[0, 0]];
+        let w = l.weights()[[0, 0]];
         assert!(w.abs() < 0.5, "weight should approach 0, got {w}");
     }
 
@@ -362,27 +355,20 @@ mod tests {
         let wd = WeightDecay::new(0.1).unwrap();
         let mut opt = Adam::with_defaults(lr.try_into().unwrap(), wd);
         let mut l = layer(array![[2.0, -4.0]], array![3.0]);
-        let grads = Gradients {
-            dw: Array2::zeros((1, 2)),
-            db: Array1::zeros(1),
-        };
-        opt.update(0, &mut l, &grads);
+        opt.update_layer(0, &mut l, &grads(Array2::zeros((1, 2)), Array1::zeros(1)));
 
         // Each weight is scaled by (1 - lr*wd) = 0.99; the bias is not decayed.
-        assert!((l.weights[[0, 0]] - 2.0 * 0.99).abs() < 1e-5);
-        assert!((l.weights[[0, 1]] - (-4.0) * 0.99).abs() < 1e-5);
-        assert!((l.biases[0] - 3.0).abs() < 1e-6);
+        assert!((l.weights()[[0, 0]] - 2.0 * 0.99).abs() < 1e-5);
+        assert!((l.weights()[[0, 1]] - (-4.0) * 0.99).abs() < 1e-5);
+        assert!((l.biases()[0] - 3.0).abs() < 1e-6);
     }
 
     #[test]
     fn to_state_restore_roundtrip_preserves_moments_and_time_step() {
         let mut opt = Adam::with_defaults(0.01.try_into().unwrap(), WeightDecay::ZERO);
         let mut l = layer(array![[1.0, 1.0]], array![1.0]);
-        let grads = Gradients {
-            dw: array![[2.0, -3.0]],
-            db: array![0.5],
-        };
-        opt.update(0, &mut l, &grads);
+        let gradients = grads(array![[2.0, -3.0]], array![0.5]);
+        opt.update_layer(0, &mut l, &gradients);
         opt.step();
 
         let state = opt.to_state().unwrap();
@@ -394,11 +380,11 @@ mod tests {
         // the same step as continuing with the original optimizer.
         let mut from_original = l.clone();
         let mut from_restored = l.clone();
-        opt.update(0, &mut from_original, &grads);
-        restored.update(0, &mut from_restored, &grads);
+        opt.update_layer(0, &mut from_original, &gradients);
+        restored.update_layer(0, &mut from_restored, &gradients);
 
-        assert_eq!(from_original.weights, from_restored.weights);
-        assert_eq!(from_original.biases, from_restored.biases);
+        assert_eq!(from_original.weights(), from_restored.weights());
+        assert_eq!(from_original.biases(), from_restored.biases());
     }
 
     /// Metadata carrying a valid `time_step`, the precondition for parsing tensors.
@@ -439,32 +425,32 @@ mod tests {
         let mut opt = Adam::with_defaults(0.01.try_into().unwrap(), WeightDecay::ZERO);
         let state = OptimizerState {
             tensors: vec![
-                // A complete, valid layer-0 state...
+                // A complete, valid layer-0 state (two parameters)...
                 (
-                    "layer0.m_weights".to_string(),
+                    "layer0.param0.m".to_string(),
                     Array2::<f32>::zeros((1, 1)).into_dyn(),
                 ),
                 (
-                    "layer0.v_weights".to_string(),
+                    "layer0.param0.v".to_string(),
                     Array2::<f32>::zeros((1, 1)).into_dyn(),
                 ),
                 (
-                    "layer0.m_biases".to_string(),
+                    "layer0.param1.m".to_string(),
                     Array1::<f32>::zeros(1).into_dyn(),
                 ),
                 (
-                    "layer0.v_biases".to_string(),
+                    "layer0.param1.v".to_string(),
                     Array1::<f32>::zeros(1).into_dyn(),
                 ),
                 // ...alongside entries that are each skipped: no `.` separator, an
                 // unparseable layer index, and an unknown field.
                 ("nodot".to_string(), Array1::<f32>::zeros(1).into_dyn()),
                 (
-                    "layerX.m_weights".to_string(),
+                    "layerX.param0.m".to_string(),
                     Array2::<f32>::zeros((1, 1)).into_dyn(),
                 ),
                 (
-                    "layer0.unknown".to_string(),
+                    "layer0.param0.unknown".to_string(),
                     Array2::<f32>::zeros((1, 1)).into_dyn(),
                 ),
             ],
@@ -474,63 +460,58 @@ mod tests {
         assert!(opt.restore(&state).is_ok());
     }
 
-    /// A correctly-shaped tensor for an Adam moment field (rank 2 for weights,
-    /// rank 1 for biases).
-    fn tensor_for(field: &str) -> ndarray::ArrayD<f32> {
-        if field.ends_with("weights") {
-            Array2::<f32>::zeros((1, 1)).into_dyn()
-        } else {
-            Array1::<f32>::zeros(1).into_dyn()
-        }
-    }
-
     #[test]
-    fn restore_reports_each_missing_layer_tensor() {
-        const FIELDS: [&str; 4] = ["m_weights", "v_weights", "m_biases", "v_biases"];
+    fn restore_reports_each_missing_parameter_tensor() {
+        const FIELDS: [&str; 2] = ["m", "v"];
 
-        // Dropping any one field of an otherwise-complete layer is reported by name.
+        // Dropping either moment of an otherwise-complete parameter is reported by name.
         for missing in FIELDS {
             let mut opt = Adam::with_defaults(0.01.try_into().unwrap(), WeightDecay::ZERO);
             let state = OptimizerState {
                 tensors: FIELDS
                     .iter()
                     .filter(|f| **f != missing)
-                    .map(|f| (format!("layer0.{f}"), tensor_for(f)))
+                    .map(|f| {
+                        (
+                            format!("layer0.param0.{f}"),
+                            Array2::<f32>::zeros((1, 1)).into_dyn(),
+                        )
+                    })
                     .collect(),
                 metadata: metadata_with_time_step("1"),
             };
 
             assert_eq!(
                 opt.restore(&state).unwrap_err().to_string(),
-                format!("optimizer state is missing `layer0.{missing}`")
+                format!("optimizer state is missing `layer0.param0.{missing}`")
             );
         }
     }
 
     #[test]
-    fn restore_reports_wrong_rank_for_each_tensor() {
-        // Each field is given the opposite rank to the one it expects.
-        for (field, expected_rank) in [
-            ("m_weights", 2),
-            ("v_weights", 2),
-            ("m_biases", 1),
-            ("v_biases", 1),
-        ] {
-            let mut opt = Adam::with_defaults(0.01.try_into().unwrap(), WeightDecay::ZERO);
-            let wrong = if expected_rank == 2 {
-                Array1::<f32>::zeros(1).into_dyn()
-            } else {
-                Array2::<f32>::zeros((1, 1)).into_dyn()
-            };
-            let state = OptimizerState {
-                tensors: vec![(format!("layer0.{field}"), wrong)],
-                metadata: metadata_with_time_step("1"),
-            };
+    #[should_panic(expected = "has 1 parameters, but the layer has 2")]
+    fn update_rejects_restored_state_that_omits_a_parameter() {
+        // A checkpoint describing only the first parameter of layer 0 (the bias is absent).
+        let state = OptimizerState {
+            tensors: vec![
+                (
+                    "layer0.param0.m".to_string(),
+                    Array2::<f32>::zeros((1, 2)).into_dyn(),
+                ),
+                (
+                    "layer0.param0.v".to_string(),
+                    Array2::<f32>::zeros((1, 2)).into_dyn(),
+                ),
+            ],
+            metadata: metadata_with_time_step("5"),
+        };
 
-            assert_eq!(
-                opt.restore(&state).unwrap_err().to_string(),
-                format!("tensor `layer0.{field}` is not rank {expected_rank}")
-            );
-        }
+        let mut opt = Adam::with_defaults(0.01.try_into().unwrap(), WeightDecay::ZERO);
+        opt.restore(&state).unwrap();
+
+        // The dense layer has two parameters (weights and bias); the restored state has one,
+        // so stepping it must fail loudly instead of silently skipping the bias.
+        let mut l = layer(array![[1.0, 1.0]], array![1.0]);
+        opt.update_layer(0, &mut l, &grads(array![[0.1, 0.1]], array![0.1]));
     }
 }

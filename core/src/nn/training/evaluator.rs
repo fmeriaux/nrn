@@ -69,20 +69,14 @@ mod tests {
     use super::*;
     use crate::accuracies::BINARY_ACCURACY;
     use crate::activations::SIGMOID;
+    use crate::layers::Dense;
     use crate::loss_functions::CROSS_ENTROPY_LOSS;
-    use crate::model::NeuronLayer;
     use ndarray::array;
 
     /// A 2-input → 1-output sigmoid network whose weights/bias are zeroed,
     /// so every prediction is exactly 0.5 regardless of the input.
     fn constant_half_model() -> NeuralNetwork {
-        NeuralNetwork {
-            layers: vec![NeuronLayer {
-                weights: array![[0.0, 0.0]],
-                biases: array![0.0],
-                activation: SIGMOID.clone(),
-            }],
-        }
+        NeuralNetwork::single(Dense::new(array![[0.0, 0.0]], array![0.0], SIGMOID.clone()))
     }
 
     fn dataset(inputs: ndarray::Array2<f32>, targets: ndarray::Array2<f32>) -> ModelDataset {

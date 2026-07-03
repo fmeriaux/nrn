@@ -250,7 +250,7 @@ mod tests {
     use super::*;
     use crate::activations::SIGMOID;
     use crate::data::Dataset;
-    use crate::model::NeuronLayer;
+    use crate::layers::Dense;
     use crate::optimizers::Optimizer;
     use crate::schedulers::Scheduler;
     use crate::training::GradientClipping;
@@ -284,13 +284,11 @@ mod tests {
     /// A fixed (non-random) 2-input -> 1-output sigmoid network, so loss
     /// sequences are fully deterministic across runs.
     fn sample_model() -> NeuralNetwork {
-        NeuralNetwork {
-            layers: vec![NeuronLayer {
-                weights: array![[0.1, -0.2]],
-                biases: array![0.05],
-                activation: SIGMOID.clone(),
-            }],
-        }
+        NeuralNetwork::single(Dense::new(
+            array![[0.1, -0.2]],
+            array![0.05],
+            SIGMOID.clone(),
+        ))
     }
 
     fn sample_hyperparameters(
@@ -687,20 +685,18 @@ mod tests {
 
     #[test]
     fn restore_reinstates_state_and_resumes_from_epoch_start() {
-        use crate::gradients::Gradients;
+        use crate::gradients::LayerGradients;
         use crate::optimizers::Adam;
         use crate::schedulers::CosineAnnealing;
         use crate::weight_decay::WeightDecay;
 
         // Stateful optimizer/scheduler snapshots, as a checkpoint would hold them.
         let mut adam = Adam::with_defaults(0.01.try_into().unwrap(), WeightDecay::ZERO);
-        adam.update(
+        let mut layer = Dense::new(array![[0.1, -0.2]], array![0.05], SIGMOID.clone());
+        adam.update_layer(
             0,
-            &mut sample_model().layers.swap_remove(0),
-            &Gradients {
-                dw: array![[0.1, 0.1]],
-                db: array![0.1],
-            },
+            &mut layer,
+            &LayerGradients(vec![array![[0.1, 0.1]].into_dyn(), array![0.1].into_dyn()]),
         );
         adam.step();
         let optimizer_state = adam.to_state();

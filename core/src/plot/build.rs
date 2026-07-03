@@ -213,7 +213,8 @@ mod tests {
     use crate::data::Dataset;
     use crate::evaluation::{Evaluation, EvaluationSet};
     use crate::evaluation_history::{EpochEvaluation, EvaluationHistory};
-    use crate::model::{NeuralNetwork, NeuronLayer};
+    use crate::layers::Dense;
+    use crate::model::NeuralNetwork;
     use ndarray::array;
 
     /// A two-feature, two-class dataset.
@@ -239,13 +240,7 @@ mod tests {
     /// A 2-input → 1-output sigmoid predictor.
     fn binary_predictor() -> Predictor {
         Predictor::new(
-            NeuralNetwork {
-                layers: vec![NeuronLayer {
-                    weights: array![[1.0, 0.0]],
-                    biases: array![0.0],
-                    activation: SIGMOID.clone(),
-                }],
-            },
+            NeuralNetwork::single(Dense::new(array![[1.0, 0.0]], array![0.0], SIGMOID.clone())),
             None,
         )
     }

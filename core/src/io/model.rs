@@ -1,6 +1,7 @@
 use crate::activations::ActivationProvider;
 use crate::io::tensors::{self, F32Tensor};
-use crate::model::{NeuralNetwork, NeuronLayer};
+use crate::layers::{Dense, Layer};
+use crate::model::NeuralNetwork;
 use safetensors::SafeTensors;
 use std::collections::HashMap;
 use std::io::ErrorKind::InvalidData;
@@ -14,15 +15,16 @@ impl NeuralNetwork {
         entries: &mut Vec<(String, F32Tensor)>,
         metadata: &mut HashMap<String, String>,
     ) {
-        metadata.insert("n_layers".to_string(), self.layers.len().to_string());
+        metadata.insert("n_layers".to_string(), self.layers().len().to_string());
 
-        for (i, layer) in self.layers.iter().enumerate() {
-            metadata.insert(
-                format!("layer{i}.activation"),
-                layer.activation.name().to_string(),
-            );
-            entries.push((format!("layer{i}.weights"), tensors::tensor(&layer.weights)));
-            entries.push((format!("layer{i}.biases"), tensors::tensor(&layer.biases)));
+        for (i, layer) in self.layers().iter().enumerate() {
+            metadata.insert(format!("layer{i}.kind"), layer.kind().to_string());
+            if let Some(activation) = layer.activation_name() {
+                metadata.insert(format!("layer{i}.activation"), activation.to_string());
+            }
+            for (name, tensor) in layer.named_tensors() {
+                entries.push((format!("layer{i}.{name}"), tensors::tensor(&tensor)));
+            }
         }
     }
 
@@ -36,28 +38,23 @@ impl NeuralNetwork {
             return Err(Error::new(InvalidData, "model has no layers"));
         }
 
-        let mut layers = Vec::with_capacity(n_layers);
+        let mut layers: Vec<Box<dyn Layer>> = Vec::with_capacity(n_layers);
 
         for i in 0..n_layers {
-            let weights = tensors::read_array2(&format!("layer{i}.weights"), st)?;
-            let biases = tensors::read_array1(&format!("layer{i}.biases"), st)?;
-
-            let activation_name = tensors::meta(metadata, &format!("layer{i}.activation"))?;
-            let activation = ActivationProvider::get_by_name(activation_name).ok_or_else(|| {
-                Error::new(
-                    InvalidData,
-                    format!("Unknown activation function: {activation_name}"),
-                )
-            })?;
-
-            layers.push(NeuronLayer {
-                weights,
-                biases,
-                activation,
-            });
+            let kind = tensors::meta(metadata, &format!("layer{i}.kind"))?;
+            let layer = match kind {
+                "dense" => dense_from_tensors(i, st, metadata)?,
+                other => {
+                    return Err(Error::new(
+                        InvalidData,
+                        format!("Unknown layer kind: {other}"),
+                    ));
+                }
+            };
+            layers.push(layer);
         }
 
-        Ok(NeuralNetwork { layers })
+        Ok(NeuralNetwork::new(layers))
     }
 
     /// Saves the neural network to a `.safetensors` file.
@@ -80,6 +77,26 @@ impl NeuralNetwork {
         let metadata = tensors::read_metadata(&bytes)?;
         NeuralNetwork::from_tensors(&st, &metadata)
     }
+}
+
+/// Reconstructs a [`Dense`] layer at index `i` from its weights, biases, and activation name.
+fn dense_from_tensors(
+    i: usize,
+    st: &SafeTensors,
+    metadata: &HashMap<String, String>,
+) -> Result<Box<dyn Layer>> {
+    let weights = tensors::read_array2(&format!("layer{i}.weights"), st)?;
+    let biases = tensors::read_array1(&format!("layer{i}.biases"), st)?;
+
+    let activation_name = tensors::meta(metadata, &format!("layer{i}.activation"))?;
+    let activation = ActivationProvider::get_by_name(activation_name).ok_or_else(|| {
+        Error::new(
+            InvalidData,
+            format!("Unknown activation function: {activation_name}"),
+        )
+    })?;
+
+    Ok(Box::new(Dense::new(weights, biases, activation)))
 }
 
 #[cfg(test)]
@@ -136,6 +153,7 @@ mod tests {
         ];
         let mut metadata = HashMap::new();
         metadata.insert("n_layers".to_string(), "1".to_string());
+        metadata.insert("layer0.kind".to_string(), "dense".to_string());
         metadata.insert(
             "layer0.activation".to_string(),
             "not_an_activation".to_string(),
@@ -221,7 +239,14 @@ mod tests {
             )
         };
         let activation = || ("layer0.activation".to_string(), "relu".to_string());
-        let one_layer = || HashMap::from([("n_layers".to_string(), "1".to_string()), activation()]);
+        let kind = || ("layer0.kind".to_string(), "dense".to_string());
+        let one_layer = || {
+            HashMap::from([
+                ("n_layers".to_string(), "1".to_string()),
+                kind(),
+                activation(),
+            ])
+        };
 
         // Each case is well-formed at the safetensors level but violates the model
         // schema, so `load` must reject it — exercising the read guards that
@@ -243,7 +268,7 @@ mod tests {
             (
                 "activation metadata absent",
                 vec![weights(), biases()],
-                HashMap::from([("n_layers".to_string(), "1".to_string())]),
+                HashMap::from([("n_layers".to_string(), "1".to_string()), kind()]),
             ),
             (
                 "weights stored with the wrong rank",
@@ -293,6 +318,7 @@ mod tests {
 
         let metadata = HashMap::from([
             ("n_layers".to_string(), "1".to_string()),
+            ("layer0.kind".to_string(), "dense".to_string()),
             ("layer0.activation".to_string(), "relu".to_string()),
         ]);
         let bytes = serialize(

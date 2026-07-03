@@ -82,27 +82,24 @@ fn bold(text: &str) -> String {
 mod tests {
     use super::*;
     use crate::activations::{Activation, RELU};
-    use crate::model::{NeuralNetwork, NeuronLayer};
+    use crate::layers::Dense;
+    use crate::model::NeuralNetwork;
     use crate::plot::activations::DiagramOptions;
     use ndarray::{Array1, Array2, array};
 
     /// A hidden ReLU layer whose middle neuron dies, then a two-class output
     /// layer resolving to probabilities `[0.3, 0.4]`.
     fn diagram() -> ActivationDiagram {
-        let net = NeuralNetwork {
-            layers: vec![
-                NeuronLayer {
-                    weights: array![[1.0, 0.0], [-1.0, 0.0], [2.0, 0.0]],
-                    biases: array![0.0, 0.0, 0.0],
-                    activation: RELU.clone(),
-                },
-                NeuronLayer {
-                    weights: array![[0.3, 0.0, 0.0], [0.0, 0.0, 0.2]],
-                    biases: array![0.0, 0.0],
-                    activation: RELU.clone(),
-                },
-            ],
-        };
+        let net = NeuralNetwork::single(Dense::new(
+            array![[1.0, 0.0], [-1.0, 0.0], [2.0, 0.0]],
+            array![0.0, 0.0, 0.0],
+            RELU.clone(),
+        ))
+        .with_layer(Dense::new(
+            array![[0.3, 0.0, 0.0], [0.0, 0.0, 0.2]],
+            array![0.0, 0.0],
+            RELU.clone(),
+        ));
         net.activation_diagram(array![1.0, 1.0].view(), &DiagramOptions::default())
             .unwrap()
     }
@@ -153,13 +150,7 @@ mod tests {
     #[test]
     fn to_console_flags_a_sampled_layer_in_its_heading() {
         let weights = Array2::from_shape_fn((50, 2), |(r, _)| r as f32);
-        let net = NeuralNetwork {
-            layers: vec![NeuronLayer {
-                weights,
-                biases: Array1::zeros(50),
-                activation: RELU.clone(),
-            }],
-        };
+        let net = NeuralNetwork::single(Dense::new(weights, Array1::zeros(50), RELU.clone()));
         let options = DiagramOptions {
             max_units: 8,
             ..DiagramOptions::default()

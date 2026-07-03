@@ -119,8 +119,24 @@ impl EarlyStopping {
 mod tests {
     use super::*;
     use crate::activations::SIGMOID;
+    use crate::layers::Dense;
     use crate::model::NeuronLayerSpec;
     use ndarray::Array1;
+
+    /// Downcasts a network's layer to the concrete [`Dense`] for reading or perturbing it.
+    fn dense(model: &NeuralNetwork, index: usize) -> &Dense {
+        model.layers()[index]
+            .as_any()
+            .downcast_ref::<Dense>()
+            .unwrap()
+    }
+
+    fn dense_mut(model: &mut NeuralNetwork, index: usize) -> &mut Dense {
+        model.layers_mut()[index]
+            .as_any_mut()
+            .downcast_mut::<Dense>()
+            .unwrap()
+    }
 
     #[test]
     fn early_stopping_restores_best_model() {
@@ -133,7 +149,7 @@ mod tests {
 
         let mut model_at_best = model_initial.clone();
         // Give model_at_best a distinctive bias so we can tell it apart
-        model_at_best.layers[0].biases = Array1::from_vec(vec![42.0, 42.0]);
+        *dense_mut(&mut model_at_best, 0).biases_mut() = Array1::from_vec(vec![42.0, 42.0]);
 
         assert!(!es.observe(1.0, &model_initial)); // improvement: saved
         assert!(!es.observe(0.5, &model_at_best)); // new best: overwrites saved
@@ -144,7 +160,8 @@ mod tests {
             .best_model
             .expect("best_model should be Some after early stopping");
         assert_eq!(
-            best.layers[0].biases, model_at_best.layers[0].biases,
+            dense(&best, 0).biases(),
+            dense(&model_at_best, 0).biases(),
             "best_model should be the epoch with loss=0.5, not the final state"
         );
     }
