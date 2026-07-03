@@ -7,7 +7,7 @@
 use crate::activations::{Activation, SIGMOID, SOFTMAX};
 use crate::data::scalers::{Scaler, ScalerFeatureMismatch, ScalerMethod};
 use crate::layers::{Dense, Layer};
-use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis, Ix2};
+use ndarray::{Array1, Array2, ArrayD, ArrayView1, ArrayView2, Axis, Ix2};
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::rngs::StdRng;
 use std::fmt;
@@ -66,7 +66,7 @@ impl std::error::Error for LayerPlanError {}
 /// Returns the last activation from a vector of activations.
 /// # Panics
 /// - When the `activations` vector is empty.
-pub fn last_activation(activations: &[Array2<f32>]) -> Array2<f32> {
+pub fn last_activation(activations: &[ArrayD<f32>]) -> ArrayD<f32> {
     activations
         .last()
         .expect("Ensure activations is not empty.")
@@ -186,19 +186,15 @@ impl NeuralNetwork {
     pub fn forward(
         &self,
         inputs: ArrayView2<f32>,
-    ) -> Result<Vec<Array2<f32>>, FeatureCountMismatch> {
+    ) -> Result<Vec<ArrayD<f32>>, FeatureCountMismatch> {
         self.validate_inputs(inputs)?;
 
         Ok(self
             .layers
             .iter()
-            .fold(vec![inputs.to_owned()], |mut acc, layer| {
-                let output = layer.forward(acc.last().unwrap().view().into_dyn());
-                acc.push(
-                    output
-                        .into_dimensionality::<Ix2>()
-                        .expect("The MLP threads rank-2 (features, samples) activations."),
-                );
+            .fold(vec![inputs.to_owned().into_dyn()], |mut acc, layer| {
+                let output = layer.forward(acc.last().unwrap().view());
+                acc.push(output);
                 acc
             }))
     }
@@ -226,7 +222,9 @@ impl NeuralNetwork {
     /// # Errors
     /// [`FeatureCountMismatch`] when the feature rows do not match [`Self::input_size`].
     pub fn predict(&self, inputs: ArrayView2<f32>) -> Result<Array2<f32>, FeatureCountMismatch> {
-        let output = last_activation(&self.forward(inputs)?);
+        let output = last_activation(&self.forward(inputs)?)
+            .into_dimensionality::<Ix2>()
+            .expect("the output layer produces rank-2 (classes, samples) activations");
         assert!(
             output.iter().all(|v| v.is_finite()),
             "non-finite predictions (NaN or inf): the model likely diverged during training"
@@ -595,7 +593,7 @@ mod tests {
         let activations = model.forward(inputs.view()).unwrap();
         let predicted = model.predict(inputs.view()).unwrap();
 
-        assert_eq!(predicted, *activations.last().unwrap());
+        assert_eq!(predicted.into_dyn(), *activations.last().unwrap());
     }
 
     #[test]

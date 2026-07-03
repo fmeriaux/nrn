@@ -4,7 +4,7 @@ use crate::loss_functions::{CrossEntropyLoss, LossFunction};
 use crate::model::{FeatureCountMismatch, NeuralNetwork, last_activation};
 use crate::optimizers::Optimizer;
 use crate::schedulers::Scheduler;
-use ndarray::{Array2, ArrayView2};
+use ndarray::{ArrayD, ArrayView2, Ix2};
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::rngs::StdRng;
 use std::sync::Arc;
@@ -97,7 +97,7 @@ impl NeuralNetwork {
     /// - `clipping`: The gradient clipping strategy to apply during training.
     fn update_parameters(
         &mut self,
-        activations: &[Array2<f32>],
+        activations: &[ArrayD<f32>],
         targets: ArrayView2<f32>,
         loss_function: &Arc<dyn LossFunction>,
         optimizer: &mut dyn Optimizer,
@@ -126,11 +126,13 @@ impl NeuralNetwork {
     /// - `targets`: A 2D array representing the true labels for the inputs.
     fn backward(
         &self,
-        activations: &[Array2<f32>],
+        activations: &[ArrayD<f32>],
         targets: ArrayView2<f32>,
         loss_function: &Arc<dyn LossFunction>,
     ) -> Vec<LayerGradients> {
-        let last_act = last_activation(activations);
+        let last_act = last_activation(activations)
+            .into_dimensionality::<Ix2>()
+            .expect("the output layer produces rank-2 (classes, samples) activations");
         // Clip to (0, 1) interior so gradient() and vjp() see the same values;
         // their product then cancels exactly to p − y even near saturation.
         let safe_act = CrossEntropyLoss::clip_probabilities(&last_act.view());
@@ -142,11 +144,11 @@ impl NeuralNetwork {
         let last = layers.len() - 1;
 
         for i in (0..layers.len()).rev() {
-            let input = activations[i].view().into_dyn();
+            let input = activations[i].view();
             let output = if i == last {
                 safe_act.view().into_dyn()
             } else {
-                activations[i + 1].view().into_dyn()
+                activations[i + 1].view()
             };
             // The input layer (i == 0) has no upstream layer to receive an input gradient.
             let pass = layers[i].backward(da.view(), input, output, i > 0);
@@ -174,7 +176,7 @@ mod tests {
     use crate::optimizers::StochasticGradientDescent;
     use crate::schedulers::ConstantScheduler;
     use crate::weight_decay::WeightDecay;
-    use ndarray::{Array1, array};
+    use ndarray::{Array1, Array2, array};
 
     /// Downcasts a network's layer to the concrete [`Dense`] to read its weights and biases.
     fn dense(model: &NeuralNetwork, index: usize) -> &Dense {
@@ -364,7 +366,7 @@ mod tests {
         let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
         let activations = model.forward(inputs.view()).unwrap();
         // The forward output is genuinely saturated, so this exercises the clamp.
-        assert_eq!(last_activation(&activations), array![[1.0, 0.0]]);
+        assert_eq!(last_activation(&activations), array![[1.0, 0.0]].into_dyn());
 
         let grads = model.backward(&activations, targets.view(), &loss_fn);
         for g in &grads {

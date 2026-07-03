@@ -11,7 +11,7 @@ use crate::classification::Classification;
 use crate::data::scalers::Scaler;
 use crate::model::{FeatureCountMismatch, NeuralNetwork, PredictionError, Predictor};
 use crate::plot::scene::Color;
-use ndarray::{ArrayView1, ArrayView2, Axis};
+use ndarray::{Array2, ArrayView1, ArrayView2, Axis, Ix2};
 
 /// Activation magnitudes at or below this count as a silent neuron.
 const FIRING_EPSILON: f32 = 1e-6;
@@ -178,7 +178,15 @@ impl NeuralNetwork {
         input: ArrayView1<f32>,
         options: &DiagramOptions,
     ) -> Result<ActivationDiagram, FeatureCountMismatch> {
-        let activations = self.forward(input.insert_axis(Axis(1)))?;
+        let activations: Vec<Array2<f32>> = self
+            .forward(input.insert_axis(Axis(1)))?
+            .into_iter()
+            .map(|values| {
+                values
+                    .into_dimensionality::<Ix2>()
+                    .expect("the diagram visualizes rank-2 (features, samples) activations")
+            })
+            .collect();
         let last_stage = activations.len() - 1;
         let shown: Vec<Vec<usize>> = activations
             .iter()
