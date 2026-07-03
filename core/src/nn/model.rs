@@ -6,30 +6,19 @@
 
 use crate::activations::{Activation, SIGMOID, SOFTMAX};
 use crate::data::scalers::{Scaler, ScalerFeatureMismatch, ScalerMethod};
+use crate::layers::{Dense, Layer};
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
-use ndarray_rand::rand::RngCore;
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::rngs::StdRng;
 use std::fmt;
 use std::iter::once;
 use std::sync::Arc;
 
-/// Represents a single layer in a neural network, containing weights and biases.
-#[derive(Clone, Debug)]
-pub struct NeuronLayer {
-    /// A 2D array where each row corresponds to a neuron and each column corresponds to an input feature.
-    pub weights: Array2<f32>,
-    /// A 1D array where each element is the bias for the corresponding neuron.
-    pub biases: Array1<f32>,
-    /// The activation function applied to the output of this layer.
-    pub activation: Arc<dyn Activation>,
-}
-
-/// Represents a neural network composed of multiple layers of neurons.
+/// Represents a neural network composed of a stack of layers.
 #[derive(Clone, Debug)]
 pub struct NeuralNetwork {
-    /// A vector of [`NeuronLayer`] instances, defining the architecture of the network.
-    pub layers: Vec<NeuronLayer>,
+    /// The layers of the network, applied in order from input to output.
+    layers: Vec<Box<dyn Layer>>,
 }
 
 /// Represents the specifications for a neuron layer in a neural network.
@@ -84,79 +73,45 @@ pub fn last_activation(activations: &[Array2<f32>]) -> Array2<f32> {
         .to_owned()
 }
 
-impl NeuronLayer {
-    /// Initializes a new `NeuronLayer` with random weights and biases drawn from `rng`.
-    /// # Panics
-    /// - When `neurons` or `inputs` are less than or equal to zero.
-    /// # Arguments
-    /// - `inputs`: The number of inputs to this layer (i.e., the number of neurons in the previous layer).
-    /// - `spec`: The specifications for this layer, including the number of neurons and the activation method.
-    /// - `rng`: The random number generator the weights are drawn from. Passing a seeded
-    ///   generator makes the initialization reproducible.
-    pub fn initialization(inputs: usize, spec: &NeuronLayerSpec, rng: &mut dyn RngCore) -> Self {
-        assert!(
-            spec.neurons > 0 && inputs > 0,
-            "Neurons and inputs must be greater than zero."
-        );
-
-        let (weights, biases) = spec
-            .activation
-            .initialization()
-            .apply((spec.neurons, inputs), rng);
-
-        NeuronLayer {
-            weights,
-            biases,
-            activation: spec.activation.clone(),
-        }
-    }
-
-    /// Computes the forward pass of this layer given the inputs.
-    /// # Arguments
-    /// - `inputs`: A 2D array representing the inputs to this layer.
-    /// # Returns
-    /// - A 2D array representing the outputs of this layer after applying the configured activation function.
-    pub fn forward(&self, inputs: &Array2<f32>) -> Array2<f32> {
-        assert_eq!(
-            inputs.nrows(),
-            self.weights.ncols(),
-            "Input shape does not match weights shape."
-        );
-
-        // Broadcasting bias to match the shape of the output
-        let broadcasted_biases: Array2<f32> = self.biases.view().insert_axis(Axis(1)).to_owned();
-
-        self.activation
-            .apply((self.weights.dot(inputs) + &broadcasted_biases).view())
-    }
-
-    /// Returns the number of neurons in this layer.
-    pub fn size(&self) -> usize {
-        self.weights.nrows()
-    }
-
-    /// Returns `true` when all weights and biases in this layer are finite (no NaN or Inf).
-    pub fn is_finite(&self) -> bool {
-        self.weights.iter().all(|v| v.is_finite()) && self.biases.iter().all(|v| v.is_finite())
-    }
-
-    /// Returns the number of inputs to this layer.
-    /// For example, this is the number of neurons in the previous layer,
-    /// or the input size for the first layer.
-    pub fn input_size(&self) -> usize {
-        self.weights.ncols()
-    }
-
-    /// Returns the specifications of this layer.
-    pub fn spec(&self) -> NeuronLayerSpec {
-        NeuronLayerSpec {
-            neurons: self.size(),
-            activation: self.activation.clone(),
-        }
-    }
-}
-
 impl NeuralNetwork {
+    /// Assembles a network from a stack of layers, applied in order from input to output.
+    /// # Panics
+    /// When `layers` is empty.
+    pub fn new(layers: Vec<Box<dyn Layer>>) -> Self {
+        assert!(!layers.is_empty(), "a network must have at least one layer");
+        NeuralNetwork { layers }
+    }
+
+    /// Assembles a single-layer network from one layer.
+    pub fn single(layer: impl Layer + 'static) -> Self {
+        Self::new(vec![Box::new(layer)])
+    }
+
+    /// Appends a layer to the network, returning the network for chaining.
+    /// # Panics
+    /// When the layer's input size does not match the current output size.
+    pub fn with_layer(mut self, layer: impl Layer + 'static) -> Self {
+        if let Some(last) = self.layers.last() {
+            assert_eq!(
+                layer.input_size(),
+                last.output_size(),
+                "layer input size must match the previous layer's output size"
+            );
+        }
+        self.layers.push(Box::new(layer));
+        self
+    }
+
+    /// The network's layers, in order from input to output.
+    pub fn layers(&self) -> &[Box<dyn Layer>] {
+        &self.layers
+    }
+
+    /// The network's layers, mutably, in order from input to output.
+    pub(crate) fn layers_mut(&mut self) -> &mut [Box<dyn Layer>] {
+        &mut self.layers
+    }
+
     /// Creates a new `NeuralNetwork` with the specified input size and layer specifications.
     ///
     /// The weights are drawn from a generator seeded with `seed`, so initialization is
@@ -181,19 +136,14 @@ impl NeuralNetwork {
         let mut layer_input = inputs;
 
         for layer_spec in layer_specs {
-            layers.push(NeuronLayer::initialization(
-                layer_input,
-                layer_spec,
-                &mut rng,
-            ));
+            layers.push(
+                Box::new(Dense::initialization(layer_input, layer_spec, &mut rng))
+                    as Box<dyn Layer>,
+            );
             layer_input = layer_spec.neurons;
         }
 
-        NeuralNetwork { layers }
-    }
-
-    pub fn specs(&self) -> Vec<NeuronLayerSpec> {
-        self.layers.iter().map(|layer| layer.spec()).collect()
+        Self::new(layers)
     }
 
     /// Returns the input size of the network, which is the number of inputs to the first layer.
@@ -208,19 +158,21 @@ impl NeuralNetwork {
             .layers
             .last()
             .expect("network has at least one layer")
-            .size();
+            .output_size();
         if out == 1 { 2 } else { out }
     }
 
     /// Returns a summary of the network's architecture as a string,
     /// showing the number of neurons in each layer, including the input layer.
     pub fn summary(&self) -> String {
-        once(self.input_size())
-            .map(|size| format!("[{}]", size))
+        once(format!("[{}]", self.input_size()))
             .chain(
-                self.specs()
+                self.layers
                     .iter()
-                    .map(|spec| format!("{}-{}", spec.neurons, spec.activation.name())),
+                    .map(|layer| match layer.activation_name() {
+                        Some(activation) => format!("{}-{}", layer.output_size(), activation),
+                        None => layer.output_size().to_string(),
+                    }),
             )
             .collect::<Vec<String>>()
             .join(" -> ")
@@ -241,7 +193,7 @@ impl NeuralNetwork {
             .layers
             .iter()
             .fold(vec![inputs.to_owned()], |mut acc, layer| {
-                acc.push(layer.forward(acc.last().unwrap()));
+                acc.push(layer.forward(acc.last().unwrap().view()));
                 acc
             }))
     }
@@ -546,43 +498,28 @@ mod tests {
         biases: Array1<f32>,
         activation: Arc<dyn Activation>,
     ) -> NeuralNetwork {
-        NeuralNetwork {
-            layers: vec![NeuronLayer {
-                weights,
-                biases,
-                activation,
-            }],
-        }
+        NeuralNetwork::single(Dense::new(weights, biases, activation))
+    }
+
+    /// Downcasts a network's layer back to the concrete [`Dense`] to read or perturb its
+    /// weights and biases in tests.
+    fn dense_mut(model: &mut NeuralNetwork, index: usize) -> &mut Dense {
+        model.layers[index]
+            .as_any_mut()
+            .downcast_mut::<Dense>()
+            .unwrap()
     }
 
     #[test]
-    fn layer_accessors_report_dimensions_and_spec() {
-        // 2 neurons, each taking 3 inputs.
-        let layer = NeuronLayer {
-            weights: Array2::zeros((2, 3)),
-            biases: Array1::zeros(2),
-            activation: RELU.clone(),
-        };
-        assert_eq!(layer.size(), 2);
-        assert_eq!(layer.input_size(), 3);
-
-        let spec = layer.spec();
-        assert_eq!(spec.neurons, 2);
-        assert_eq!(spec.activation.name(), "relu");
-    }
-
-    #[test]
-    fn network_reports_specs_input_size_and_summary() {
+    fn network_reports_input_size_and_summary() {
         // 3 inputs -> 4 relu -> 3 softmax
         let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 3);
         let model = NeuralNetwork::initialization(3, &specs, 0);
 
         assert_eq!(model.input_size(), 3);
-
-        let reported = model.specs();
-        assert_eq!(reported.len(), 2);
-        assert_eq!(reported[0].neurons, 4);
-        assert_eq!(reported[1].neurons, 3);
+        assert_eq!(model.layers.len(), 2);
+        assert_eq!(model.layers[0].output_size(), 4);
+        assert_eq!(model.layers[1].output_size(), 3);
 
         assert_eq!(model.summary(), "[3] -> 4-relu -> 3-softmax");
     }
@@ -660,7 +597,7 @@ mod tests {
     #[should_panic(expected = "non-finite predictions")]
     fn predict_panics_when_model_has_diverged() {
         let mut model = make_network(Array2::zeros((1, 2)), Array1::zeros(1), SIGMOID.clone());
-        model.layers[0].weights = array![[f32::NAN, 0.0]];
+        *dense_mut(&mut model, 0).weights_mut() = array![[f32::NAN, 0.0]];
         let inputs = array![[1.0], [1.0]];
         let _ = model.predict(inputs.view());
     }
@@ -674,14 +611,14 @@ mod tests {
     #[test]
     fn is_finite_detects_nan_in_weights() {
         let mut model = make_network(Array2::zeros((1, 2)), Array1::zeros(1), SIGMOID.clone());
-        model.layers[0].weights[[0, 0]] = f32::NAN;
+        dense_mut(&mut model, 0).weights_mut()[[0, 0]] = f32::NAN;
         assert!(!model.is_finite());
     }
 
     #[test]
     fn is_finite_detects_inf_in_biases() {
         let mut model = make_network(Array2::zeros((1, 2)), Array1::zeros(1), SIGMOID.clone());
-        model.layers[0].biases[0] = f32::INFINITY;
+        dense_mut(&mut model, 0).biases_mut()[0] = f32::INFINITY;
         assert!(!model.is_finite());
     }
 

@@ -245,7 +245,9 @@ fn generate_points_recursive(
 mod tests {
     use super::*;
     use crate::activations::{SIGMOID, SOFTMAX};
-    use crate::model::{NeuralNetwork, NeuronLayer};
+    use crate::data::scalers::{MinMaxScaler, ScalerMethod};
+    use crate::layers::Dense;
+    use crate::model::NeuralNetwork;
     use ndarray::array;
 
     #[test]
@@ -271,13 +273,7 @@ mod tests {
     /// the prediction is `sigmoid(x0)`, which equals exactly 0.5 when x0 == 0.
     fn binary_model() -> Predictor {
         Predictor::new(
-            NeuralNetwork {
-                layers: vec![NeuronLayer {
-                    weights: array![[1.0, 0.0]],
-                    biases: array![0.0],
-                    activation: SIGMOID.clone(),
-                }],
-            },
+            NeuralNetwork::single(Dense::new(array![[1.0, 0.0]], array![0.0], SIGMOID.clone())),
             None,
         )
     }
@@ -286,13 +282,11 @@ mod tests {
     /// classes, so a tie (equal top-two probabilities) occurs along x0 == 0.
     fn multiclass_model() -> Predictor {
         Predictor::new(
-            NeuralNetwork {
-                layers: vec![NeuronLayer {
-                    weights: array![[1.0, 0.0], [-1.0, 0.0], [0.0, 0.0]],
-                    biases: array![0.0, 0.0, -10.0],
-                    activation: SOFTMAX.clone(),
-                }],
-            },
+            NeuralNetwork::single(Dense::new(
+                array![[1.0, 0.0], [-1.0, 0.0], [0.0, 0.0]],
+                array![0.0, 0.0, -10.0],
+                SOFTMAX.clone(),
+            )),
             None,
         )
     }
@@ -317,16 +311,12 @@ mod tests {
 
     #[test]
     fn scaler_shifts_the_boundary_into_raw_coordinates() {
-        use crate::data::scalers::{MinMaxScaler, ScalerMethod};
-
         // Network: sigmoid(scaled_x0 - 0.5) == 0.5 when scaled_x0 == 0.5.
-        let network = NeuralNetwork {
-            layers: vec![NeuronLayer {
-                weights: array![[1.0, 0.0]],
-                biases: array![-0.5],
-                activation: SIGMOID.clone(),
-            }],
-        };
+        let network = NeuralNetwork::single(Dense::new(
+            array![[1.0, 0.0]],
+            array![-0.5],
+            SIGMOID.clone(),
+        ));
         // MinMax fitted on raw x0 ∈ [0, 2]: scaled 0.5 maps back to raw 1.0.
         let scaler = ScalerMethod::MinMax(
             MinMaxScaler::default().fit(array![[0.0, 0.0], [2.0, 2.0]].view()),

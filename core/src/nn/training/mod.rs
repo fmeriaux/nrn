@@ -7,7 +7,7 @@ pub mod outcome;
 pub mod preprocessing;
 pub mod trainer;
 
-pub use crate::gradients::{GradientClipping, GradientClippingError, Gradients};
+pub use crate::gradients::{GradientClipping, GradientClippingError, LayerGradients};
 pub use crate::learning_rate::LearningRate;
 pub use backprop::MiniBatch;
 pub use callbacks::{CallbackError, CallbackResult, Callbacks, TrainerCallback};

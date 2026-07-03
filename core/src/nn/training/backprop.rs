@@ -1,10 +1,10 @@
 use crate::data::ModelDataset;
-use crate::gradients::{GradientClipping, Gradients};
+use crate::gradients::{GradientClipping, LayerGradients};
 use crate::loss_functions::{CrossEntropyLoss, LossFunction};
 use crate::model::{FeatureCountMismatch, NeuralNetwork, last_activation};
 use crate::optimizers::Optimizer;
 use crate::schedulers::Scheduler;
-use ndarray::{Array2, ArrayView2, Axis};
+use ndarray::{Array2, ArrayView2};
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::rngs::StdRng;
 use std::sync::Arc;
@@ -106,17 +106,21 @@ impl NeuralNetwork {
         let gradients = self.backward(activations, targets, loss_function);
 
         for (layer_index, (layer, mut layer_gradients)) in
-            self.layers.iter_mut().zip(gradients).enumerate()
+            self.layers_mut().iter_mut().zip(gradients).enumerate()
         {
             layer_gradients.clip_by(clipping);
 
-            optimizer.update(layer_index, layer, &layer_gradients);
+            optimizer.update_layer(layer_index, layer.as_mut(), &layer_gradients);
         }
 
         optimizer.step();
     }
 
     /// Computes the gradients for each layer using backpropagation.
+    ///
+    /// Each layer turns the gradient of the loss with respect to its output into its own
+    /// parameter gradients and the gradient with respect to its input, which becomes the
+    /// upstream layer's incoming gradient.
     /// # Arguments
     /// - `activations`: A vector of 2D arrays representing the activations of each layer.
     /// - `targets`: A 2D array representing the true labels for the inputs.
@@ -125,38 +129,35 @@ impl NeuralNetwork {
         activations: &[Array2<f32>],
         targets: ArrayView2<f32>,
         loss_function: &Arc<dyn LossFunction>,
-    ) -> Vec<Gradients> {
-        let m = targets.ncols() as f32;
-
+    ) -> Vec<LayerGradients> {
         let last_act = last_activation(activations);
         // Clip to (0, 1) interior so gradient() and vjp() see the same values;
         // their product then cancels exactly to p − y even near saturation.
         let safe_act = CrossEntropyLoss::clip_probabilities(&last_act.view());
-        let loss_grad = loss_function.gradient(safe_act.view(), targets);
-        let mut dz = self
-            .layers
-            .last()
-            .unwrap()
-            .activation
-            .vjp(loss_grad.view(), safe_act.view());
+        // dL/d(output) handed to the output layer.
+        let mut da = loss_function.gradient(safe_act.view(), targets);
 
-        let mut gradients = Vec::with_capacity(activations.len() - 1);
+        let layers = self.layers();
+        let mut gradients = Vec::with_capacity(layers.len());
+        let last = layers.len() - 1;
 
-        for i in (1..self.layers.len() + 1).rev() {
-            let previous_activations = activations[i - 1].view();
-            let dw = dz.dot(&previous_activations.t()) / m;
-            let db = dz.sum_axis(Axis(1)) / m;
-
-            gradients.insert(0, Gradients { dw, db });
-
-            if i > 1 {
-                let next_layer = &self.layers[i - 1];
-                let da = next_layer.weights.t().dot(&dz);
-                dz = self.layers[i - 2]
-                    .activation
-                    .vjp(da.view(), previous_activations);
+        for i in (0..layers.len()).rev() {
+            let input = activations[i].view();
+            let output = if i == last {
+                safe_act.view()
+            } else {
+                activations[i + 1].view()
+            };
+            // The input layer (i == 0) has no upstream layer to receive an input gradient.
+            let pass = layers[i].backward(da.view(), input, output, i > 0);
+            gradients.push(pass.gradients);
+            if let Some(input_gradient) = pass.input_gradient {
+                da = input_gradient;
             }
         }
+
+        // Collected from the output layer back to the input; restore input-to-output order.
+        gradients.reverse();
 
         gradients
     }
@@ -166,9 +167,31 @@ impl NeuralNetwork {
 mod tests {
     use super::*;
     use crate::activations::SIGMOID;
+    use crate::layers::Dense;
+    use crate::learning_rate::LearningRate;
     use crate::loss_functions::CROSS_ENTROPY_LOSS;
     use crate::model::{NeuralNetwork, NeuronLayerSpec};
+    use crate::optimizers::StochasticGradientDescent;
+    use crate::schedulers::ConstantScheduler;
+    use crate::weight_decay::WeightDecay;
     use ndarray::{Array1, array};
+
+    /// Downcasts a network's layer to the concrete [`Dense`] to read its weights and biases.
+    fn dense(model: &NeuralNetwork, index: usize) -> &Dense {
+        model.layers()[index]
+            .as_any()
+            .downcast_ref::<Dense>()
+            .unwrap()
+    }
+
+    /// Downcasts a network's layer to the concrete [`Dense`] to set or perturb its
+    /// weights and biases.
+    fn dense_mut(model: &mut NeuralNetwork, index: usize) -> &mut Dense {
+        model.layers_mut()[index]
+            .as_any_mut()
+            .downcast_mut::<Dense>()
+            .unwrap()
+    }
 
     fn compute_loss(
         model: &NeuralNetwork,
@@ -188,10 +211,10 @@ mod tests {
         let mut model = NeuralNetwork::initialization(2, &specs, 0);
 
         // Fixed weights for reproducibility
-        model.layers[0].weights = array![[0.1, -0.2], [0.3, 0.1]];
-        model.layers[0].biases = Array1::from_vec(vec![0.05, -0.05]);
-        model.layers[1].weights = array![[0.4, -0.1]];
-        model.layers[1].biases = Array1::from_vec(vec![0.1]);
+        *dense_mut(&mut model, 0).weights_mut() = array![[0.1, -0.2], [0.3, 0.1]];
+        *dense_mut(&mut model, 0).biases_mut() = Array1::from_vec(vec![0.05, -0.05]);
+        *dense_mut(&mut model, 1).weights_mut() = array![[0.4, -0.1]];
+        *dense_mut(&mut model, 1).biases_mut() = Array1::from_vec(vec![0.1]);
 
         let inputs = array![[0.5, -0.3, 0.8], [0.2, 0.7, -0.5]]; // (2 features, 3 samples)
         let targets = array![[1.0, 0.0, 1.0]]; // (1 output, 3 samples)
@@ -217,34 +240,34 @@ mod tests {
         };
 
         for (layer_idx, layer_grads) in analytical_grads.iter().enumerate() {
-            let (rows, cols) = model.layers[layer_idx].weights.dim();
+            let (rows, cols) = dense(&model, layer_idx).weights().dim();
             for i in 0..rows {
                 for j in 0..cols {
                     let mut m_plus = model.clone();
-                    m_plus.layers[layer_idx].weights[[i, j]] += eps;
+                    dense_mut(&mut m_plus, layer_idx).weights_mut()[[i, j]] += eps;
                     let mut m_minus = model.clone();
-                    m_minus.layers[layer_idx].weights[[i, j]] -= eps;
+                    dense_mut(&mut m_minus, layer_idx).weights_mut()[[i, j]] -= eps;
                     let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
                         - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
                         / (2.0 * eps);
                     check(
-                        layer_grads.dw[[i, j]],
+                        layer_grads[0][[i, j]],
                         numerical,
                         &format!("W[{layer_idx}][{i},{j}]"),
                     );
                 }
             }
 
-            for i in 0..model.layers[layer_idx].biases.len() {
+            for i in 0..dense(&model, layer_idx).biases().len() {
                 let mut m_plus = model.clone();
-                m_plus.layers[layer_idx].biases[i] += eps;
+                dense_mut(&mut m_plus, layer_idx).biases_mut()[i] += eps;
                 let mut m_minus = model.clone();
-                m_minus.layers[layer_idx].biases[i] -= eps;
+                dense_mut(&mut m_minus, layer_idx).biases_mut()[i] -= eps;
                 let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
                     - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
                     / (2.0 * eps);
                 check(
-                    layer_grads.db[i],
+                    layer_grads[1][[i]],
                     numerical,
                     &format!("b[{layer_idx}][{i}]"),
                 );
@@ -262,8 +285,8 @@ mod tests {
         let specs = NeuronLayerSpec::network_for(vec![], &*SIGMOID, 3);
         let mut model = NeuralNetwork::initialization(2, &specs, 0);
 
-        model.layers[0].weights = array![[0.5, -0.3], [0.2, 0.8], [-0.4, 0.1]];
-        model.layers[0].biases = Array1::from_vec(vec![0.1, -0.2, 0.1]);
+        *dense_mut(&mut model, 0).weights_mut() = array![[0.5, -0.3], [0.2, 0.8], [-0.4, 0.1]];
+        *dense_mut(&mut model, 0).biases_mut() = Array1::from_vec(vec![0.1, -0.2, 0.1]);
 
         // 4 samples across 3 classes
         let inputs = array![[1.0, -1.0, 0.5, -0.5], [0.5, 0.5, -0.5, -0.5]];
@@ -290,33 +313,33 @@ mod tests {
         };
 
         for (layer_idx, layer_grads) in analytical_grads.iter().enumerate() {
-            let (rows, cols) = model.layers[layer_idx].weights.dim();
+            let (rows, cols) = dense(&model, layer_idx).weights().dim();
             for i in 0..rows {
                 for j in 0..cols {
                     let mut m_plus = model.clone();
-                    m_plus.layers[layer_idx].weights[[i, j]] += eps;
+                    dense_mut(&mut m_plus, layer_idx).weights_mut()[[i, j]] += eps;
                     let mut m_minus = model.clone();
-                    m_minus.layers[layer_idx].weights[[i, j]] -= eps;
+                    dense_mut(&mut m_minus, layer_idx).weights_mut()[[i, j]] -= eps;
                     let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
                         - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
                         / (2.0 * eps);
                     check(
-                        layer_grads.dw[[i, j]],
+                        layer_grads[0][[i, j]],
                         numerical,
                         &format!("W[{layer_idx}][{i},{j}]"),
                     );
                 }
             }
-            for i in 0..model.layers[layer_idx].biases.len() {
+            for i in 0..dense(&model, layer_idx).biases().len() {
                 let mut m_plus = model.clone();
-                m_plus.layers[layer_idx].biases[i] += eps;
+                dense_mut(&mut m_plus, layer_idx).biases_mut()[i] += eps;
                 let mut m_minus = model.clone();
-                m_minus.layers[layer_idx].biases[i] -= eps;
+                dense_mut(&mut m_minus, layer_idx).biases_mut()[i] -= eps;
                 let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
                     - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
                     / (2.0 * eps);
                 check(
-                    layer_grads.db[i],
+                    layer_grads[1][[i]],
                     numerical,
                     &format!("b[{layer_idx}][{i}]"),
                 );
@@ -332,8 +355,8 @@ mod tests {
         let mut model = NeuralNetwork::initialization(2, &specs, 0);
 
         // Large weights so the single sample's logit saturates the sigmoid.
-        model.layers[0].weights = array![[100.0, 100.0]];
-        model.layers[0].biases = Array1::from_vec(vec![0.0]);
+        *dense_mut(&mut model, 0).weights_mut() = array![[100.0, 100.0]];
+        *dense_mut(&mut model, 0).biases_mut() = Array1::from_vec(vec![0.0]);
 
         let inputs = array![[1.0, -1.0], [1.0, -1.0]]; // logits +200 / -200 → 1.0 / 0.0
         let targets = array![[1.0, 0.0]];
@@ -346,10 +369,11 @@ mod tests {
         let grads = model.backward(&activations, targets.view(), &loss_fn);
         for g in &grads {
             assert!(
-                g.dw.iter().chain(g.db.iter()).all(|v| v.is_finite()),
-                "saturated sigmoid produced non-finite gradients: dw={:?} db={:?}",
-                g.dw,
-                g.db
+                g.iter()
+                    .flat_map(|tensor| tensor.iter())
+                    .all(|v| v.is_finite()),
+                "saturated sigmoid produced non-finite gradients: {:?}",
+                g.0
             );
         }
     }
@@ -357,11 +381,6 @@ mod tests {
     #[test]
     fn training_is_deterministic_for_a_fixed_seed() {
         // Two runs with the same seed and data produce bit-identical weights.
-        use crate::learning_rate::LearningRate;
-        use crate::optimizers::StochasticGradientDescent;
-        use crate::schedulers::ConstantScheduler;
-        use crate::weight_decay::WeightDecay;
-
         fn run() -> NeuralNetwork {
             let specs = NeuronLayerSpec::network_for(vec![8, 4], &*SIGMOID, 3);
             let mut model = NeuralNetwork::initialization(5, &specs, 7);
@@ -395,13 +414,15 @@ mod tests {
 
         let a = run();
         let b = run();
-        for (la, lb) in a.layers.iter().zip(&b.layers) {
+        for i in 0..a.layers().len() {
             assert_eq!(
-                la.weights, lb.weights,
+                dense(&a, i).weights(),
+                dense(&b, i).weights(),
                 "weights diverged between identical runs"
             );
             assert_eq!(
-                la.biases, lb.biases,
+                dense(&a, i).biases(),
+                dense(&b, i).biases(),
                 "biases diverged between identical runs"
             );
         }

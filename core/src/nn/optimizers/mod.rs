@@ -12,12 +12,60 @@ mod sgd;
 pub use adam::*;
 pub use sgd::*;
 
-use crate::gradients::Gradients;
+use crate::gradients::LayerGradients;
+use crate::layers::{Layer, Parameter};
 use crate::learning_rate::LearningRate;
-use crate::model::NeuronLayer;
 use ndarray::ArrayD;
 use std::collections::HashMap;
 use std::fmt;
+use std::ops::{Deref, DerefMut};
+
+/// A layer parameter paired with its gradient — the unit an [`Optimizer`] steps.
+pub struct ParameterUpdate<'a> {
+    /// The parameter to update in place.
+    pub parameter: Parameter<'a>,
+    /// The gradient of the loss with respect to that parameter.
+    pub gradient: &'a ArrayD<f32>,
+}
+
+/// A layer's parameters, each paired with its gradient, in parameter order.
+pub struct ParameterUpdates<'a>(Vec<ParameterUpdate<'a>>);
+
+impl<'a> ParameterUpdates<'a> {
+    /// Pairs each parameter with its gradient.
+    /// # Panics
+    /// When the number of parameters and gradients differ.
+    pub fn new(parameters: Vec<Parameter<'a>>, gradients: &'a LayerGradients) -> Self {
+        assert_eq!(
+            parameters.len(),
+            gradients.len(),
+            "each parameter must have exactly one gradient"
+        );
+        Self(
+            parameters
+                .into_iter()
+                .zip(gradients.iter())
+                .map(|(parameter, gradient)| ParameterUpdate {
+                    parameter,
+                    gradient,
+                })
+                .collect(),
+        )
+    }
+}
+
+impl<'a> Deref for ParameterUpdates<'a> {
+    type Target = [ParameterUpdate<'a>];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for ParameterUpdates<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
 
 /// Optimizer-agnostic snapshot of internal state (e.g. Adam's moment
 /// estimates), shaped like a model: named tensors of arbitrary rank plus
@@ -37,8 +85,6 @@ pub enum OptimizerStateError {
     MissingMetadata(String),
     /// A metadata entry could not be parsed into the expected type.
     InvalidMetadata { key: String },
-    /// A tensor was present but did not have the expected rank.
-    WrongRank { tensor: String, expected: usize },
     /// A required tensor was missing from the state.
     MissingTensor(String),
 }
@@ -51,9 +97,6 @@ impl fmt::Display for OptimizerStateError {
             }
             OptimizerStateError::InvalidMetadata { key } => {
                 write!(f, "optimizer state has an invalid `{key}`")
-            }
-            OptimizerStateError::WrongRank { tensor, expected } => {
-                write!(f, "tensor `{tensor}` is not rank {expected}")
             }
             OptimizerStateError::MissingTensor(name) => {
                 write!(f, "optimizer state is missing `{name}`")
@@ -75,13 +118,28 @@ pub trait Optimizer {
     /// This allows dynamic adjustment of the learning rate during training.
     fn set_learning_rate(&mut self, learning_rate: LearningRate);
 
-    /// Updates the weights and biases of a layer using the provided gradients.
+    /// Updates a layer's parameters in place, each from its paired gradient.
     ///
     /// # Arguments
     /// * `layer_index` - The index of the layer being updated, inside the neural network.
-    /// * `layer` - The layer whose weights and biases are to be updated.
-    /// * `gradients` - The gradients computed during backpropagation for this layer.
-    fn update(&mut self, layer_index: usize, layer: &mut NeuronLayer, gradients: &Gradients);
+    /// * `updates` - The layer's trainable parameters, each paired with its gradient.
+    fn update(&mut self, layer_index: usize, updates: &mut ParameterUpdates<'_>);
+
+    /// Updates a layer in place, pairing its parameters with `gradients` before stepping.
+    ///
+    /// # Arguments
+    /// * `layer_index` - The index of the layer being updated, inside the neural network.
+    /// * `layer` - The layer whose parameters are updated.
+    /// * `gradients` - The gradients computed during backpropagation, in parameter order.
+    fn update_layer(
+        &mut self,
+        layer_index: usize,
+        layer: &mut dyn Layer,
+        gradients: &LayerGradients,
+    ) {
+        let mut updates = ParameterUpdates::new(layer.parameters_mut(), gradients);
+        self.update(layer_index, &mut updates);
+    }
 
     /// Performs any necessary state updates after each training step.
     /// This is useful for optimizers that maintain internal state, such as Adam.

@@ -317,13 +317,14 @@ impl CheckpointArchive {
 mod tests {
     use super::*;
     use crate::activations::RELU;
+    use crate::gradients::LayerGradients;
     use crate::io::hyperparams::HyperParametersRecord;
     use crate::io::run::{TrainingMeta, TrainingRun};
     use crate::model::NeuronLayerSpec;
     use crate::optimizers::{Adam, StochasticGradientDescent};
     use crate::schedulers::{ConstantScheduler, Scheduler, StepDecay};
     use crate::weight_decay::WeightDecay;
-    use ndarray::Array2;
+    use ndarray::{Array1, Array2};
 
     fn sample_optimizer() -> Adam {
         Adam::with_defaults(0.01.try_into().unwrap(), WeightDecay::ZERO)
@@ -839,11 +840,13 @@ mod tests {
 
         let mut optimizer = sample_optimizer();
         let mut trained_model = sample_model();
-        let gradients = crate::gradients::Gradients {
-            dw: Array2::from_elem(trained_model.layers[0].weights.dim(), 0.1),
-            db: ndarray::Array1::from_elem(trained_model.layers[0].biases.dim(), 0.1),
-        };
-        optimizer.update(0, &mut trained_model.layers[0], &gradients);
+        let neurons = trained_model.layers()[0].output_size();
+        let inputs = trained_model.layers()[0].input_size();
+        let gradients = LayerGradients(vec![
+            Array2::from_elem((neurons, inputs), 0.1).into_dyn(),
+            Array1::from_elem(neurons, 0.1).into_dyn(),
+        ]);
+        optimizer.update_layer(0, &mut *trained_model.layers_mut()[0], &gradients);
         optimizer.step();
 
         recorder
