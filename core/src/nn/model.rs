@@ -7,7 +7,7 @@
 use crate::activations::{Activation, SIGMOID, SOFTMAX};
 use crate::data::scalers::{Scaler, ScalerFeatureMismatch, ScalerMethod};
 use crate::layers::{Dense, Layer};
-use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
+use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis, Ix2};
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::rngs::StdRng;
 use std::fmt;
@@ -193,7 +193,12 @@ impl NeuralNetwork {
             .layers
             .iter()
             .fold(vec![inputs.to_owned()], |mut acc, layer| {
-                acc.push(layer.forward(acc.last().unwrap().view()));
+                let output = layer.forward(acc.last().unwrap().view().into_dyn());
+                acc.push(
+                    output
+                        .into_dimensionality::<Ix2>()
+                        .expect("The MLP threads rank-2 (features, samples) activations."),
+                );
                 acc
             }))
     }

@@ -135,18 +135,18 @@ impl NeuralNetwork {
         // their product then cancels exactly to p − y even near saturation.
         let safe_act = CrossEntropyLoss::clip_probabilities(&last_act.view());
         // dL/d(output) handed to the output layer.
-        let mut da = loss_function.gradient(safe_act.view(), targets);
+        let mut da = loss_function.gradient(safe_act.view(), targets).into_dyn();
 
         let layers = self.layers();
         let mut gradients = Vec::with_capacity(layers.len());
         let last = layers.len() - 1;
 
         for i in (0..layers.len()).rev() {
-            let input = activations[i].view();
+            let input = activations[i].view().into_dyn();
             let output = if i == last {
-                safe_act.view()
+                safe_act.view().into_dyn()
             } else {
-                activations[i + 1].view()
+                activations[i + 1].view().into_dyn()
             };
             // The input layer (i == 0) has no upstream layer to receive an input gradient.
             let pass = layers[i].backward(da.view(), input, output, i > 0);

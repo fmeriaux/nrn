@@ -2,7 +2,7 @@ use crate::activations::Activation;
 use crate::gradients::LayerGradients;
 use crate::layers::{BackwardPass, Layer, Parameter};
 use crate::model::NeuronLayerSpec;
-use ndarray::{Array1, Array2, ArrayD, ArrayView1, ArrayView2, Axis};
+use ndarray::{Array1, Array2, ArrayD, ArrayView1, ArrayView2, ArrayViewD, Axis, Ix2};
 use ndarray_rand::rand::RngCore;
 use std::any::Any;
 use std::sync::Arc;
@@ -105,7 +105,10 @@ impl Dense {
 }
 
 impl Layer for Dense {
-    fn forward(&self, input: ArrayView2<f32>) -> Array2<f32> {
+    fn forward(&self, input: ArrayViewD<f32>) -> ArrayD<f32> {
+        let input = input
+            .into_dimensionality::<Ix2>()
+            .expect("Dense expects a 2D (features, samples) input.");
         assert_eq!(
             input.nrows(),
             self.weights.ncols(),
@@ -117,15 +120,26 @@ impl Layer for Dense {
 
         self.activation
             .apply((self.weights.dot(&input) + &broadcasted_biases).view())
+            .into_dyn()
     }
 
     fn backward(
         &self,
-        da: ArrayView2<f32>,
-        input: ArrayView2<f32>,
-        output: ArrayView2<f32>,
+        da: ArrayViewD<f32>,
+        input: ArrayViewD<f32>,
+        output: ArrayViewD<f32>,
         compute_input_gradient: bool,
     ) -> BackwardPass {
+        let da = da
+            .into_dimensionality::<Ix2>()
+            .expect("Dense expects a 2D da.");
+        let input = input
+            .into_dimensionality::<Ix2>()
+            .expect("Dense expects a 2D input.");
+        let output = output
+            .into_dimensionality::<Ix2>()
+            .expect("Dense expects a 2D output.");
+
         let m = input.ncols() as f32;
 
         // dz = dL/d(pre-activation); the activation's VJP turns dL/d(output) into it.
@@ -133,7 +147,7 @@ impl Layer for Dense {
         let dw = dz.dot(&input.t()) / m;
         let db = dz.sum_axis(Axis(1)) / m;
         // dL/d(input), the gradient handed back to the upstream layer.
-        let input_gradient = compute_input_gradient.then(|| self.weights.t().dot(&dz));
+        let input_gradient = compute_input_gradient.then(|| self.weights.t().dot(&dz).into_dyn());
 
         BackwardPass {
             gradients: LayerGradients(vec![dw.into_dyn(), db.into_dyn()]),
@@ -267,13 +281,13 @@ mod tests {
         ];
         let m = input.ncols() as f32;
 
-        let output = layer.forward(input.view());
-        let da = Array2::<f32>::ones(output.dim());
-        let pass = layer.backward(da.view(), input.view(), output.view(), true);
+        let output = layer.forward(input.view().into_dyn());
+        let da = ArrayD::<f32>::ones(output.raw_dim());
+        let pass = layer.backward(da.view(), input.view().into_dyn(), output.view(), true);
         let grads = pass.gradients;
         let da_prev = pass.input_gradient.expect("input gradient requested");
 
-        let loss = |layer: &Dense| layer.forward(input.view()).sum();
+        let loss = |layer: &Dense| layer.forward(input.view().into_dyn()).sum();
         let eps = 1e-3_f32;
         let tolerance = 5e-2_f32;
         let check = |analytical: f32, numerical: f32, label: &str| {
@@ -311,11 +325,56 @@ mod tests {
                 plus[[k, s]] += eps;
                 let mut minus = input.clone();
                 minus[[k, s]] -= eps;
-                let numerical = (layer.forward(plus.view()).sum()
-                    - layer.forward(minus.view()).sum())
+                let numerical = (layer.forward(plus.view().into_dyn()).sum()
+                    - layer.forward(minus.view().into_dyn()).sum())
                     / (2.0 * eps);
                 check(da_prev[[k, s]], numerical, &format!("da_prev[{k},{s}]"));
             }
         }
+    }
+
+    #[test]
+    fn forward_matches_the_2d_math_and_keeps_rank_two() {
+        let layer = Dense {
+            weights: array![[0.2, -0.4, 0.1], [0.5, 0.3, -0.2]],
+            biases: array![0.05, -0.1],
+            activation: SIGMOID.clone(),
+        };
+        let input = array![
+            [0.5, -0.3, 0.8, 0.1],
+            [0.2, 0.7, -0.5, 0.4],
+            [-0.1, 0.6, 0.3, -0.4]
+        ];
+
+        // Reference computed with the column-major math the layer used before the N-D switch.
+        let biases = layer.biases.view().insert_axis(Axis(1)).to_owned();
+        let reference = layer
+            .activation
+            .apply((layer.weights.dot(&input) + &biases).view());
+
+        let output = layer.forward(input.view().into_dyn());
+        assert_eq!(output.ndim(), 2);
+        assert_eq!(output.shape(), &[layer.output_size(), input.ncols()]);
+        // Bit-exact: the N-D pipe only reinterprets the dimension type, it does not touch values.
+        assert_eq!(output, reference.into_dyn());
+
+        // The input gradient round-trips back to rank 2 with the expected shape.
+        let da = ArrayD::<f32>::ones(output.raw_dim());
+        let pass = layer.backward(da.view(), input.view().into_dyn(), output.view(), true);
+        let input_gradient = pass.input_gradient.expect("input gradient requested");
+        assert_eq!(input_gradient.ndim(), 2);
+        assert_eq!(input_gradient.shape(), &[layer.input_size(), input.ncols()]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Dense expects a 2D")]
+    fn forward_rejects_non_2d_input() {
+        let layer = Dense {
+            weights: array![[0.2, -0.4], [0.5, 0.3]],
+            biases: array![0.0, 0.0],
+            activation: SIGMOID.clone(),
+        };
+        let input = ArrayD::<f32>::zeros(vec![2, 3, 4]);
+        layer.forward(input.view());
     }
 }

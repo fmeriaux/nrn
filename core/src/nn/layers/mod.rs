@@ -12,7 +12,7 @@ pub use dense::Dense;
 
 use crate::gradients::LayerGradients;
 use dyn_clone::DynClone;
-use ndarray::{Array2, ArrayD, ArrayView2, ArrayViewMutD};
+use ndarray::{ArrayD, ArrayView2, ArrayViewD, ArrayViewMutD};
 use std::any::Any;
 use std::fmt::Debug;
 
@@ -30,7 +30,7 @@ pub struct BackwardPass {
     pub gradients: LayerGradients,
     /// The gradient of the loss with respect to the layer's input, or `None` when the
     /// caller did not request it.
-    pub input_gradient: Option<Array2<f32>>,
+    pub input_gradient: Option<ArrayD<f32>>,
 }
 
 /// One stage of a neural network, mapping a batch of inputs to a batch of outputs.
@@ -39,15 +39,15 @@ pub struct BackwardPass {
 pub trait Layer: DynClone + Debug {
     /// Computes the forward pass of this layer given the inputs.
     /// # Arguments
-    /// - `input`: A 2D array `(input_size, samples)` representing the inputs to this layer.
+    /// - `input`: An array `(input_size, samples)` representing the inputs to this layer.
     /// # Returns
-    /// - A 2D array `(output_size, samples)` representing the outputs of this layer.
-    fn forward(&self, input: ArrayView2<f32>) -> Array2<f32>;
+    /// - An array `(output_size, samples)` representing the outputs of this layer.
+    fn forward(&self, input: ArrayViewD<f32>) -> ArrayD<f32>;
 
     /// Computes the backward pass of this layer for one batch, propagating the gradient
     /// back one stage.
     /// # Arguments
-    /// - `da`: A 2D array, the gradient of the loss with respect to this layer's output.
+    /// - `da`: An array, the gradient of the loss with respect to this layer's output.
     /// - `input`: The batch that was fed to this layer in the forward pass.
     /// - `output`: This layer's output from the forward pass.
     /// - `compute_input_gradient`: Whether to also compute the gradient with respect to `input`.
@@ -57,9 +57,9 @@ pub trait Layer: DynClone + Debug {
     ///   the `da` the upstream layer receives.
     fn backward(
         &self,
-        da: ArrayView2<f32>,
-        input: ArrayView2<f32>,
-        output: ArrayView2<f32>,
+        da: ArrayViewD<f32>,
+        input: ArrayViewD<f32>,
+        output: ArrayViewD<f32>,
         compute_input_gradient: bool,
     ) -> BackwardPass;
 
