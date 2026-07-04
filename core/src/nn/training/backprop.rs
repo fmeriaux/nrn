@@ -489,6 +489,64 @@ mod tests {
     }
 
     #[test]
+    fn training_a_convolutional_network_decreases_the_loss() {
+        use crate::activations::Activation;
+        use crate::layers::{Conv2d, Flatten};
+        use ndarray::Array4;
+
+        // Conv2d(1×4×4 → 2×2×2) → Flatten(8) → Dense(8 → 1, sigmoid binary): a spatial
+        // stack trained end-to-end from a rank-4 samples-last dataset.
+        let mut rng = StdRng::seed_from_u64(0);
+        let sigmoid: Arc<dyn Activation> = SIGMOID.clone();
+        let conv = Conv2d::initialization((1, 4, 4), 2, (3, 3), 1, 0, sigmoid, &mut rng);
+        let flatten = Flatten::new(vec![2, 2, 2]);
+        let head = Dense::initialization(8, &NeuronLayerSpec::output_for(2), &mut rng);
+        let mut model = NeuralNetwork::single(conv)
+            .with_layer(flatten)
+            .with_layer(head);
+
+        // Two linearly separable clusters: the first half bright (label 1), the rest
+        // dark (label 0), so the loss has a clear direction to fall in.
+        let n = 16;
+        let inputs = Array4::from_shape_fn((1, 4, 4, n), |(_, h, w, s)| {
+            let sign = if s < n / 2 { 1.0 } else { -1.0 };
+            sign * (0.5 + 0.1 * ((h + w) as f32).cos())
+        });
+        let targets = Array2::from_shape_fn((1, n), |(_, s)| if s < n / 2 { 1.0 } else { 0.0 });
+        let dataset = ModelDataset::new(inputs.clone(), targets.clone());
+
+        let loss: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
+        let loss_now = |model: &NeuralNetwork| {
+            let pred = model.predict(inputs.view()).unwrap();
+            loss.compute(pred.view(), targets.view())
+        };
+
+        let initial = loss_now(&model);
+
+        let lr = LearningRate::new(0.5).unwrap();
+        let mut optimizer = StochasticGradientDescent::new(lr, WeightDecay::ZERO);
+        let mut scheduler = ConstantScheduler::new(lr);
+        for _ in 0..100 {
+            model
+                .train(
+                    &dataset,
+                    &loss,
+                    &mut optimizer as &mut dyn Optimizer,
+                    &mut scheduler as &mut dyn Scheduler,
+                    &GradientClipping::None,
+                    None,
+                )
+                .unwrap();
+        }
+
+        let final_loss = loss_now(&model);
+        assert!(
+            final_loss < initial,
+            "training a CNN should decrease the loss: initial={initial:.6}, final={final_loss:.6}"
+        );
+    }
+
+    #[test]
     fn training_is_deterministic_for_a_fixed_seed() {
         // Two runs with the same seed and data produce bit-identical weights.
         fn run() -> NeuralNetwork {
