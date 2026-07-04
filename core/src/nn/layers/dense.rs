@@ -79,16 +79,10 @@ impl Dense {
         &self.activation
     }
 
-    /// Mutable access to this layer's weight matrix.
+    /// Mutable access to this layer's affine map.
     #[cfg(test)]
-    pub(crate) fn weights_mut(&mut self) -> &mut Array2<f32> {
-        self.affine.weights_mut()
-    }
-
-    /// Mutable access to this layer's biases.
-    #[cfg(test)]
-    pub(crate) fn biases_mut(&mut self) -> &mut Array1<f32> {
-        self.affine.biases_mut()
+    pub(crate) fn affine_mut(&mut self) -> &mut Affine {
+        &mut self.affine
     }
 }
 
@@ -289,16 +283,16 @@ mod tests {
         for i in 0..layer.output_size() {
             for j in 0..layer.input_size() {
                 let mut plus = layer.clone();
-                plus.weights_mut()[[i, j]] += eps;
+                plus.affine.weights_mut()[[i, j]] += eps;
                 let mut minus = layer.clone();
-                minus.weights_mut()[[i, j]] -= eps;
+                minus.affine.weights_mut()[[i, j]] -= eps;
                 let numerical = (loss(&plus) - loss(&minus)) / (2.0 * eps);
                 check(grads[0][[i, j]] * m, numerical, &format!("dw[{i},{j}]"));
             }
             let mut plus = layer.clone();
-            plus.biases_mut()[i] += eps;
+            plus.affine.biases_mut()[i] += eps;
             let mut minus = layer.clone();
-            minus.biases_mut()[i] -= eps;
+            minus.affine.biases_mut()[i] -= eps;
             let numerical = (loss(&plus) - loss(&minus)) / (2.0 * eps);
             check(grads[1][i] * m, numerical, &format!("db[{i}]"));
         }

@@ -603,7 +603,7 @@ mod tests {
     #[should_panic(expected = "non-finite predictions")]
     fn predict_panics_when_model_has_diverged() {
         let mut model = make_network(Array2::zeros((1, 2)), Array1::zeros(1), SIGMOID.clone());
-        *dense_mut(&mut model, 0).weights_mut() = array![[f32::NAN, 0.0]];
+        *dense_mut(&mut model, 0).affine_mut().weights_mut() = array![[f32::NAN, 0.0]];
         let inputs = array![[1.0], [1.0]];
         let _ = model.predict(inputs.view());
     }
@@ -617,14 +617,14 @@ mod tests {
     #[test]
     fn is_finite_detects_nan_in_weights() {
         let mut model = make_network(Array2::zeros((1, 2)), Array1::zeros(1), SIGMOID.clone());
-        dense_mut(&mut model, 0).weights_mut()[[0, 0]] = f32::NAN;
+        dense_mut(&mut model, 0).affine_mut().weights_mut()[[0, 0]] = f32::NAN;
         assert!(!model.is_finite());
     }
 
     #[test]
     fn is_finite_detects_inf_in_biases() {
         let mut model = make_network(Array2::zeros((1, 2)), Array1::zeros(1), SIGMOID.clone());
-        dense_mut(&mut model, 0).biases_mut()[0] = f32::INFINITY;
+        dense_mut(&mut model, 0).affine_mut().biases_mut()[0] = f32::INFINITY;
         assert!(!model.is_finite());
     }
 

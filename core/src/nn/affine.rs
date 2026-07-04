@@ -78,13 +78,15 @@ impl Affine {
         self.biases.view()
     }
 
-    /// Mutable access to the weight matrix, for an optimizer to update in place.
-    pub fn weights_mut(&mut self) -> &mut Array2<f32> {
+    /// Mutable access to the weight matrix.
+    #[cfg(test)]
+    pub(crate) fn weights_mut(&mut self) -> &mut Array2<f32> {
         &mut self.weights
     }
 
-    /// Mutable access to the biases, for an optimizer to update in place.
-    pub fn biases_mut(&mut self) -> &mut Array1<f32> {
+    /// Mutable access to the biases.
+    #[cfg(test)]
+    pub(crate) fn biases_mut(&mut self) -> &mut Array1<f32> {
         &mut self.biases
     }
 

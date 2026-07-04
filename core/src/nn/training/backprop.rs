@@ -213,10 +213,10 @@ mod tests {
         let mut model = NeuralNetwork::initialization(2, &specs, 0);
 
         // Fixed weights for reproducibility
-        *dense_mut(&mut model, 0).weights_mut() = array![[0.1, -0.2], [0.3, 0.1]];
-        *dense_mut(&mut model, 0).biases_mut() = Array1::from_vec(vec![0.05, -0.05]);
-        *dense_mut(&mut model, 1).weights_mut() = array![[0.4, -0.1]];
-        *dense_mut(&mut model, 1).biases_mut() = Array1::from_vec(vec![0.1]);
+        *dense_mut(&mut model, 0).affine_mut().weights_mut() = array![[0.1, -0.2], [0.3, 0.1]];
+        *dense_mut(&mut model, 0).affine_mut().biases_mut() = Array1::from_vec(vec![0.05, -0.05]);
+        *dense_mut(&mut model, 1).affine_mut().weights_mut() = array![[0.4, -0.1]];
+        *dense_mut(&mut model, 1).affine_mut().biases_mut() = Array1::from_vec(vec![0.1]);
 
         let inputs = array![[0.5, -0.3, 0.8], [0.2, 0.7, -0.5]]; // (2 features, 3 samples)
         let targets = array![[1.0, 0.0, 1.0]]; // (1 output, 3 samples)
@@ -246,9 +246,11 @@ mod tests {
             for i in 0..rows {
                 for j in 0..cols {
                     let mut m_plus = model.clone();
-                    dense_mut(&mut m_plus, layer_idx).weights_mut()[[i, j]] += eps;
+                    dense_mut(&mut m_plus, layer_idx).affine_mut().weights_mut()[[i, j]] += eps;
                     let mut m_minus = model.clone();
-                    dense_mut(&mut m_minus, layer_idx).weights_mut()[[i, j]] -= eps;
+                    dense_mut(&mut m_minus, layer_idx)
+                        .affine_mut()
+                        .weights_mut()[[i, j]] -= eps;
                     let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
                         - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
                         / (2.0 * eps);
@@ -262,9 +264,9 @@ mod tests {
 
             for i in 0..dense(&model, layer_idx).biases().len() {
                 let mut m_plus = model.clone();
-                dense_mut(&mut m_plus, layer_idx).biases_mut()[i] += eps;
+                dense_mut(&mut m_plus, layer_idx).affine_mut().biases_mut()[i] += eps;
                 let mut m_minus = model.clone();
-                dense_mut(&mut m_minus, layer_idx).biases_mut()[i] -= eps;
+                dense_mut(&mut m_minus, layer_idx).affine_mut().biases_mut()[i] -= eps;
                 let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
                     - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
                     / (2.0 * eps);
@@ -287,8 +289,10 @@ mod tests {
         let specs = NeuronLayerSpec::network_for(vec![], &*SIGMOID, 3);
         let mut model = NeuralNetwork::initialization(2, &specs, 0);
 
-        *dense_mut(&mut model, 0).weights_mut() = array![[0.5, -0.3], [0.2, 0.8], [-0.4, 0.1]];
-        *dense_mut(&mut model, 0).biases_mut() = Array1::from_vec(vec![0.1, -0.2, 0.1]);
+        *dense_mut(&mut model, 0).affine_mut().weights_mut() =
+            array![[0.5, -0.3], [0.2, 0.8], [-0.4, 0.1]];
+        *dense_mut(&mut model, 0).affine_mut().biases_mut() =
+            Array1::from_vec(vec![0.1, -0.2, 0.1]);
 
         // 4 samples across 3 classes
         let inputs = array![[1.0, -1.0, 0.5, -0.5], [0.5, 0.5, -0.5, -0.5]];
@@ -319,9 +323,11 @@ mod tests {
             for i in 0..rows {
                 for j in 0..cols {
                     let mut m_plus = model.clone();
-                    dense_mut(&mut m_plus, layer_idx).weights_mut()[[i, j]] += eps;
+                    dense_mut(&mut m_plus, layer_idx).affine_mut().weights_mut()[[i, j]] += eps;
                     let mut m_minus = model.clone();
-                    dense_mut(&mut m_minus, layer_idx).weights_mut()[[i, j]] -= eps;
+                    dense_mut(&mut m_minus, layer_idx)
+                        .affine_mut()
+                        .weights_mut()[[i, j]] -= eps;
                     let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
                         - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
                         / (2.0 * eps);
@@ -334,9 +340,9 @@ mod tests {
             }
             for i in 0..dense(&model, layer_idx).biases().len() {
                 let mut m_plus = model.clone();
-                dense_mut(&mut m_plus, layer_idx).biases_mut()[i] += eps;
+                dense_mut(&mut m_plus, layer_idx).affine_mut().biases_mut()[i] += eps;
                 let mut m_minus = model.clone();
-                dense_mut(&mut m_minus, layer_idx).biases_mut()[i] -= eps;
+                dense_mut(&mut m_minus, layer_idx).affine_mut().biases_mut()[i] -= eps;
                 let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
                     - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
                     / (2.0 * eps);
@@ -357,8 +363,8 @@ mod tests {
         let mut model = NeuralNetwork::initialization(2, &specs, 0);
 
         // Large weights so the single sample's logit saturates the sigmoid.
-        *dense_mut(&mut model, 0).weights_mut() = array![[100.0, 100.0]];
-        *dense_mut(&mut model, 0).biases_mut() = Array1::from_vec(vec![0.0]);
+        *dense_mut(&mut model, 0).affine_mut().weights_mut() = array![[100.0, 100.0]];
+        *dense_mut(&mut model, 0).affine_mut().biases_mut() = Array1::from_vec(vec![0.0]);
 
         let inputs = array![[1.0, -1.0], [1.0, -1.0]]; // logits +200 / -200 → 1.0 / 0.0
         let targets = array![[1.0, 0.0]];

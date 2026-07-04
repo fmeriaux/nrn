@@ -149,7 +149,8 @@ mod tests {
 
         let mut model_at_best = model_initial.clone();
         // Give model_at_best a distinctive bias so we can tell it apart
-        *dense_mut(&mut model_at_best, 0).biases_mut() = Array1::from_vec(vec![42.0, 42.0]);
+        *dense_mut(&mut model_at_best, 0).affine_mut().biases_mut() =
+            Array1::from_vec(vec![42.0, 42.0]);
 
         assert!(!es.observe(1.0, &model_initial)); // improvement: saved
         assert!(!es.observe(0.5, &model_at_best)); // new best: overwrites saved
