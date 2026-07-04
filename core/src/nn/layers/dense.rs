@@ -149,12 +149,12 @@ impl Layer for Dense {
         ]
     }
 
-    fn input_size(&self) -> usize {
-        self.affine.weights().ncols()
+    fn input_shape(&self) -> Vec<usize> {
+        vec![self.affine.weights().ncols()]
     }
 
-    fn output_size(&self) -> usize {
-        self.affine.weights().nrows()
+    fn output_shape(&self) -> Vec<usize> {
+        vec![self.affine.weights().nrows()]
     }
 
     fn is_finite(&self) -> bool {

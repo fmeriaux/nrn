@@ -131,7 +131,7 @@ fn errors_when_instance_dimension_mismatches_model() {
         .args(["predict", "model", "--instance", "sample"])
         .assert()
         .failure()
-        .stderr(contains("expects 2"));
+        .stderr(contains("expects [2]"));
 }
 
 #[test]

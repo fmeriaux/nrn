@@ -1,7 +1,7 @@
 use crate::data::ModelDataset;
 use crate::gradients::{GradientClipping, LayerGradients};
 use crate::loss_functions::{CrossEntropyLoss, LossFunction};
-use crate::model::{FeatureCountMismatch, NeuralNetwork, last_activation};
+use crate::model::{InputShapeMismatch, NeuralNetwork, last_activation};
 use crate::optimizers::Optimizer;
 use crate::schedulers::Scheduler;
 use ndarray::{ArrayD, ArrayView2, Ix2};
@@ -38,7 +38,7 @@ impl MiniBatch {
 impl NeuralNetwork {
     /// Trains the network for one epoch using the provided dataset.
     /// # Errors
-    /// [`FeatureCountMismatch`] when the dataset's feature rows do not match [`Self::input_size`].
+    /// [`InputShapeMismatch`] when the dataset's feature rows do not match [`Self::input_size`].
     /// # Arguments
     /// - `dataset`: The dataset containing inputs and targets for training.
     /// - `loss_function`: The loss function to use for computing the loss and its gradient.
@@ -55,7 +55,7 @@ impl NeuralNetwork {
         scheduler: &mut dyn Scheduler,
         clipping: &GradientClipping,
         mini_batch: Option<MiniBatch>,
-    ) -> Result<(), FeatureCountMismatch> {
+    ) -> Result<(), InputShapeMismatch> {
         // Scheduler steps once per epoch regardless of batch size
         let lr = scheduler.step();
         optimizer.set_learning_rate(lr);

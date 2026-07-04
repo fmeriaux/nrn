@@ -71,11 +71,23 @@ pub trait Layer: DynClone + Debug {
     /// returned by [`backward`](Layer::backward).
     fn parameters_mut(&mut self) -> Vec<Parameter<'_>>;
 
-    /// The number of input features this layer expects.
-    fn input_size(&self) -> usize;
+    /// The per-sample input shape this layer expects, the sample axis excluded — the
+    /// single source of truth for the layer's input geometry (e.g. `[features]` for a
+    /// dense layer, `[channels, height, width]` for a convolution).
+    fn input_shape(&self) -> Vec<usize>;
 
-    /// The number of output features this layer produces.
-    fn output_size(&self) -> usize;
+    /// The per-sample output shape this layer produces, the sample axis excluded.
+    fn output_shape(&self) -> Vec<usize>;
+
+    /// The number of input features this layer expects: the product of [`input_shape`](Layer::input_shape).
+    fn input_size(&self) -> usize {
+        self.input_shape().iter().product()
+    }
+
+    /// The number of output features this layer produces: the product of [`output_shape`](Layer::output_shape).
+    fn output_size(&self) -> usize {
+        self.output_shape().iter().product()
+    }
 
     /// Whether every parameter value is finite (no NaN or Inf).
     fn is_finite(&self) -> bool;

@@ -155,17 +155,6 @@ impl Conv2d {
     pub fn activation(&self) -> &Arc<dyn Activation> {
         &self.activation
     }
-
-    /// The output's per-sample spatial shape `(out_channels, out_height, out_width)`.
-    fn output_shape(&self) -> (usize, usize, usize) {
-        let (out_channels, _, kh, kw) = self.kernels_shape;
-        let (_, height, width) = self.input_shape;
-        (
-            out_channels,
-            conv_output_dim(height, kh, self.stride, self.padding),
-            conv_output_dim(width, kw, self.stride, self.padding),
-        )
-    }
 }
 
 impl Layer for Conv2d {
@@ -187,7 +176,8 @@ impl Layer for Conv2d {
         let cols = im2col(input, kh, kw, self.stride, self.padding);
         let pre_activation = self.affine.forward(cols.view());
 
-        let (_, out_h, out_w) = self.output_shape();
+        let out_h = conv_output_dim(height, kh, self.stride, self.padding);
+        let out_w = conv_output_dim(width, kw, self.stride, self.padding);
         self.activation
             .apply(pre_activation.view())
             .to_shape((out_channels, out_h, out_w, samples))
@@ -215,7 +205,8 @@ impl Layer for Conv2d {
 
         let (in_channels, height, width, samples) = input.dim();
         let (out_channels, _, kh, kw) = self.kernels_shape;
-        let (_, out_h, out_w) = self.output_shape();
+        let out_h = conv_output_dim(height, kh, self.stride, self.padding);
+        let out_w = conv_output_dim(width, kw, self.stride, self.padding);
         let positions = out_h * out_w * samples;
 
         // Collapse the spatial output to the 2D (out_channels, positions) the activation VJP
@@ -270,14 +261,19 @@ impl Layer for Conv2d {
         ]
     }
 
-    fn input_size(&self) -> usize {
+    fn input_shape(&self) -> Vec<usize> {
         let (channels, height, width) = self.input_shape;
-        channels * height * width
+        vec![channels, height, width]
     }
 
-    fn output_size(&self) -> usize {
-        let (channels, height, width) = self.output_shape();
-        channels * height * width
+    fn output_shape(&self) -> Vec<usize> {
+        let (out_channels, _, kh, kw) = self.kernels_shape;
+        let (_, height, width) = self.input_shape;
+        vec![
+            out_channels,
+            conv_output_dim(height, kh, self.stride, self.padding),
+            conv_output_dim(width, kw, self.stride, self.padding),
+        ]
     }
 
     fn is_finite(&self) -> bool {
@@ -431,9 +427,10 @@ mod tests {
             1,
             RELU.clone(),
         );
+        assert_eq!(layer.input_shape(), vec![2, 5, 5]);
+        assert_eq!(layer.output_shape(), vec![3, 3, 3]);
         assert_eq!(layer.input_size(), 2 * 5 * 5);
         assert_eq!(layer.output_size(), 3 * 3 * 3);
-        assert_eq!(layer.output_shape(), (3, 3, 3));
         assert_eq!(layer.kind(), "conv2d");
         assert_eq!(layer.activation_name(), Some("relu"));
         assert!(layer.weight_matrix().is_none());

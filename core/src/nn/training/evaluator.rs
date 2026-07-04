@@ -2,7 +2,7 @@ use crate::accuracies::Accuracy;
 use crate::data::{ModelDataset, ModelSplit};
 use crate::evaluation::{Evaluation, EvaluationSet};
 use crate::loss_functions::LossFunction;
-use crate::model::{FeatureCountMismatch, NeuralNetwork};
+use crate::model::{InputShapeMismatch, NeuralNetwork};
 use ndarray::ArrayView2;
 use std::sync::Arc;
 
@@ -21,12 +21,12 @@ impl Evaluator {
     /// Evaluates the model on the training, validation (if available), and test datasets.
     ///
     /// # Errors
-    /// [`FeatureCountMismatch`] when `model`'s input size does not match the split's features.
+    /// [`InputShapeMismatch`] when `model`'s input size does not match the split's features.
     pub fn eval_set(
         &self,
         model: &NeuralNetwork,
         split: &ModelSplit,
-    ) -> Result<EvaluationSet, FeatureCountMismatch> {
+    ) -> Result<EvaluationSet, InputShapeMismatch> {
         Ok(EvaluationSet {
             train: self.eval_dataset(model, &split.train)?,
             validation: split
@@ -41,12 +41,12 @@ impl Evaluator {
     /// Evaluates the model on a single dataset.
     ///
     /// # Errors
-    /// [`FeatureCountMismatch`] when `model`'s input size does not match the dataset's features.
+    /// [`InputShapeMismatch`] when `model`'s input size does not match the dataset's features.
     pub fn eval_dataset(
         &self,
         model: &NeuralNetwork,
         dataset: &ModelDataset,
-    ) -> Result<Evaluation, FeatureCountMismatch> {
+    ) -> Result<Evaluation, InputShapeMismatch> {
         let predictions = model.predict(dataset.inputs().view())?;
         Ok(self.eval_predictions(predictions.view(), dataset.targets().view()))
     }

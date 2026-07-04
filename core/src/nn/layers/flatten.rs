@@ -93,12 +93,12 @@ impl Layer for Flatten {
         vec![]
     }
 
-    fn input_size(&self) -> usize {
-        self.features()
+    fn input_shape(&self) -> Vec<usize> {
+        self.shape.clone()
     }
 
-    fn output_size(&self) -> usize {
-        self.features()
+    fn output_shape(&self) -> Vec<usize> {
+        vec![self.features()]
     }
 
     fn is_finite(&self) -> bool {

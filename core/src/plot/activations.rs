@@ -9,7 +9,7 @@
 
 use crate::classification::Classification;
 use crate::data::scalers::Scaler;
-use crate::model::{FeatureCountMismatch, NeuralNetwork, PredictionError, Predictor};
+use crate::model::{InputShapeMismatch, NeuralNetwork, PredictionError, Predictor};
 use crate::plot::scene::Color;
 use ndarray::{Array2, ArrayView1, ArrayView2, Axis, Ix2};
 
@@ -172,12 +172,12 @@ impl NeuralNetwork {
     /// instance, capping and pruning per `options`.
     ///
     /// # Errors
-    /// [`FeatureCountMismatch`] when `input`'s length does not match the network's input size.
+    /// [`InputShapeMismatch`] when `input`'s length does not match the network's input size.
     pub fn activation_diagram(
         &self,
         input: ArrayView1<f32>,
         options: &DiagramOptions,
-    ) -> Result<ActivationDiagram, FeatureCountMismatch> {
+    ) -> Result<ActivationDiagram, InputShapeMismatch> {
         let activations: Vec<Array2<f32>> = self
             .forward(input.insert_axis(Axis(1)))?
             .into_iter()
@@ -690,9 +690,9 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             error,
-            PredictionError::Network(FeatureCountMismatch {
-                expected: 2,
-                found: 1
+            PredictionError::Network(InputShapeMismatch {
+                expected: vec![2],
+                found: vec![1]
             })
         );
     }

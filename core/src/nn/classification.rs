@@ -63,7 +63,7 @@ mod tests {
     use super::Classification;
     use crate::activations::RELU;
     use crate::model::{
-        FeatureCountMismatch, LayerPlan, NeuralNetwork, NeuronLayerSpec, PredictionError, Predictor,
+        InputShapeMismatch, LayerPlan, NeuralNetwork, NeuronLayerSpec, PredictionError, Predictor,
     };
     use ndarray::array;
 
@@ -95,9 +95,9 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             error,
-            PredictionError::Network(FeatureCountMismatch {
-                expected: 2,
-                found: 3
+            PredictionError::Network(InputShapeMismatch {
+                expected: vec![2],
+                found: vec![3]
             })
         );
     }
