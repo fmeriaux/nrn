@@ -381,6 +381,49 @@ mod tests {
     }
 
     #[test]
+    fn flatten_layer_threads_through_training_without_parameters() {
+        use crate::layers::Flatten;
+
+        // A parameterless Flatten as the first layer (rank-2 in, rank-2 out here, so a
+        // no-op reshape) must thread through forward, backprop, and the optimizer: the
+        // optimizer skips its empty parameter list while the Dense head still learns.
+        let head = Dense::initialization(
+            4,
+            &NeuronLayerSpec::output_for(2),
+            &mut StdRng::seed_from_u64(1),
+        );
+        let mut model = NeuralNetwork::new(vec![Box::new(Flatten::new(vec![4])), Box::new(head)]);
+
+        let before = dense(&model, 1).weights().to_owned();
+
+        let inputs = Array2::from_shape_fn((4, 12), |(r, c)| ((r + c) as f32).cos());
+        let mut targets = Array2::zeros((1, 12));
+        for c in 0..12 {
+            targets[[0, c]] = (c % 2) as f32;
+        }
+        let dataset = ModelDataset::new(inputs, targets);
+
+        let loss: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
+        let lr = LearningRate::new(0.1).unwrap();
+        let mut optimizer = StochasticGradientDescent::new(lr, WeightDecay::ZERO);
+        let mut scheduler = ConstantScheduler::new(lr);
+
+        model
+            .train(
+                &dataset,
+                &loss,
+                &mut optimizer as &mut dyn Optimizer,
+                &mut scheduler as &mut dyn Scheduler,
+                &GradientClipping::None,
+                None,
+            )
+            .unwrap();
+
+        let after = dense(&model, 1).weights().to_owned();
+        assert_ne!(before, after, "the Dense head should have learned");
+    }
+
+    #[test]
     fn training_is_deterministic_for_a_fixed_seed() {
         // Two runs with the same seed and data produce bit-identical weights.
         fn run() -> NeuralNetwork {

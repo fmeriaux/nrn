@@ -7,8 +7,10 @@
 //! the network threads those between layers — so a layer holds only its parameters.
 
 mod dense;
+mod flatten;
 
 pub use dense::Dense;
+pub use flatten::Flatten;
 
 use crate::gradients::LayerGradients;
 use dyn_clone::DynClone;
