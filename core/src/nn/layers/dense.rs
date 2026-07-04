@@ -1,8 +1,9 @@
 use crate::activations::Activation;
+use crate::affine::Affine;
 use crate::gradients::LayerGradients;
 use crate::layers::{BackwardPass, Layer, Parameter};
 use crate::model::NeuronLayerSpec;
-use ndarray::{Array1, Array2, ArrayD, ArrayView1, ArrayView2, ArrayViewD, Axis, Ix2};
+use ndarray::{Array1, Array2, ArrayD, ArrayView1, ArrayView2, ArrayViewD, Ix2};
 use ndarray_rand::rand::RngCore;
 use std::any::Any;
 use std::sync::Arc;
@@ -11,10 +12,8 @@ use std::sync::Arc;
 /// activation, applied to every sample in the batch.
 #[derive(Clone, Debug)]
 pub struct Dense {
-    /// A 2D array where each row corresponds to a neuron and each column corresponds to an input feature.
-    weights: Array2<f32>,
-    /// A 1D array where each element is the bias for the corresponding neuron.
-    biases: Array1<f32>,
+    /// The affine map: one row of weights per neuron, one bias per neuron.
+    affine: Affine,
     /// The activation function applied to the output of this layer.
     activation: Arc<dyn Activation>,
 }
@@ -29,19 +28,8 @@ impl Dense {
     /// - `biases`: A `(neurons)` array, one bias per neuron.
     /// - `activation`: The activation applied to this layer's output.
     pub fn new(weights: Array2<f32>, biases: Array1<f32>, activation: Arc<dyn Activation>) -> Self {
-        assert!(
-            weights.nrows() > 0 && weights.ncols() > 0,
-            "Dense layer weights must be non-empty."
-        );
-        assert_eq!(
-            weights.nrows(),
-            biases.len(),
-            "Dense layer needs one bias per neuron."
-        );
-
         Dense {
-            weights,
-            biases,
+            affine: Affine::new(weights, biases),
             activation,
         }
     }
@@ -71,19 +59,19 @@ impl Dense {
     /// Returns the specifications of this layer.
     pub fn spec(&self) -> NeuronLayerSpec {
         NeuronLayerSpec {
-            neurons: self.weights.nrows(),
+            neurons: self.affine.weights().nrows(),
             activation: self.activation.clone(),
         }
     }
 
     /// This layer's weight matrix `(neurons, inputs)`.
     pub fn weights(&self) -> ArrayView2<'_, f32> {
-        self.weights.view()
+        self.affine.weights()
     }
 
     /// This layer's biases, one per neuron.
     pub fn biases(&self) -> ArrayView1<'_, f32> {
-        self.biases.view()
+        self.affine.biases()
     }
 
     /// The activation applied to this layer's output.
@@ -94,13 +82,13 @@ impl Dense {
     /// Mutable access to this layer's weight matrix.
     #[cfg(test)]
     pub(crate) fn weights_mut(&mut self) -> &mut Array2<f32> {
-        &mut self.weights
+        self.affine.weights_mut()
     }
 
     /// Mutable access to this layer's biases.
     #[cfg(test)]
     pub(crate) fn biases_mut(&mut self) -> &mut Array1<f32> {
-        &mut self.biases
+        self.affine.biases_mut()
     }
 }
 
@@ -111,15 +99,12 @@ impl Layer for Dense {
             .expect("Dense expects a 2D (features, samples) input");
         assert_eq!(
             input.nrows(),
-            self.weights.ncols(),
+            self.affine.weights().ncols(),
             "Input shape does not match weights shape."
         );
 
-        // Broadcasting bias to match the shape of the output
-        let broadcasted_biases: Array2<f32> = self.biases.view().insert_axis(Axis(1)).to_owned();
-
         self.activation
-            .apply((self.weights.dot(&input) + &broadcasted_biases).view())
+            .apply(self.affine.forward(input).view())
             .into_dyn()
     }
 
@@ -140,44 +125,46 @@ impl Layer for Dense {
             .into_dimensionality::<Ix2>()
             .expect("Dense expects a 2D output");
 
-        let m = input.ncols() as f32;
-
         // dz = dL/d(pre-activation); the activation's VJP turns dL/d(output) into it.
+        // Dense's affine input is the batch itself, so it averages over its columns.
         let dz = self.activation.vjp(da, output);
-        let dw = dz.dot(&input.t()) / m;
-        let db = dz.sum_axis(Axis(1)) / m;
-        // dL/d(input), the gradient handed back to the upstream layer.
-        let input_gradient = compute_input_gradient.then(|| self.weights.t().dot(&dz).into_dyn());
+        let (dw, db, dinput) = self.affine.backward(
+            dz.view(),
+            input,
+            input.ncols() as f32,
+            compute_input_gradient,
+        );
 
         BackwardPass {
             gradients: LayerGradients(vec![dw.into_dyn(), db.into_dyn()]),
-            input_gradient,
+            input_gradient: dinput.map(|d| d.into_dyn()),
         }
     }
 
     fn parameters_mut(&mut self) -> Vec<Parameter<'_>> {
+        let (weights, biases) = self.affine.parameters_mut();
         vec![
             Parameter {
-                value: self.weights.view_mut().into_dyn(),
+                value: weights.view_mut().into_dyn(),
                 decays: true,
             },
             Parameter {
-                value: self.biases.view_mut().into_dyn(),
+                value: biases.view_mut().into_dyn(),
                 decays: false,
             },
         ]
     }
 
     fn input_size(&self) -> usize {
-        self.weights.ncols()
+        self.affine.weights().ncols()
     }
 
     fn output_size(&self) -> usize {
-        self.weights.nrows()
+        self.affine.weights().nrows()
     }
 
     fn is_finite(&self) -> bool {
-        self.weights.iter().all(|v| v.is_finite()) && self.biases.iter().all(|v| v.is_finite())
+        self.affine.is_finite()
     }
 
     fn kind(&self) -> &'static str {
@@ -186,8 +173,14 @@ impl Layer for Dense {
 
     fn named_tensors(&self) -> Vec<(String, ArrayD<f32>)> {
         vec![
-            ("weights".to_string(), self.weights.clone().into_dyn()),
-            ("biases".to_string(), self.biases.clone().into_dyn()),
+            (
+                "weights".to_string(),
+                self.affine.weights().to_owned().into_dyn(),
+            ),
+            (
+                "biases".to_string(),
+                self.affine.biases().to_owned().into_dyn(),
+            ),
         ]
     }
 
@@ -196,7 +189,7 @@ impl Layer for Dense {
     }
 
     fn weight_matrix(&self) -> Option<ArrayView2<'_, f32>> {
-        Some(self.weights.view())
+        Some(self.affine.weights())
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -212,16 +205,12 @@ impl Layer for Dense {
 mod tests {
     use super::*;
     use crate::activations::{RELU, SIGMOID};
-    use ndarray::array;
+    use ndarray::{Axis, array};
 
     #[test]
     fn accessors_report_dimensions_and_activation() {
         // 2 neurons, each taking 3 inputs.
-        let layer = Dense {
-            weights: Array2::zeros((2, 3)),
-            biases: Array1::zeros(2),
-            activation: RELU.clone(),
-        };
+        let layer = Dense::new(Array2::zeros((2, 3)), Array1::zeros(2), RELU.clone());
         assert_eq!(layer.output_size(), 2);
         assert_eq!(layer.input_size(), 3);
         assert_eq!(layer.kind(), "dense");
@@ -235,11 +224,11 @@ mod tests {
 
     #[test]
     fn parameters_are_weights_then_bias_with_decay_flags() {
-        let mut layer = Dense {
-            weights: array![[1.0, 2.0], [3.0, 4.0]],
-            biases: array![5.0, 6.0],
-            activation: RELU.clone(),
-        };
+        let mut layer = Dense::new(
+            array![[1.0, 2.0], [3.0, 4.0]],
+            array![5.0, 6.0],
+            RELU.clone(),
+        );
         let params = layer.parameters_mut();
         assert_eq!(params.len(), 2);
         // Weights decay, the bias does not.
@@ -251,11 +240,7 @@ mod tests {
 
     #[test]
     fn named_tensors_are_weights_and_biases() {
-        let layer = Dense {
-            weights: array![[1.0, 2.0]],
-            biases: array![3.0],
-            activation: RELU.clone(),
-        };
+        let layer = Dense::new(array![[1.0, 2.0]], array![3.0], RELU.clone());
         let tensors = layer.named_tensors();
         assert_eq!(tensors[0].0, "weights");
         assert_eq!(tensors[0].1, array![[1.0, 2.0]].into_dyn());
@@ -269,11 +254,11 @@ mod tests {
         // is L = sum(output), so finite differences of that sum recover the analytical
         // gradients. backward divides the parameter gradients by the sample count, so
         // the numerical estimate (which does not) is compared against `grad * m`.
-        let layer = Dense {
-            weights: array![[0.2, -0.4, 0.1], [0.5, 0.3, -0.2]],
-            biases: array![0.05, -0.1],
-            activation: SIGMOID.clone(),
-        };
+        let layer = Dense::new(
+            array![[0.2, -0.4, 0.1], [0.5, 0.3, -0.2]],
+            array![0.05, -0.1],
+            SIGMOID.clone(),
+        );
         let input = array![
             [0.5, -0.3, 0.8, 0.1],
             [0.2, 0.7, -0.5, 0.4],
@@ -304,16 +289,16 @@ mod tests {
         for i in 0..layer.output_size() {
             for j in 0..layer.input_size() {
                 let mut plus = layer.clone();
-                plus.weights[[i, j]] += eps;
+                plus.weights_mut()[[i, j]] += eps;
                 let mut minus = layer.clone();
-                minus.weights[[i, j]] -= eps;
+                minus.weights_mut()[[i, j]] -= eps;
                 let numerical = (loss(&plus) - loss(&minus)) / (2.0 * eps);
                 check(grads[0][[i, j]] * m, numerical, &format!("dw[{i},{j}]"));
             }
             let mut plus = layer.clone();
-            plus.biases[i] += eps;
+            plus.biases_mut()[i] += eps;
             let mut minus = layer.clone();
-            minus.biases[i] -= eps;
+            minus.biases_mut()[i] -= eps;
             let numerical = (loss(&plus) - loss(&minus)) / (2.0 * eps);
             check(grads[1][i] * m, numerical, &format!("db[{i}]"));
         }
@@ -335,11 +320,11 @@ mod tests {
 
     #[test]
     fn forward_matches_the_2d_math_and_keeps_rank_two() {
-        let layer = Dense {
-            weights: array![[0.2, -0.4, 0.1], [0.5, 0.3, -0.2]],
-            biases: array![0.05, -0.1],
-            activation: SIGMOID.clone(),
-        };
+        let layer = Dense::new(
+            array![[0.2, -0.4, 0.1], [0.5, 0.3, -0.2]],
+            array![0.05, -0.1],
+            SIGMOID.clone(),
+        );
         let input = array![
             [0.5, -0.3, 0.8, 0.1],
             [0.2, 0.7, -0.5, 0.4],
@@ -347,10 +332,10 @@ mod tests {
         ];
 
         // Reference computed with the column-major math the layer used before the N-D switch.
-        let biases = layer.biases.view().insert_axis(Axis(1)).to_owned();
+        let biases = layer.biases().insert_axis(Axis(1)).to_owned();
         let reference = layer
-            .activation
-            .apply((layer.weights.dot(&input) + &biases).view());
+            .activation()
+            .apply((layer.weights().dot(&input) + &biases).view());
 
         let output = layer.forward(input.view().into_dyn());
         assert_eq!(output.ndim(), 2);
@@ -369,11 +354,11 @@ mod tests {
     #[test]
     #[should_panic(expected = "Dense expects a 2D")]
     fn forward_rejects_non_2d_input() {
-        let layer = Dense {
-            weights: array![[0.2, -0.4], [0.5, 0.3]],
-            biases: array![0.0, 0.0],
-            activation: SIGMOID.clone(),
-        };
+        let layer = Dense::new(
+            array![[0.2, -0.4], [0.5, 0.3]],
+            array![0.0, 0.0],
+            SIGMOID.clone(),
+        );
         let input = ArrayD::<f32>::zeros(vec![2, 3, 4]);
         layer.forward(input.view());
     }

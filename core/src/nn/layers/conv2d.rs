@@ -1,12 +1,13 @@
 use crate::activations::Activation;
+use crate::affine::Affine;
 use crate::gradients::LayerGradients;
 use crate::layers::{BackwardPass, Layer, Parameter};
-use ndarray::{Array1, Array2, Array4, ArrayD, ArrayView2, ArrayView4, ArrayViewD, Axis, Ix4};
+use ndarray::{Array1, Array2, Array4, ArrayD, ArrayView2, ArrayView4, ArrayViewD, Ix4};
 use ndarray_rand::rand::RngCore;
 use std::any::Any;
 use std::sync::Arc;
 
-/// A 2D convolution layer. It slides a bank of small kernels across the height and width of
+/// A 2D convolution layer. It slides a set of small kernels across the height and width of
 /// each sample; at every position it takes the weighted sum of the patch the kernel covers,
 /// so each kernel sweeps out one feature map. An activation is then applied to the result.
 ///
@@ -19,10 +20,10 @@ use std::sync::Arc;
 /// [`Dense`](crate::layers::Dense), with `col2im` folding the gradient back on the way down.
 #[derive(Clone, Debug)]
 pub struct Conv2d {
-    /// Kernels `(out_channels, in_channels, kernel_height, kernel_width)`, one filter per row.
-    kernels: Array4<f32>,
-    /// One bias per output channel.
-    biases: Array1<f32>,
+    /// The affine map, its weights the kernels flattened to `(out_channels, in_channels·kh·kw)`.
+    affine: Affine,
+    /// The kernels' shape `(out_channels, in_channels, kernel_height, kernel_width)`.
+    kernels_shape: (usize, usize, usize, usize),
     /// The per-sample input shape `(in_channels, height, width)`, sample axis excluded.
     input_shape: (usize, usize, usize),
     /// The stride applied on both spatial axes.
@@ -76,9 +77,16 @@ impl Conv2d {
             "Conv2d kernel does not fit the padded input."
         );
 
+        // Flatten the kernels to the affine matrix (out_channels, in·kh·kw); the fan-in axes are
+        // contiguous, so this is a reshape, not a copy.
+        let kernels_shape = (out_channels, in_channels, kh, kw);
+        let weights = kernels
+            .into_shape_with_order((out_channels, in_channels * kh * kw))
+            .expect("(out, in, kh, kw) reshapes to (out, in·kh·kw): element counts match");
+
         Conv2d {
-            kernels,
-            biases,
+            affine: Affine::new(weights, biases),
+            kernels_shape,
             input_shape,
             stride,
             padding,
@@ -117,7 +125,7 @@ impl Conv2d {
 
         // A convolution's fan-in is one receptive field: in_channels · kh · kw. Initializing
         // the flat (out_channels, fan_in) matrix reuses the dense initializers unchanged; the
-        // kernel bank is that same matrix folded to rank 4.
+        // kernels are that same matrix folded to rank 4.
         let fan_in = in_channels * kh * kw;
         let (weights, biases) = activation
             .initialization()
@@ -130,13 +138,17 @@ impl Conv2d {
     }
 
     /// This layer's kernels `(out_channels, in_channels, kernel_height, kernel_width)`.
-    pub fn kernels(&self) -> ArrayView4<'_, f32> {
-        self.kernels.view()
+    pub fn kernels(&self) -> Array4<f32> {
+        self.affine
+            .weights()
+            .to_owned()
+            .into_shape_with_order(self.kernels_shape)
+            .expect("the affine weights fold back to the kernel shape")
     }
 
     /// This layer's biases, one per output channel.
     pub fn biases(&self) -> ndarray::ArrayView1<'_, f32> {
-        self.biases.view()
+        self.affine.biases()
     }
 
     /// The activation applied to this layer's output.
@@ -146,7 +158,7 @@ impl Conv2d {
 
     /// The output's per-sample spatial shape `(out_channels, out_height, out_width)`.
     fn output_shape(&self) -> (usize, usize, usize) {
-        let (out_channels, _, kh, kw) = self.kernels.dim();
+        let (out_channels, _, kh, kw) = self.kernels_shape;
         let (_, height, width) = self.input_shape;
         (
             out_channels,
@@ -168,17 +180,12 @@ impl Layer for Conv2d {
             "Conv2d input shape does not match its configured input shape."
         );
 
-        let (out_channels, _, kh, kw) = self.kernels.dim();
-        let fan_in = in_channels * kh * kw;
+        let (out_channels, _, kh, kw) = self.kernels_shape;
 
-        // im2col → matmul → fold: the affine core is Dense's `weights · input + bias`.
+        // im2col → affine matmul → fold: unfold each patch into a column, then the shared
+        // affine map turns the whole batch into feature maps in one `weights · cols + bias`.
         let cols = im2col(input, kh, kw, self.stride, self.padding);
-        let weights = self
-            .kernels
-            .to_shape((out_channels, fan_in))
-            .expect("kernels are contiguous and reshape to (out_channels, in·kh·kw)");
-        let biases = self.biases.view().insert_axis(Axis(1)).to_owned();
-        let pre_activation = weights.dot(&cols) + &biases;
+        let pre_activation = self.affine.forward(cols.view());
 
         let (_, out_h, out_w) = self.output_shape();
         self.activation
@@ -207,13 +214,12 @@ impl Layer for Conv2d {
             .expect("Conv2d expects a 4D output");
 
         let (in_channels, height, width, samples) = input.dim();
-        let (out_channels, _, kh, kw) = self.kernels.dim();
-        let fan_in = in_channels * kh * kw;
+        let (out_channels, _, kh, kw) = self.kernels_shape;
         let (_, out_h, out_w) = self.output_shape();
         let positions = out_h * out_w * samples;
 
         // Collapse the spatial output to the 2D (out_channels, positions) the activation VJP
-        // and the matmul math operate on, mirroring Dense.
+        // and the affine math operate on, mirroring Dense.
         let da = da
             .to_shape((out_channels, positions))
             .expect("da folds to (out_channels, positions)");
@@ -221,24 +227,18 @@ impl Layer for Conv2d {
             .to_shape((out_channels, positions))
             .expect("output folds to (out_channels, positions)");
 
-        // dz = dL/d(pre-activation); parameter gradients average over the batch (samples),
-        // summing over the shared spatial positions, so they divide by the sample count only.
+        // The columns span spatial positions as well as samples, so the affine backward is told
+        // to average over the sample count alone; col2im then folds the input gradient back.
         let dz = self.activation.vjp(da.view(), output.view());
-        let m = samples as f32;
-
         let cols = im2col(input, kh, kw, self.stride, self.padding);
-        let dw = dz.dot(&cols.t()) / m;
-        let dk = dw
-            .into_shape_with_order((out_channels, in_channels, kh, kw))
-            .expect("(out, in·kh·kw) reshapes to the kernel shape");
-        let db = dz.sum_axis(Axis(1)) / m;
+        let (dw, db, dcols) = self.affine.backward(
+            dz.view(),
+            cols.view(),
+            samples as f32,
+            compute_input_gradient,
+        );
 
-        let input_gradient = compute_input_gradient.then(|| {
-            let weights = self
-                .kernels
-                .to_shape((out_channels, fan_in))
-                .expect("kernels reshape to (out_channels, in·kh·kw)");
-            let dcols = weights.t().dot(&dz);
+        let input_gradient = dcols.map(|dcols| {
             col2im(
                 dcols.view(),
                 (in_channels, height, width, samples),
@@ -251,19 +251,20 @@ impl Layer for Conv2d {
         });
 
         BackwardPass {
-            gradients: LayerGradients(vec![dk.into_dyn(), db.into_dyn()]),
+            gradients: LayerGradients(vec![dw.into_dyn(), db.into_dyn()]),
             input_gradient,
         }
     }
 
     fn parameters_mut(&mut self) -> Vec<Parameter<'_>> {
+        let (weights, biases) = self.affine.parameters_mut();
         vec![
             Parameter {
-                value: self.kernels.view_mut().into_dyn(),
+                value: weights.view_mut().into_dyn(),
                 decays: true,
             },
             Parameter {
-                value: self.biases.view_mut().into_dyn(),
+                value: biases.view_mut().into_dyn(),
                 decays: false,
             },
         ]
@@ -280,7 +281,7 @@ impl Layer for Conv2d {
     }
 
     fn is_finite(&self) -> bool {
-        self.kernels.iter().all(|v| v.is_finite()) && self.biases.iter().all(|v| v.is_finite())
+        self.affine.is_finite()
     }
 
     fn kind(&self) -> &'static str {
@@ -289,8 +290,11 @@ impl Layer for Conv2d {
 
     fn named_tensors(&self) -> Vec<(String, ArrayD<f32>)> {
         vec![
-            ("kernels".to_string(), self.kernels.clone().into_dyn()),
-            ("biases".to_string(), self.biases.clone().into_dyn()),
+            ("kernels".to_string(), self.kernels().into_dyn()),
+            (
+                "biases".to_string(),
+                self.affine.biases().to_owned().into_dyn(),
+            ),
         ]
     }
 
@@ -299,7 +303,7 @@ impl Layer for Conv2d {
     }
 
     fn weight_matrix(&self) -> Option<ArrayView2<'_, f32>> {
-        // The kernels are a rank-4 bank, not a single affine weight matrix.
+        // A convolution has no single (output_size, input_size) weight matrix.
         None
     }
 
@@ -443,9 +447,11 @@ mod tests {
 
         let params = layer.parameters_mut();
         assert_eq!(params.len(), 2);
-        // Kernels decay, biases do not; order matches the gradient order [dk, db].
+        // Weights decay, biases do not; order matches the gradient order [dw, db]. The weight
+        // parameter is the flat affine matrix (out_channels, in·kh·kw) = (3, 18), not the rank-4
+        // kernels the named tensor exposes.
         assert!(params[0].decays);
-        assert_eq!(params[0].value.shape(), &[3, 2, 3, 3]);
+        assert_eq!(params[0].value.shape(), &[3, 2 * 3 * 3]);
         assert!(!params[1].decays);
         assert_eq!(params[1].value.shape(), &[3]);
     }
@@ -515,30 +521,22 @@ mod tests {
             );
         };
 
-        // Kernel gradients: perturb each kernel entry, central-difference the loss, compare
-        // to `grad * m`.
-        let (out_c, in_c, kh, kw) = layer.kernels.dim();
+        // Weight gradients: perturb each entry of the flat affine matrix (out_channels, in·kh·kw),
+        // central-difference the loss, compare to `grad * m`.
+        let (out_c, fan_in) = layer.affine.weights().dim();
         for o in 0..out_c {
-            for c in 0..in_c {
-                for u in 0..kh {
-                    for v in 0..kw {
-                        let mut plus = layer.clone();
-                        plus.kernels[[o, c, u, v]] += eps;
-                        let mut minus = layer.clone();
-                        minus.kernels[[o, c, u, v]] -= eps;
-                        let numerical = (loss(&plus) - loss(&minus)) / (2.0 * eps);
-                        check(
-                            grads[0][[o, c, u, v]] * m,
-                            numerical,
-                            format!("dk[{o},{c},{u},{v}]"),
-                        );
-                    }
-                }
+            for j in 0..fan_in {
+                let mut plus = layer.clone();
+                plus.affine.weights_mut()[[o, j]] += eps;
+                let mut minus = layer.clone();
+                minus.affine.weights_mut()[[o, j]] -= eps;
+                let numerical = (loss(&plus) - loss(&minus)) / (2.0 * eps);
+                check(grads[0][[o, j]] * m, numerical, format!("dw[{o},{j}]"));
             }
             let mut plus = layer.clone();
-            plus.biases[o] += eps;
+            plus.affine.biases_mut()[o] += eps;
             let mut minus = layer.clone();
-            minus.biases[o] -= eps;
+            minus.affine.biases_mut()[o] -= eps;
             let numerical = (loss(&plus) - loss(&minus)) / (2.0 * eps);
             check(grads[1][o] * m, numerical, format!("db[{o}]"));
         }
@@ -580,12 +578,12 @@ mod tests {
         let a = build();
         let b = build();
 
-        assert_eq!(a.kernels.dim(), (5, 3, 3, 3));
-        assert_eq!(a.biases.len(), 5);
+        assert_eq!(a.kernels().dim(), (5, 3, 3, 3));
+        assert_eq!(a.biases().len(), 5);
         // Same seed and architecture yield identical kernels.
-        assert_eq!(a.kernels, b.kernels);
+        assert_eq!(a.kernels(), b.kernels());
         // He initialization leaves the biases at zero.
-        assert!(a.biases.iter().all(|&b| b == 0.0));
+        assert!(a.biases().iter().all(|&b| b == 0.0));
     }
 
     #[test]
