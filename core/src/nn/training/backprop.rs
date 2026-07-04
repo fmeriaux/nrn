@@ -1,6 +1,6 @@
 use crate::data::ModelDataset;
 use crate::gradients::{GradientClipping, LayerGradients};
-use crate::loss_functions::{CrossEntropyLoss, LossFunction};
+use crate::loss_functions::LossFunction;
 use crate::model::{InputShapeMismatch, NeuralNetwork, last_activation};
 use crate::optimizers::Optimizer;
 use crate::schedulers::Scheduler;
@@ -133,9 +133,9 @@ impl NeuralNetwork {
         let last_act = last_activation(activations)
             .into_dimensionality::<Ix2>()
             .expect("the output layer produces rank-2 (classes, samples) activations");
-        // Clip to (0, 1) interior so gradient() and vjp() see the same values;
+        // Project into the loss's safe domain so gradient() and vjp() see the same values;
         // their product then cancels exactly to p − y even near saturation.
-        let safe_act = CrossEntropyLoss::clip_probabilities(&last_act.view());
+        let safe_act = loss_function.stabilize(last_act.view());
         // dL/d(output) handed to the output layer.
         let mut da = loss_function.gradient(safe_act.view(), targets).into_dyn();
 
@@ -384,6 +384,65 @@ mod tests {
                 g.0
             );
         }
+    }
+
+    #[test]
+    fn backward_stabilizes_through_the_plugged_in_loss_not_cross_entropy() {
+        // Regression: backward() must project the output activation through the *plugged-in*
+        // loss's stabilize(), not a hardcoded cross-entropy clamp. A loss that keeps the
+        // default (identity) stabilize() must therefore see the raw activations — here the
+        // saturated 1.0/0.0 that cross-entropy would have clamped into (ε, 1 - ε).
+        use std::sync::Mutex;
+
+        struct RawSpyLoss {
+            seen: Mutex<Option<Array2<f32>>>,
+        }
+
+        impl LossFunction for RawSpyLoss {
+            fn name(&self) -> &'static str {
+                "RawSpy"
+            }
+            fn compute(&self, _predictions: ArrayView2<f32>, _targets: ArrayView2<f32>) -> f32 {
+                0.0
+            }
+            fn gradient(
+                &self,
+                predictions: ArrayView2<f32>,
+                _targets: ArrayView2<f32>,
+            ) -> Array2<f32> {
+                *self.seen.lock().unwrap() = Some(predictions.to_owned());
+                Array2::zeros(predictions.raw_dim())
+            }
+            // stabilize() left as the trait default (identity).
+        }
+
+        let specs = NeuronLayerSpec::network_for(vec![], &*SIGMOID, 2);
+        let mut model = NeuralNetwork::initialization(2, &specs, 0);
+        *dense_mut(&mut model, 0).affine_mut().weights_mut() = array![[100.0, 100.0]];
+        *dense_mut(&mut model, 0).affine_mut().biases_mut() = Array1::from_vec(vec![0.0]);
+        let inputs = array![[1.0, -1.0], [1.0, -1.0]]; // logits +200 / -200 → 1.0 / 0.0
+        let targets = array![[1.0, 0.0]];
+
+        let activations = model.forward(inputs.view()).unwrap();
+        assert_eq!(last_activation(&activations), array![[1.0, 0.0]].into_dyn());
+
+        let spy = Arc::new(RawSpyLoss {
+            seen: Mutex::new(None),
+        });
+        let loss_fn: Arc<dyn LossFunction> = spy.clone();
+        let _ = model.backward(&activations, targets.view(), &loss_fn);
+
+        let seen = spy
+            .seen
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("gradient was called");
+        assert_eq!(
+            seen,
+            array![[1.0, 0.0]],
+            "backward must feed the loss's own stabilize() output to gradient(), not a clamp"
+        );
     }
 
     #[test]
