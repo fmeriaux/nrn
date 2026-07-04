@@ -43,7 +43,7 @@ impl ZScoreScaler {
     /// This method panics if unable to compute mean (e.g., empty input).
     ///
     pub fn fit(mut self, data: ArrayView2<f32>) -> Self {
-        self.mean = data.mean_axis(Axis(0)).expect("Unable to compute mean");
+        self.mean = data.mean_axis(Axis(0)).expect("unable to compute mean");
         self.std_dev = data.std_axis(Axis(0), 0.0);
         // To avoid division by zero, replace any zero std_dev by epsilon
         self.std_dev

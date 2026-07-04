@@ -259,11 +259,11 @@ fn init_features_and_labels(
     n_clusters: usize,
     samples_per_cluster: usize,
 ) -> (Array2<f32>, Array1<f32>) {
-    assert!(n_features > 0, "n_features must be greater than zero");
-    assert!(n_clusters > 0, "n_clusters must be greater than zero");
+    assert!(n_features > 0, "n_features must be greater than zero.");
+    assert!(n_clusters > 0, "n_clusters must be greater than zero.");
     assert!(
         samples_per_cluster > 0,
-        "samples_per_cluster must be greater than zero"
+        "samples_per_cluster must be greater than zero."
     );
 
     let total_samples = samples_per_cluster * n_clusters;
@@ -275,11 +275,11 @@ fn init_features_and_labels(
 
 /// Calculates the maximum radius from a list of radius ranges.
 fn max_radius(radii: &[(f32, f32)]) -> f32 {
-    assert!(!radii.is_empty(), "radii must not be empty");
+    assert!(!radii.is_empty(), "radii must not be empty.");
 
     assert!(
         radii.iter().all(|&(min, max)| min >= 0.0 && max > min),
-        "Each radius must be a valid range with min >= 0 and max > min"
+        "Each radius must be a valid range with min >= 0 and max > min."
     );
 
     radii.iter().map(|&(_, max)| max).fold(0.0, f32::max)
@@ -289,7 +289,7 @@ fn max_radius(radii: &[(f32, f32)]) -> f32 {
 fn feature_bounds(feature_min: f32, feature_max: f32, radii: &[(f32, f32)]) -> (f32, f32) {
     assert!(
         feature_min < feature_max,
-        "feature_min must be less than feature_max"
+        "feature_min must be less than feature_max."
     );
 
     let max_radius = max_radius(radii);
@@ -298,7 +298,7 @@ fn feature_bounds(feature_min: f32, feature_max: f32, radii: &[(f32, f32)]) -> (
 
     assert!(
         feature_max_bound > feature_min_bound,
-        "feature_max_bound must be greater than feature_min_bound"
+        "feature_max_bound must be greater than feature_min_bound."
     );
 
     (feature_min_bound, feature_max_bound)
@@ -306,7 +306,7 @@ fn feature_bounds(feature_min: f32, feature_max: f32, radii: &[(f32, f32)]) -> (
 
 /// Calculates an optimal radius for clusters based on the feature range and number of clusters.
 fn calculate_radius(feature_min: f32, feature_max: f32, n_clusters: usize) -> f32 {
-    assert!(n_clusters > 0, "n_clusters must be greater than zero");
+    assert!(n_clusters > 0, "n_clusters must be greater than zero.");
     (feature_max - feature_min) / (2.5 * n_clusters as f32)
 }
 

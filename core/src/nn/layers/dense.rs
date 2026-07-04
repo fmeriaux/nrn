@@ -108,7 +108,7 @@ impl Layer for Dense {
     fn forward(&self, input: ArrayViewD<f32>) -> ArrayD<f32> {
         let input = input
             .into_dimensionality::<Ix2>()
-            .expect("Dense expects a 2D (features, samples) input.");
+            .expect("Dense expects a 2D (features, samples) input");
         assert_eq!(
             input.nrows(),
             self.weights.ncols(),
@@ -132,13 +132,13 @@ impl Layer for Dense {
     ) -> BackwardPass {
         let da = da
             .into_dimensionality::<Ix2>()
-            .expect("Dense expects a 2D da.");
+            .expect("Dense expects a 2D da");
         let input = input
             .into_dimensionality::<Ix2>()
-            .expect("Dense expects a 2D input.");
+            .expect("Dense expects a 2D input");
         let output = output
             .into_dimensionality::<Ix2>()
-            .expect("Dense expects a 2D output.");
+            .expect("Dense expects a 2D output");
 
         let m = input.ncols() as f32;
 

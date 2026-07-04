@@ -162,7 +162,7 @@ fn make_grid_and_inputs(
     // Generate all grid points using recursive backtracking
     let total_points = resolution
         .checked_pow(n_dims as u32)
-        .expect("Grid too large: resolution^n_dims overflows usize");
+        .expect("grid too large: resolution^n_dims overflows usize");
     let mut nested_points = Vec::with_capacity(total_points);
 
     generate_points_recursive(
@@ -251,7 +251,7 @@ mod tests {
     use ndarray::array;
 
     #[test]
-    #[should_panic(expected = "Grid too large")]
+    #[should_panic(expected = "grid too large")]
     #[cfg(target_pointer_width = "64")]
     fn overflow_panics_with_clear_message() {
         // 2^65 > usize::MAX on 64-bit — without checked_pow this silently wraps to 0

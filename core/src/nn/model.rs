@@ -69,7 +69,7 @@ impl std::error::Error for LayerPlanError {}
 pub fn last_activation(activations: &[ArrayD<f32>]) -> ArrayD<f32> {
     activations
         .last()
-        .expect("Ensure activations is not empty.")
+        .expect("forward always yields at least the input activation")
         .to_owned()
 }
 
@@ -78,7 +78,10 @@ impl NeuralNetwork {
     /// # Panics
     /// When `layers` is empty.
     pub fn new(layers: Vec<Box<dyn Layer>>) -> Self {
-        assert!(!layers.is_empty(), "a network must have at least one layer");
+        assert!(
+            !layers.is_empty(),
+            "A network must have at least one layer."
+        );
         NeuralNetwork { layers }
     }
 
@@ -95,7 +98,7 @@ impl NeuralNetwork {
             assert_eq!(
                 layer.input_size(),
                 last.output_size(),
-                "layer input size must match the previous layer's output size"
+                "Layer input size must match the previous layer's output size."
             );
         }
         self.layers.push(Box::new(layer));
