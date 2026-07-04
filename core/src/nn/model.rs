@@ -7,7 +7,7 @@
 use crate::activations::{Activation, SIGMOID, SOFTMAX};
 use crate::data::scalers::{Scaler, ScalerFeatureMismatch, ScalerMethod};
 use crate::layers::{Dense, Layer};
-use ndarray::{Array1, Array2, ArrayD, ArrayView1, ArrayView2, Axis, Ix2};
+use ndarray::{Array1, Array2, ArrayD, ArrayView, ArrayView1, ArrayView2, Axis, Dimension, Ix2};
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::rngs::StdRng;
 use std::fmt;
@@ -182,20 +182,27 @@ impl NeuralNetwork {
     }
 
     /// Computes the forward pass through the network, returning the activations of each layer.
+    ///
+    /// The input is rank-agnostic: its last axis is the sample axis and its leading axes are the
+    /// per-sample features, so a dense network takes a rank-2 `(features, samples)` batch while a
+    /// spatial one (e.g. a leading `Conv2d`) takes a higher-rank `(channels, height, width, samples)`
+    /// batch. Each layer reshapes its input as it needs.
     /// # Errors
-    /// [`FeatureCountMismatch`] when the feature rows of `inputs` do not match [`Self::input_size`].
+    /// [`FeatureCountMismatch`] when the product of `inputs`' leading (feature) axes differs from
+    /// [`Self::input_size`].
     /// # Arguments
-    /// - `inputs`: A 2D array representing the inputs to the network.
-    pub fn forward(
+    /// - `inputs`: An array whose last axis is samples and whose leading axes are the features.
+    pub fn forward<D: Dimension>(
         &self,
-        inputs: ArrayView2<f32>,
+        inputs: ArrayView<f32, D>,
     ) -> Result<Vec<ArrayD<f32>>, FeatureCountMismatch> {
-        self.validate_inputs(inputs)?;
+        let inputs = inputs.into_dyn();
+        self.validate_inputs(inputs.view())?;
 
         Ok(self
             .layers
             .iter()
-            .fold(vec![inputs.to_owned().into_dyn()], |mut acc, layer| {
+            .fold(vec![inputs.to_owned()], |mut acc, layer| {
                 let output = layer.forward(acc.last().unwrap().view());
                 acc.push(output);
                 acc
@@ -207,13 +214,19 @@ impl NeuralNetwork {
         self.layers.iter().all(|layer| layer.is_finite())
     }
 
-    /// Validates that `inputs` `(features, samples)` carry the feature count this network expects.
+    /// Validates that `inputs` carry the feature count this network expects: the sample axis is
+    /// last, so the leading axes are the per-sample features and must multiply to
+    /// [`Self::input_size`].
     ///
     /// # Errors
-    /// [`FeatureCountMismatch`] when the feature rows differ from [`Self::input_size`].
-    pub fn validate_inputs(&self, inputs: ArrayView2<f32>) -> Result<(), FeatureCountMismatch> {
+    /// [`FeatureCountMismatch`] when the leading axes' product differs from [`Self::input_size`].
+    pub fn validate_inputs<D: Dimension>(
+        &self,
+        inputs: ArrayView<f32, D>,
+    ) -> Result<(), FeatureCountMismatch> {
         let expected = self.input_size();
-        let found = inputs.nrows();
+        let shape = inputs.shape();
+        let found: usize = shape[..shape.len().saturating_sub(1)].iter().product();
         (found == expected)
             .then_some(())
             .ok_or(FeatureCountMismatch { expected, found })
@@ -221,10 +234,15 @@ impl NeuralNetwork {
 
     /// Predicts the output of the network given the inputs, returning the final activations.
     /// # Arguments
-    /// - `inputs`: A 2D array `(features, samples)` representing the inputs to the network.
+    /// - `inputs`: An array whose last axis is samples and whose leading axes are the features
+    ///   (rank-2 `(features, samples)` for a dense network, higher-rank for a spatial one).
     /// # Errors
-    /// [`FeatureCountMismatch`] when the feature rows do not match [`Self::input_size`].
-    pub fn predict(&self, inputs: ArrayView2<f32>) -> Result<Array2<f32>, FeatureCountMismatch> {
+    /// [`FeatureCountMismatch`] when the product of the leading (feature) axes differs from
+    /// [`Self::input_size`].
+    pub fn predict<D: Dimension>(
+        &self,
+        inputs: ArrayView<f32, D>,
+    ) -> Result<Array2<f32>, FeatureCountMismatch> {
         let output = last_activation(&self.forward(inputs)?)
             .into_dimensionality::<Ix2>()
             .expect("the output layer produces rank-2 (classes, samples) activations");
@@ -497,7 +515,7 @@ impl NeuronLayerSpec {
 mod tests {
     use super::*;
     use crate::activations::{RELU, SIGMOID};
-    use ndarray::{Array1, Array2, array};
+    use ndarray::{Array, Array1, Array2, IxDyn, array};
 
     fn make_network(
         weights: Array2<f32>,
@@ -528,6 +546,40 @@ mod tests {
         assert_eq!(model.layers[1].output_size(), 3);
 
         assert_eq!(model.summary(), "[3] -> 4-relu -> 3-softmax");
+    }
+
+    #[test]
+    fn convolutional_network_predicts_end_to_end_on_a_spatial_batch() {
+        use crate::layers::{Conv2d, Flatten};
+
+        // Conv2d (1×4×4 → 2×2×2) → Flatten (8) → Dense (1 sigmoid, binary). The rank-4
+        // spatial batch threads through forward/predict unchanged; the Flatten collapses it
+        // to the rank-2 the Dense head consumes, and predict yields (classes, samples).
+        let conv = Conv2d::initialization(
+            (1, 4, 4),
+            2,
+            (3, 3),
+            1,
+            0,
+            RELU.clone(),
+            &mut StdRng::seed_from_u64(0),
+        );
+        let head = Dense::initialization(
+            8,
+            &NeuronLayerSpec::output_for(2),
+            &mut StdRng::seed_from_u64(1),
+        );
+        let model = NeuralNetwork::single(conv)
+            .with_layer(Flatten::new(vec![2, 2, 2]))
+            .with_layer(head);
+
+        // A spatial input the dense predict path could never accept: (channels, height, width, samples).
+        let inputs = Array::from_shape_fn(IxDyn(&[1, 4, 4, 3]), |idx| {
+            ((idx[1] + idx[2] + idx[3]) as f32).sin()
+        });
+        let output = model.predict(inputs.view()).unwrap();
+        assert_eq!(output.shape(), &[1, 3]); // (classes, samples)
+        assert!(output.iter().all(|&v| (0.0..=1.0).contains(&v)));
     }
 
     #[test]
