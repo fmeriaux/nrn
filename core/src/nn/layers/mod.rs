@@ -6,9 +6,11 @@
 //! respect to its input. Layers are stateless with respect to the forward activations —
 //! the network threads those between layers — so a layer holds only its parameters.
 
+mod conv2d;
 mod dense;
 mod flatten;
 
+pub use conv2d::Conv2d;
 pub use dense::Dense;
 pub use flatten::Flatten;
 
