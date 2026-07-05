@@ -1,6 +1,6 @@
 use crate::data::origin::DatasetOrigin;
 use crate::data::scalers::{Scaler, ScalerFeatureMismatch, ScalerKind, ScalerMethod};
-use ndarray::{Array, Array1, Array2, ArrayD, Axis, Dimension};
+use ndarray::{Array, Array1, Array2, ArrayD, Axis, Dimension, Ix2};
 use ndarray_rand::rand::Rng;
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::prelude::{SliceRandom, StdRng};
@@ -341,10 +341,9 @@ impl Dataset {
         indices.shuffle(&mut StdRng::seed_from_u64(seed));
 
         let size = |ratio: f32| (n_samples as f32 * ratio).round() as usize;
-        let sample_axis = Axis(model.inputs.ndim() - 1);
         let select = |idx: &[usize]| {
             ModelDataset::new(
-                model.inputs.select(sample_axis, idx),
+                model.select_samples(idx),
                 model.targets.select(Axis(1), idx),
             )
         };
@@ -393,6 +392,16 @@ impl ModelDataset {
         Axis(self.inputs.ndim() - 1)
     }
 
+    /// Gathers the samples at `indices` along the sample axis into a fresh owned array.
+    /// Rank-2 inputs gather on the static `Ix2` type, which avoids the dynamic-rank
+    /// indexing overhead of [`ArrayD::select`] on the tabular hot path.
+    fn select_samples(&self, indices: &[usize]) -> ArrayD<f32> {
+        match self.inputs.view().into_dimensionality::<Ix2>() {
+            Ok(inputs) => inputs.select(Axis(1), indices).into_dyn(),
+            Err(_) => self.inputs.select(self.sample_axis(), indices),
+        }
+    }
+
     /// Returns the targets, `(targets, samples)`.
     pub fn targets(&self) -> &Array2<f32> {
         &self.targets
@@ -406,7 +415,6 @@ impl ModelDataset {
         size: usize,
         rng: &mut R,
     ) -> impl Iterator<Item = ModelDataset> + '_ {
-        let sample_axis = self.sample_axis();
         let mut indices: Vec<usize> = (0..self.targets.ncols()).collect();
         indices.shuffle(rng);
         let n = indices.len();
@@ -419,7 +427,7 @@ impl ModelDataset {
             let chunk = &indices[pos..end];
             pos = end;
             Some(ModelDataset::new(
-                self.inputs.select(sample_axis, chunk),
+                self.select_samples(chunk),
                 self.targets.select(Axis(1), chunk),
             ))
         })
