@@ -125,9 +125,8 @@ pub trait Layer: DynClone + Debug {
 
 dyn_clone::clone_trait_object!(Layer);
 
-/// The concrete kind of a [`Layer`]. It names the layer type and rebuilds a layer of that
-/// kind from its [`config`](Layer::config) and [`named_tensors`](Layer::named_tensors) via
-/// [`instantiate`](LayerKind::instantiate).
+/// The concrete kind of a [`Layer`], used to build one from its
+/// [`config`](Layer::config) and [`named_tensors`](Layer::named_tensors).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayerKind {
     /// A fully connected [`Dense`] layer.
