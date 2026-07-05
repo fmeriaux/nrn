@@ -297,3 +297,57 @@ fn take_tensor<D: Dimension>(
             got,
         })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kind_tags_round_trip_and_reject_unknown() {
+        for kind in [LayerKind::Dense, LayerKind::Conv2d, LayerKind::Flatten] {
+            assert_eq!(LayerKind::try_from(kind.as_str()), Ok(kind));
+        }
+        assert_eq!(
+            LayerKind::try_from("mystery"),
+            Err(LayerConfigError::UnknownKind("mystery".to_string()))
+        );
+    }
+
+    #[test]
+    fn config_usize_reports_the_offending_key_on_a_non_integer_value() {
+        let config = HashMap::from([("stride".to_string(), "wide".to_string())]);
+        let error = config_usize(&config, "stride").unwrap_err();
+
+        assert!(
+            matches!(&error, LayerConfigError::InvalidConfig { key, .. } if key == "stride"),
+            "unexpected error: {error:?}"
+        );
+    }
+
+    #[test]
+    fn config_dims_rejects_a_non_integer_dimension() {
+        let config = HashMap::from([("shape".to_string(), "2,x,4".to_string())]);
+        let error = config_dims(&config, "shape").unwrap_err();
+
+        assert!(
+            matches!(&error, LayerConfigError::InvalidConfig { key, .. } if key == "shape"),
+            "unexpected error: {error:?}"
+        );
+    }
+
+    #[test]
+    fn errors_display_their_key_and_tag() {
+        let invalid = LayerConfigError::InvalidConfig {
+            key: "stride".to_string(),
+            reason: "not a number".to_string(),
+        };
+        assert_eq!(
+            invalid.to_string(),
+            "config key `stride` is invalid: not a number"
+        );
+        assert_eq!(
+            LayerConfigError::UnknownKind("mystery".to_string()).to_string(),
+            "unknown layer kind: mystery"
+        );
+    }
+}

@@ -710,4 +710,22 @@ mod tests {
             LayerConfigError::MissingConfig("input_shape".to_string())
         );
     }
+
+    #[test]
+    fn from_config_rejects_input_shape_without_three_dimensions() {
+        let mut rng = StdRng::seed_from_u64(2);
+        let layer = Conv2d::initialization((1, 4, 4), 2, (3, 3), 1, 0, RELU.clone(), &mut rng);
+        let tensors: HashMap<String, ArrayD<f32>> = layer.named_tensors().into_iter().collect();
+        // A 2-dimension input_shape where a convolution needs (channels, height, width).
+        let mut config: HashMap<String, String> = layer.config().into_iter().collect();
+        config.insert("input_shape".to_string(), "4,4".to_string());
+
+        assert_eq!(
+            Conv2d::from_config(&config, tensors).unwrap_err(),
+            LayerConfigError::InvalidConfig {
+                key: "input_shape".to_string(),
+                reason: "expected 3 dimensions, got 2".to_string(),
+            }
+        );
+    }
 }

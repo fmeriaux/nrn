@@ -643,6 +643,34 @@ mod tests {
     }
 
     #[test]
+    fn predict_surfaces_a_scaler_feature_mismatch_as_a_scaling_error() {
+        use crate::data::scalers::ScalerKind;
+        use crate::layers::Flatten;
+
+        // A scaler fitted on 2 leading-axis features, then applied to a batch with 3:
+        // the scaler's mismatch surfaces through `?` as PredictionError::Scaling.
+        let network =
+            NeuralNetwork::single(Flatten::new(vec![2, 2, 2])).with_layer(Dense::initialization(
+                8,
+                &NeuronLayerSpec::output_for(2),
+                &mut StdRng::seed_from_u64(0),
+            ));
+        let fit_batch = Array::from_shape_fn(IxDyn(&[2, 4]), |d| (d[0] + d[1]) as f32);
+        let scaler = ScalerKind::MinMax.fit(fit_batch.view());
+        let predictor = Predictor::new(network, Some(scaler));
+
+        let wrong = ArrayD::<f32>::ones(IxDyn(&[3, 2, 2, 5]));
+        let error = predictor.predict(wrong.view()).unwrap_err();
+
+        assert!(
+            matches!(error, PredictionError::Scaling(_)),
+            "unexpected error: {error}"
+        );
+        // The Scaling arm delegates its Display to the underlying scaler error.
+        assert!(error.to_string().contains("features"));
+    }
+
+    #[test]
     fn validate_inputs_rejects_a_matching_count_but_wrong_arrangement() {
         use crate::layers::Conv2d;
 
