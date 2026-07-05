@@ -1,19 +1,24 @@
-//! Performance benchmarks for the MLP hot paths: inference (`forward`/`predict`)
+//! Performance benchmarks for the network hot paths: inference (`forward`/`predict`)
 //! and a single training epoch (full-batch and mini-batch SGD).
 //!
-//! Two workloads bracket the realistic range:
-//! - `small`: a 2-feature binary problem (the synthetic-dataset CLI demos).
-//! - `mnist`: a 784-feature, 10-class problem with two hidden layers.
+//! Three workloads bracket the realistic range:
+//! - `small`: a 2-feature binary MLP (the synthetic-dataset CLI demos).
+//! - `mnist`: a 784-feature, 10-class MLP with two hidden layers.
+//! - `cnn`: a 1×28×28, 10-class convolutional net (Conv2d → Flatten → Dense),
+//!   exercising the spatial `im2col`/`col2im` paths on a rank-4 batch.
 //!
 //! Each epoch benchmark clones the model in `iter_batched`'s setup so the clone
 //! is excluded from the measured region and every iteration starts from the same
 //! weights (training mutates them in place).
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use ndarray::Array2;
+use ndarray::{Array2, Array4};
+use ndarray_rand::rand::SeedableRng;
+use ndarray_rand::rand::rngs::StdRng;
 use nrn::activations::{RELU, SIGMOID, SOFTMAX};
 use nrn::data::ModelDataset;
 use nrn::gradients::GradientClipping;
+use nrn::layers::{Conv2d, Dense, Flatten};
 use nrn::learning_rate::LearningRate;
 use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
@@ -40,11 +45,11 @@ fn pseudo_random(shape: (usize, usize), mix: u64) -> Array2<f32> {
     })
 }
 
-/// Builds a `(features, samples)` input matrix and a one-hot / binary target matrix.
-fn make_dataset(n_features: usize, n_classes: usize, n_samples: usize) -> ModelDataset {
-    let inputs = pseudo_random((n_features, n_samples), 0);
+/// A one-hot (multi-class) or binary `(target_rows, samples)` target matrix whose labels
+/// cycle through the classes, so every class is represented.
+fn make_targets(n_classes: usize, n_samples: usize) -> Array2<f32> {
     let target_rows = if n_classes == 2 { 1 } else { n_classes };
-    let targets = Array2::from_shape_fn((target_rows, n_samples), |(r, c)| {
+    Array2::from_shape_fn((target_rows, n_samples), |(r, c)| {
         let label = c % n_classes;
         if n_classes == 2 {
             label as f32
@@ -53,8 +58,32 @@ fn make_dataset(n_features: usize, n_classes: usize, n_samples: usize) -> ModelD
         } else {
             0.0
         }
+    })
+}
+
+/// Builds a `(features, samples)` input matrix paired with matching targets.
+fn make_dataset(n_features: usize, n_classes: usize, n_samples: usize) -> ModelDataset {
+    let inputs = pseudo_random((n_features, n_samples), 0);
+    ModelDataset::new(inputs, make_targets(n_classes, n_samples))
+}
+
+/// Builds a `(channels, height, width, samples)` spatial batch (samples-last, the
+/// convention a leading `Conv2d` consumes) paired with matching targets.
+fn make_spatial_dataset(
+    channels: usize,
+    height: usize,
+    width: usize,
+    n_classes: usize,
+    n_samples: usize,
+) -> ModelDataset {
+    let inputs = Array4::from_shape_fn((channels, height, width, n_samples), |(ch, h, w, s)| {
+        let n = (ch as u64).wrapping_mul(73_856_093)
+            ^ (h as u64).wrapping_mul(19_349_663)
+            ^ (w as u64).wrapping_mul(83_492_791)
+            ^ (s as u64);
+        ((n % 2000) as f32) / 1000.0 - 1.0
     });
-    ModelDataset::new(inputs, targets)
+    ModelDataset::new(inputs, make_targets(n_classes, n_samples))
 }
 
 fn small_workload() -> Workload {
@@ -97,6 +126,32 @@ fn mnist_workload() -> Workload {
     }
 }
 
+fn cnn_workload() -> Workload {
+    // 1×28×28 → Conv2d(16 filters, 3×3, stride 1) → 16×26×26 → Flatten → Dense(10, softmax).
+    let conv = Conv2d::initialization(
+        (1, 28, 28),
+        16,
+        (3, 3),
+        1,
+        0,
+        RELU.clone(),
+        &mut StdRng::seed_from_u64(42),
+    );
+    let head = Dense::initialization(
+        16 * 26 * 26,
+        &NeuronLayerSpec::output_for(10),
+        &mut StdRng::seed_from_u64(43),
+    );
+    let model = NeuralNetwork::single(conv)
+        .with_layer(Flatten::new(vec![16, 26, 26]))
+        .with_layer(head);
+    Workload {
+        model,
+        dataset: make_spatial_dataset(1, 28, 28, 10, 1_000),
+        batch_size: 64,
+    }
+}
+
 fn loss() -> Arc<dyn LossFunction> {
     CROSS_ENTROPY_LOSS.clone()
 }
@@ -119,7 +174,11 @@ fn run_epoch(model: &mut NeuralNetwork, w: &Workload, mini_batch: Option<MiniBat
 
 fn bench_inference(c: &mut Criterion) {
     let mut group = c.benchmark_group("inference");
-    for (name, w) in [("small", small_workload()), ("mnist", mnist_workload())] {
+    for (name, w) in [
+        ("small", small_workload()),
+        ("mnist", mnist_workload()),
+        ("cnn", cnn_workload()),
+    ] {
         group.bench_function(name, |b| {
             b.iter(|| black_box(w.model.predict(w.dataset.inputs().view())));
         });
@@ -129,7 +188,11 @@ fn bench_inference(c: &mut Criterion) {
 
 fn bench_epoch_full_batch(c: &mut Criterion) {
     let mut group = c.benchmark_group("epoch_full_batch");
-    for (name, w) in [("small", small_workload()), ("mnist", mnist_workload())] {
+    for (name, w) in [
+        ("small", small_workload()),
+        ("mnist", mnist_workload()),
+        ("cnn", cnn_workload()),
+    ] {
         group.bench_function(name, |b| {
             b.iter_batched(
                 || w.model.clone(),
@@ -143,7 +206,11 @@ fn bench_epoch_full_batch(c: &mut Criterion) {
 
 fn bench_epoch_mini_batch(c: &mut Criterion) {
     let mut group = c.benchmark_group("epoch_mini_batch");
-    for (name, w) in [("small", small_workload()), ("mnist", mnist_workload())] {
+    for (name, w) in [
+        ("small", small_workload()),
+        ("mnist", mnist_workload()),
+        ("cnn", cnn_workload()),
+    ] {
         group.bench_function(name, |b| {
             b.iter_batched(
                 || w.model.clone(),

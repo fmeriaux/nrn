@@ -1,6 +1,6 @@
 use crate::data::origin::DatasetOrigin;
 use crate::data::scalers::{Scaler, ScalerFeatureMismatch, ScalerKind, ScalerMethod};
-use ndarray::{Array1, Array2, Axis};
+use ndarray::{Array, Array1, Array2, ArrayD, Axis, Dimension, Ix2};
 use ndarray_rand::rand::Rng;
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::prelude::{SliceRandom, StdRng};
@@ -26,8 +26,10 @@ pub struct Dataset {
 }
 
 pub struct ModelDataset {
-    /// A 2D array where each column is a sample and each row is a feature
-    inputs: Array2<f32>,
+    /// A samples-last array: the leading axes are the per-sample features and the
+    /// trailing axis indexes samples. Rank-2 `(features, samples)` for tabular data,
+    /// higher rank for spatial data.
+    inputs: ArrayD<f32>,
     /// A 2D array where each column is a sample and each row is a target (one-hot encoded for multi-class)
     targets: Array2<f32>,
 }
@@ -341,7 +343,7 @@ impl Dataset {
         let size = |ratio: f32| (n_samples as f32 * ratio).round() as usize;
         let select = |idx: &[usize]| {
             ModelDataset::new(
-                model.inputs.select(Axis(1), idx),
+                model.select_samples(idx),
                 model.targets.select(Axis(1), idx),
             )
         };
@@ -363,23 +365,41 @@ impl Dataset {
 }
 
 impl ModelDataset {
-    /// Pairs column-major `inputs` `(features, samples)` with their `targets`
-    /// `(targets, samples)`.
+    /// Pairs samples-last `inputs` (trailing axis indexes samples) with their
+    /// `targets` `(targets, samples)`. `inputs` may be any rank: rank-2
+    /// `(features, samples)` for tabular data, higher rank for spatial data.
     ///
     /// # Panics
-    /// - When `inputs` and `targets` disagree on the sample count (columns).
-    pub fn new(inputs: Array2<f32>, targets: Array2<f32>) -> Self {
+    /// - When `inputs` and `targets` disagree on the sample count (`inputs`'
+    ///   trailing axis versus `targets`' columns).
+    pub fn new<D: Dimension>(inputs: Array<f32, D>, targets: Array2<f32>) -> Self {
+        let inputs = inputs.into_dyn();
         assert_eq!(
-            inputs.ncols(),
+            inputs.shape()[inputs.ndim() - 1],
             targets.ncols(),
             "Inputs and targets must have the same number of samples."
         );
         ModelDataset { inputs, targets }
     }
 
-    /// Returns the inputs, `(features, samples)`.
-    pub fn inputs(&self) -> &Array2<f32> {
+    /// Returns the inputs, samples-last (trailing axis indexes samples).
+    pub fn inputs(&self) -> &ArrayD<f32> {
         &self.inputs
+    }
+
+    /// The sample axis, the trailing axis of the samples-last inputs.
+    fn sample_axis(&self) -> Axis {
+        Axis(self.inputs.ndim() - 1)
+    }
+
+    /// Gathers the samples at `indices` along the sample axis into a fresh owned array.
+    /// Rank-2 inputs gather on the static `Ix2` type, which avoids the dynamic-rank
+    /// indexing overhead of [`ArrayD::select`] on the tabular hot path.
+    fn select_samples(&self, indices: &[usize]) -> ArrayD<f32> {
+        match self.inputs.view().into_dimensionality::<Ix2>() {
+            Ok(inputs) => inputs.select(Axis(1), indices).into_dyn(),
+            Err(_) => self.inputs.select(self.sample_axis(), indices),
+        }
     }
 
     /// Returns the targets, `(targets, samples)`.
@@ -395,7 +415,7 @@ impl ModelDataset {
         size: usize,
         rng: &mut R,
     ) -> impl Iterator<Item = ModelDataset> + '_ {
-        let mut indices: Vec<usize> = (0..self.inputs.ncols()).collect();
+        let mut indices: Vec<usize> = (0..self.targets.ncols()).collect();
         indices.shuffle(rng);
         let n = indices.len();
         let mut pos = 0;
@@ -407,45 +427,45 @@ impl ModelDataset {
             let chunk = &indices[pos..end];
             pos = end;
             Some(ModelDataset::new(
-                self.inputs.select(Axis(1), chunk),
+                self.select_samples(chunk),
                 self.targets.select(Axis(1), chunk),
             ))
         })
     }
 
-    /// Fits a scaler of the given `kind` on these inputs. `inputs` is
-    /// `(features, samples)` whereas fitting expects `(samples, features)`, so the
-    /// view is transposed for the call.
+    /// Fits a scaler of the given `kind` on these inputs, laid out samples-last with
+    /// features along the leading axis.
     pub fn fit_scaler(&self, kind: ScalerKind) -> ScalerMethod {
-        kind.fit(self.inputs.t())
+        kind.fit(self.inputs.view())
     }
 
-    /// Applies a scaler to the inputs in-place. `inputs` is `(features, samples)`
-    /// whereas the scaler expects `(samples, features)`, so the view is transposed
-    /// for the call.
+    /// Applies `scaler` to the inputs in place. The inputs are laid out samples-last
+    /// with features along the leading axis.
     ///
     /// # Errors
     /// [`ScalerFeatureMismatch`] when the scaler's fitted feature count does not match
     /// these inputs.
     pub fn scale_inplace(&mut self, scaler: &dyn Scaler) -> Result<(), ScalerFeatureMismatch> {
-        scaler.apply_inplace(self.inputs.view_mut().reversed_axes())
+        scaler.apply_inplace(self.inputs.view_mut())
     }
 }
 
 impl ModelSplit {
     /// Returns the number of training samples in the dataset.
     pub fn train_size(&self) -> usize {
-        self.train.inputs.ncols()
+        self.train.targets.ncols()
     }
 
     /// Returns the number of validation samples in the dataset.
     pub fn validation_size(&self) -> usize {
-        self.validation.as_ref().map_or(0, |val| val.inputs.ncols())
+        self.validation
+            .as_ref()
+            .map_or(0, |val| val.targets.ncols())
     }
 
     /// Returns the number of testing samples in the dataset.
     pub fn test_size(&self) -> usize {
-        self.test.inputs.ncols()
+        self.test.targets.ncols()
     }
 
     /// Applies `scaler` in-place to every split. The scaler is fitted on the
@@ -740,6 +760,58 @@ mod tests {
         {
             assert!(part.inputs.iter().all(|&v| v.is_finite()));
         }
+    }
+
+    #[test]
+    fn model_dataset_accepts_rank4_inputs_and_batches_on_the_sample_axis() {
+        use ndarray::Array4;
+
+        // (channels=1, height=2, width=2, samples=6): samples on the trailing axis.
+        let inputs = Array4::from_shape_fn((1, 2, 2, 6), |(_, h, w, s)| (h + w + s) as f32);
+        let targets = Array2::from_shape_fn((1, 6), |(_, s)| (s % 2) as f32);
+        let dataset = ModelDataset::new(inputs, targets);
+        assert_eq!(dataset.inputs().shape(), &[1, 2, 2, 6]);
+
+        let mut rng = StdRng::seed_from_u64(0);
+        let batches: Vec<_> = dataset.batches(4, &mut rng).collect();
+        // 6 samples in size-4 batches → a full batch of 4 and a remainder of 2, with
+        // only the trailing sample axis chunked and the feature axes preserved.
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[0].inputs().shape(), &[1, 2, 2, 4]);
+        assert_eq!(batches[0].targets().shape(), &[1, 4]);
+        assert_eq!(batches[1].inputs().shape(), &[1, 2, 2, 2]);
+    }
+
+    #[test]
+    fn fit_scaler_normalizes_rank_n_inputs_per_leading_feature() {
+        use ndarray::Array4;
+
+        // (features=2, height=1, width=2, samples=3): feature 0 spans [0, 10] and
+        // feature 1 [0, 100] across all spatial cells and samples. Fitting and scaling
+        // through the dataset keeps the spatial shape and normalizes per feature, not
+        // per spatial cell.
+        let inputs = Array4::from_shape_fn((2, 1, 2, 3), |(f, _h, w, s)| {
+            let scale = if f == 0 { 1.0 } else { 10.0 };
+            let cell = if w == 0 { 0.0 } else { 8.0 };
+            (cell + s as f32) * scale
+        });
+        let targets = Array2::from_shape_fn((1, 3), |(_, s)| (s % 2) as f32);
+        let mut model = ModelDataset::new(inputs, targets);
+
+        let scaler = model.fit_scaler(ScalerKind::MinMax);
+        model.scale_inplace(&scaler).unwrap();
+
+        assert_eq!(model.inputs().shape(), &[2, 1, 2, 3]);
+        assert!(
+            model
+                .inputs
+                .iter()
+                .all(|&v| (0.0..=1.0 + 1e-5).contains(&v))
+        );
+        // An interior sample of feature 0 (value 1 in [0, 10]) lands at 0.1, not 0.5:
+        // the feature is normalized as a whole, not per spatial cell.
+        assert!((model.inputs[[0, 0, 0, 1]] - 0.1).abs() < 1e-5);
+        assert!((model.inputs[[0, 0, 1, 0]] - 0.8).abs() < 1e-5);
     }
 
     #[test]

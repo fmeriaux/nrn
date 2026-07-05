@@ -9,9 +9,9 @@
 
 use crate::classification::Classification;
 use crate::data::scalers::Scaler;
-use crate::model::{FeatureCountMismatch, NeuralNetwork, PredictionError, Predictor};
+use crate::model::{InputShapeMismatch, NeuralNetwork, PredictionError, Predictor};
 use crate::plot::scene::Color;
-use ndarray::{ArrayView1, ArrayView2, Axis};
+use ndarray::{Array2, ArrayView1, ArrayView2, Axis, Ix2};
 
 /// Activation magnitudes at or below this count as a silent neuron.
 const FIRING_EPSILON: f32 = 1e-6;
@@ -172,13 +172,21 @@ impl NeuralNetwork {
     /// instance, capping and pruning per `options`.
     ///
     /// # Errors
-    /// [`FeatureCountMismatch`] when `input`'s length does not match the network's input size.
+    /// [`InputShapeMismatch`] when `input`'s length does not match the network's input size.
     pub fn activation_diagram(
         &self,
         input: ArrayView1<f32>,
         options: &DiagramOptions,
-    ) -> Result<ActivationDiagram, FeatureCountMismatch> {
-        let activations = self.forward(input.insert_axis(Axis(1)))?;
+    ) -> Result<ActivationDiagram, InputShapeMismatch> {
+        let activations: Vec<Array2<f32>> = self
+            .forward(input.insert_axis(Axis(1)))?
+            .into_iter()
+            .map(|values| {
+                values
+                    .into_dimensionality::<Ix2>()
+                    .expect("the diagram visualizes rank-2 (features, samples) activations")
+            })
+            .collect();
         let last_stage = activations.len() - 1;
         let shown: Vec<Vec<usize>> = activations
             .iter()
@@ -247,7 +255,9 @@ impl Predictor {
     ) -> Result<ActivationDiagram, PredictionError> {
         let mut input = input.to_owned();
         if let Some(scaler) = &self.scaler {
-            scaler.apply_single_inplace(input.view_mut())?;
+            // Scale the lone instance: features on the leading axis, a single sample.
+            let mut expanded = input.view_mut().insert_axis(Axis(1)).into_dyn();
+            scaler.apply_inplace(expanded.view_mut())?;
         }
         Ok(self.network.activation_diagram(input.view(), options)?)
     }
@@ -682,9 +692,9 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             error,
-            PredictionError::Network(FeatureCountMismatch {
-                expected: 2,
-                found: 1
+            PredictionError::Network(InputShapeMismatch {
+                expected: vec![2],
+                found: vec![1]
             })
         );
     }

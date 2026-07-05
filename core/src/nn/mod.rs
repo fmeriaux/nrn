@@ -1,5 +1,6 @@
 pub mod accuracies;
 pub mod activations;
+pub mod affine;
 pub mod classification;
 pub mod evaluation;
 pub mod evaluation_history;

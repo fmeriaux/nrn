@@ -7,7 +7,7 @@
 use crate::activations::{Activation, SIGMOID, SOFTMAX};
 use crate::data::scalers::{Scaler, ScalerFeatureMismatch, ScalerMethod};
 use crate::layers::{Dense, Layer};
-use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
+use ndarray::{Array1, Array2, ArrayD, ArrayView, Axis, Dimension, Ix2};
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::rngs::StdRng;
 use std::fmt;
@@ -66,10 +66,10 @@ impl std::error::Error for LayerPlanError {}
 /// Returns the last activation from a vector of activations.
 /// # Panics
 /// - When the `activations` vector is empty.
-pub fn last_activation(activations: &[Array2<f32>]) -> Array2<f32> {
+pub fn last_activation(activations: &[ArrayD<f32>]) -> ArrayD<f32> {
     activations
         .last()
-        .expect("Ensure activations is not empty.")
+        .expect("forward always yields at least the input activation")
         .to_owned()
 }
 
@@ -78,7 +78,10 @@ impl NeuralNetwork {
     /// # Panics
     /// When `layers` is empty.
     pub fn new(layers: Vec<Box<dyn Layer>>) -> Self {
-        assert!(!layers.is_empty(), "a network must have at least one layer");
+        assert!(
+            !layers.is_empty(),
+            "A network must have at least one layer."
+        );
         NeuralNetwork { layers }
     }
 
@@ -89,13 +92,13 @@ impl NeuralNetwork {
 
     /// Appends a layer to the network, returning the network for chaining.
     /// # Panics
-    /// When the layer's input size does not match the current output size.
+    /// When the layer's input shape does not match the previous layer's output shape.
     pub fn with_layer(mut self, layer: impl Layer + 'static) -> Self {
         if let Some(last) = self.layers.last() {
             assert_eq!(
-                layer.input_size(),
-                last.output_size(),
-                "layer input size must match the previous layer's output size"
+                layer.input_shape(),
+                last.output_shape(),
+                "Layer input shape must match the previous layer's output shape."
             );
         }
         self.layers.push(Box::new(layer));
@@ -162,16 +165,23 @@ impl NeuralNetwork {
         if out == 1 { 2 } else { out }
     }
 
-    /// Returns a summary of the network's architecture as a string,
-    /// showing the number of neurons in each layer, including the input layer.
+    /// Returns a summary of the network's architecture as a string, showing the per-sample
+    /// input shape and each layer's output shape (with its activation, when it has one).
     pub fn summary(&self) -> String {
-        once(format!("[{}]", self.input_size()))
+        fn shape(dims: &[usize]) -> String {
+            let dims = dims.iter().map(usize::to_string).collect::<Vec<_>>();
+            format!("[{}]", dims.join(", "))
+        }
+
+        once(shape(&self.layers[0].input_shape()))
             .chain(
                 self.layers
                     .iter()
                     .map(|layer| match layer.activation_name() {
-                        Some(activation) => format!("{}-{}", layer.output_size(), activation),
-                        None => layer.output_size().to_string(),
+                        Some(activation) => {
+                            format!("{}-{}", shape(&layer.output_shape()), activation)
+                        }
+                        None => shape(&layer.output_shape()),
                     }),
             )
             .collect::<Vec<String>>()
@@ -179,21 +189,29 @@ impl NeuralNetwork {
     }
 
     /// Computes the forward pass through the network, returning the activations of each layer.
+    ///
+    /// The input is rank-agnostic: its last axis is the sample axis and its leading axes are the
+    /// per-sample features, so a dense network takes a rank-2 `(features, samples)` batch while a
+    /// spatial one (e.g. a leading `Conv2d`) takes a higher-rank `(channels, height, width, samples)`
+    /// batch. Each layer reshapes its input as it needs.
     /// # Errors
-    /// [`FeatureCountMismatch`] when the feature rows of `inputs` do not match [`Self::input_size`].
+    /// [`InputShapeMismatch`] when `inputs`' leading (feature) axes differ from the network's
+    /// input shape.
     /// # Arguments
-    /// - `inputs`: A 2D array representing the inputs to the network.
-    pub fn forward(
+    /// - `inputs`: An array whose last axis is samples and whose leading axes are the features.
+    pub fn forward<D: Dimension>(
         &self,
-        inputs: ArrayView2<f32>,
-    ) -> Result<Vec<Array2<f32>>, FeatureCountMismatch> {
-        self.validate_inputs(inputs)?;
+        inputs: ArrayView<f32, D>,
+    ) -> Result<Vec<ArrayD<f32>>, InputShapeMismatch> {
+        let inputs = inputs.into_dyn();
+        self.validate_inputs(inputs.view())?;
 
         Ok(self
             .layers
             .iter()
             .fold(vec![inputs.to_owned()], |mut acc, layer| {
-                acc.push(layer.forward(acc.last().unwrap().view()));
+                let output = layer.forward(acc.last().unwrap().view());
+                acc.push(output);
                 acc
             }))
     }
@@ -203,43 +221,45 @@ impl NeuralNetwork {
         self.layers.iter().all(|layer| layer.is_finite())
     }
 
-    /// Validates that `inputs` `(features, samples)` carry the feature count this network expects.
+    /// Validates that `inputs` carry the per-sample shape this network expects: the sample axis
+    /// is last, so the leading axes are the per-sample features and must equal the first layer's
+    /// [`input_shape`](crate::layers::Layer::input_shape).
     ///
     /// # Errors
-    /// [`FeatureCountMismatch`] when the feature rows differ from [`Self::input_size`].
-    pub fn validate_inputs(&self, inputs: ArrayView2<f32>) -> Result<(), FeatureCountMismatch> {
-        let expected = self.input_size();
-        let found = inputs.nrows();
+    /// [`InputShapeMismatch`] when the leading axes differ from the first layer's input shape.
+    pub fn validate_inputs<D: Dimension>(
+        &self,
+        inputs: ArrayView<f32, D>,
+    ) -> Result<(), InputShapeMismatch> {
+        let expected = self.layers[0].input_shape();
+        let shape = inputs.shape();
+        let found = &shape[..shape.len().saturating_sub(1)];
         (found == expected)
             .then_some(())
-            .ok_or(FeatureCountMismatch { expected, found })
+            .ok_or_else(|| InputShapeMismatch {
+                expected,
+                found: found.to_vec(),
+            })
     }
 
     /// Predicts the output of the network given the inputs, returning the final activations.
     /// # Arguments
-    /// - `inputs`: A 2D array `(features, samples)` representing the inputs to the network.
+    /// - `inputs`: An array whose last axis is samples and whose leading axes are the features
+    ///   (rank-2 `(features, samples)` for a dense network, higher-rank for a spatial one).
     /// # Errors
-    /// [`FeatureCountMismatch`] when the feature rows do not match [`Self::input_size`].
-    pub fn predict(&self, inputs: ArrayView2<f32>) -> Result<Array2<f32>, FeatureCountMismatch> {
-        let output = last_activation(&self.forward(inputs)?);
+    /// [`InputShapeMismatch`] when the leading (feature) axes differ from the network's input shape.
+    pub fn predict<D: Dimension>(
+        &self,
+        inputs: ArrayView<f32, D>,
+    ) -> Result<Array2<f32>, InputShapeMismatch> {
+        let output = last_activation(&self.forward(inputs)?)
+            .into_dimensionality::<Ix2>()
+            .expect("the output layer produces rank-2 (classes, samples) activations");
         assert!(
             output.iter().all(|v| v.is_finite()),
             "non-finite predictions (NaN or inf): the model likely diverged during training"
         );
         Ok(output)
-    }
-
-    /// Predicts the output of the network given a single input vector, returning the final activation.
-    /// # Arguments
-    /// - `input`: A 1D array representing a single input vector to the network.
-    /// # Errors
-    /// [`FeatureCountMismatch`] when `input`'s length does not match [`Self::input_size`].
-    pub fn predict_single(
-        &self,
-        input: ArrayView1<f32>,
-    ) -> Result<Array1<f32>, FeatureCountMismatch> {
-        let inputs = input.insert_axis(Axis(1));
-        Ok(self.predict(inputs)?.column(0).to_owned())
     }
 }
 
@@ -258,65 +278,73 @@ impl Predictor {
         Self { network, scaler }
     }
 
-    /// Predicts on a single raw input vector, applying the scaler first when present.
+    /// Predicts on a single raw instance of any rank (samples-last, minus the sample
+    /// axis), applying the scaler first when present.
     ///
     /// # Errors
-    /// [`PredictionError::Scaling`] when a scaler is present and the input does not match
-    /// its fitted feature count, or [`PredictionError::Network`] when it does not match the
-    /// network's input size.
-    pub fn predict_single(&self, input: ArrayView1<f32>) -> Result<Array1<f32>, PredictionError> {
-        let mut input = input.to_owned();
-        if let Some(scaler) = &self.scaler {
-            scaler.apply_single_inplace(input.view_mut())?;
-        }
-        Ok(self.network.predict_single(input.view())?)
+    /// [`PredictionError::Scaling`] when a scaler is present and the instance does not
+    /// match its fitted feature count, or [`PredictionError::Network`] when it does not
+    /// match the network's input shape.
+    pub fn predict_single<D: Dimension>(
+        &self,
+        input: ArrayView<f32, D>,
+    ) -> Result<Array1<f32>, PredictionError> {
+        let sample_axis = input.ndim();
+        let inputs = input.insert_axis(Axis(sample_axis));
+        Ok(self.predict(inputs)?.column(0).to_owned())
     }
 
-    /// Predicts on a batch of raw inputs `(features, samples)`, applying the scaler
-    /// first when present.
+    /// Predicts on a batch of raw inputs of any rank (samples on the trailing axis),
+    /// applying the scaler first when present.
     ///
     /// # Errors
     /// [`PredictionError::Scaling`] when a scaler is present and the inputs do not match
     /// its fitted feature count, or [`PredictionError::Network`] when they do not match the
-    /// network's input size.
-    pub fn predict(&self, inputs: ArrayView2<f32>) -> Result<Array2<f32>, PredictionError> {
-        let mut inputs = inputs.to_owned();
-        if let Some(scaler) = &self.scaler {
-            scaler.apply_inplace(inputs.view_mut().reversed_axes())?;
+    /// network's input shape.
+    pub fn predict<D: Dimension>(
+        &self,
+        inputs: ArrayView<f32, D>,
+    ) -> Result<Array2<f32>, PredictionError> {
+        match &self.scaler {
+            Some(scaler) => {
+                let mut owned = inputs.to_owned().into_dyn();
+                scaler.apply_inplace(owned.view_mut())?;
+                Ok(self.network.predict(owned.view())?)
+            }
+            None => Ok(self.network.predict(inputs)?),
         }
-        Ok(self.network.predict(inputs.view())?)
     }
 }
 
-/// An instance's feature count did not match the network's input size.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FeatureCountMismatch {
-    /// The number of input features the network expects.
-    pub expected: usize,
-    /// The number of features the instance carries.
-    pub found: usize,
+/// An instance's per-sample shape did not match the network's input shape.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InputShapeMismatch {
+    /// The per-sample input shape the network expects.
+    pub expected: Vec<usize>,
+    /// The per-sample shape the instance carries.
+    pub found: Vec<usize>,
 }
 
-impl fmt::Display for FeatureCountMismatch {
+impl fmt::Display for InputShapeMismatch {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "instance has {} features but the model expects {}",
+            "instance has shape {:?} but the model expects {:?}",
             self.found, self.expected
         )
     }
 }
 
-impl std::error::Error for FeatureCountMismatch {}
+impl std::error::Error for InputShapeMismatch {}
 
 /// A [`Predictor`] rejected an instance: either its scaler or its network found the
 /// wrong number of features.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PredictionError {
     /// The scaler's fitted feature count did not match the input.
     Scaling(ScalerFeatureMismatch),
-    /// The network's input size did not match the input.
-    Network(FeatureCountMismatch),
+    /// The network's input shape did not match the input.
+    Network(InputShapeMismatch),
 }
 
 impl fmt::Display for PredictionError {
@@ -336,8 +364,8 @@ impl From<ScalerFeatureMismatch> for PredictionError {
     }
 }
 
-impl From<FeatureCountMismatch> for PredictionError {
-    fn from(error: FeatureCountMismatch) -> Self {
+impl From<InputShapeMismatch> for PredictionError {
+    fn from(error: InputShapeMismatch) -> Self {
         PredictionError::Network(error)
     }
 }
@@ -491,7 +519,7 @@ impl NeuronLayerSpec {
 mod tests {
     use super::*;
     use crate::activations::{RELU, SIGMOID};
-    use ndarray::{Array1, Array2, array};
+    use ndarray::{Array, Array1, Array2, IxDyn, array};
 
     fn make_network(
         weights: Array2<f32>,
@@ -521,7 +549,179 @@ mod tests {
         assert_eq!(model.layers[0].output_size(), 4);
         assert_eq!(model.layers[1].output_size(), 3);
 
-        assert_eq!(model.summary(), "[3] -> 4-relu -> 3-softmax");
+        assert_eq!(model.summary(), "[3] -> [4]-relu -> [3]-softmax");
+    }
+
+    #[test]
+    fn summary_shows_per_sample_shapes_and_omits_the_suffix_for_a_layer_without_activation() {
+        use crate::layers::Flatten;
+
+        // Flatten (2×2×2 → 8) preserves the spatial input shape in the summary and carries
+        // no activation, so its segment is the bare output shape with no "-activation"
+        // suffix; the Dense head keeps its suffix.
+        let model =
+            NeuralNetwork::single(Flatten::new(vec![2, 2, 2])).with_layer(Dense::initialization(
+                8,
+                &NeuronLayerSpec::output_for(2),
+                &mut StdRng::seed_from_u64(0),
+            ));
+
+        assert_eq!(model.summary(), "[2, 2, 2] -> [8] -> [1]-sigmoid");
+    }
+
+    #[test]
+    fn convolutional_network_predicts_end_to_end_on_a_spatial_batch() {
+        use crate::layers::{Conv2d, Flatten};
+
+        // Conv2d (1×4×4 → 2×2×2) → Flatten (8) → Dense (1 sigmoid, binary). The rank-4
+        // spatial batch threads through forward/predict unchanged; the Flatten collapses it
+        // to the rank-2 the Dense head consumes, and predict yields (classes, samples).
+        let conv = Conv2d::initialization(
+            (1, 4, 4),
+            2,
+            (3, 3),
+            1,
+            0,
+            RELU.clone(),
+            &mut StdRng::seed_from_u64(0),
+        );
+        let head = Dense::initialization(
+            8,
+            &NeuronLayerSpec::output_for(2),
+            &mut StdRng::seed_from_u64(1),
+        );
+        let model = NeuralNetwork::single(conv)
+            .with_layer(Flatten::new(vec![2, 2, 2]))
+            .with_layer(head);
+
+        // A spatial input the dense predict path could never accept: (channels, height, width, samples).
+        let inputs = Array::from_shape_fn(IxDyn(&[1, 4, 4, 3]), |idx| {
+            ((idx[1] + idx[2] + idx[3]) as f32).sin()
+        });
+        let output = model.predict(inputs.view()).unwrap();
+        assert_eq!(output.shape(), &[1, 3]); // (classes, samples)
+        assert!(output.iter().all(|&v| (0.0..=1.0).contains(&v)));
+    }
+
+    #[test]
+    fn predictor_applies_a_per_feature_scaler_to_a_spatial_batch() {
+        use crate::data::scalers::ScalerKind;
+        use crate::layers::Flatten;
+        use ndarray::{Array4, s};
+
+        // Flatten (2×2×2 → 8) → Dense (1 sigmoid, binary): a network that accepts a
+        // rank-4 spatial batch. Two identical builds (same seed) let one go into the
+        // predictor and the other check the bare network on manually scaled inputs.
+        let network = |seed| {
+            NeuralNetwork::single(Flatten::new(vec![2, 2, 2])).with_layer(Dense::initialization(
+                8,
+                &NeuronLayerSpec::output_for(2),
+                &mut StdRng::seed_from_u64(seed),
+            ))
+        };
+
+        // (features=2, height=2, width=2, samples=4), the two features on different scales.
+        let inputs = Array4::from_shape_fn((2, 2, 2, 4), |(f, h, w, s)| {
+            (f as f32 + 1.0) * 10.0 * (h + w + s) as f32
+        });
+        let scaler = ScalerKind::MinMax.fit(inputs.view());
+        let predictor = Predictor::new(network(1), Some(scaler.clone()));
+
+        // The predictor scales the rank-4 batch per feature before the network: its
+        // output matches the bare network run on the manually scaled inputs.
+        let via_predictor = predictor.predict(inputs.view()).unwrap();
+        let mut scaled = inputs.clone().into_dyn();
+        scaler.apply_inplace(scaled.view_mut()).unwrap();
+        let via_network = network(1).predict(scaled.view()).unwrap();
+        assert_eq!(via_predictor, via_network);
+
+        // A single rank-3 instance is scaled with the same parameters, so it matches
+        // the corresponding column of the batch prediction.
+        let instance = inputs.slice(s![.., .., .., 0]).to_owned();
+        let single = predictor.predict_single(instance.view()).unwrap();
+        assert_eq!(single, via_predictor.column(0).to_owned());
+    }
+
+    #[test]
+    fn predict_surfaces_a_scaler_feature_mismatch_as_a_scaling_error() {
+        use crate::data::scalers::ScalerKind;
+        use crate::layers::Flatten;
+
+        // A scaler fitted on 2 leading-axis features, then applied to a batch with 3:
+        // the scaler's mismatch surfaces through `?` as PredictionError::Scaling.
+        let network =
+            NeuralNetwork::single(Flatten::new(vec![2, 2, 2])).with_layer(Dense::initialization(
+                8,
+                &NeuronLayerSpec::output_for(2),
+                &mut StdRng::seed_from_u64(0),
+            ));
+        let fit_batch = Array::from_shape_fn(IxDyn(&[2, 4]), |d| (d[0] + d[1]) as f32);
+        let scaler = ScalerKind::MinMax.fit(fit_batch.view());
+        let predictor = Predictor::new(network, Some(scaler));
+
+        let wrong = ArrayD::<f32>::ones(IxDyn(&[3, 2, 2, 5]));
+        let error = predictor.predict(wrong.view()).unwrap_err();
+
+        assert!(
+            matches!(error, PredictionError::Scaling(_)),
+            "unexpected error: {error}"
+        );
+        // The Scaling arm delegates its Display to the underlying scaler error.
+        assert!(error.to_string().contains("features"));
+    }
+
+    #[test]
+    fn validate_inputs_rejects_a_matching_count_but_wrong_arrangement() {
+        use crate::layers::Conv2d;
+
+        // A Conv2d-first network expects a per-sample shape of (1, 4, 4) = 16 features. A
+        // rank-2 (16, samples) batch has the right feature count but the wrong arrangement:
+        // the product check accepted it, the shape check rejects it.
+        let conv = Conv2d::initialization(
+            (1, 4, 4),
+            2,
+            (3, 3),
+            1,
+            0,
+            RELU.clone(),
+            &mut StdRng::seed_from_u64(0),
+        );
+        let model = NeuralNetwork::single(conv);
+
+        let flat = Array2::<f32>::zeros((16, 5)); // 16 features, 5 samples — right count, flat.
+        let err = model.validate_inputs(flat.view()).unwrap_err();
+        assert_eq!(err.expected, vec![1, 4, 4]);
+        assert_eq!(err.found, vec![16]);
+
+        // The correctly-shaped rank-4 batch passes.
+        let spatial = ArrayD::<f32>::zeros(IxDyn(&[1, 4, 4, 5]));
+        assert!(model.validate_inputs(spatial.view()).is_ok());
+    }
+
+    #[test]
+    #[should_panic(expected = "Layer input shape must match the previous layer's output shape")]
+    fn with_layer_rejects_rank_mismatch_at_build_time() {
+        use crate::layers::Conv2d;
+
+        // Conv2d outputs a rank-3 (out_channels, out_h, out_w) per sample; feeding it straight
+        // into a Dense (rank-1 input) without a Flatten is a shape mismatch the build rejects,
+        // even though the feature counts could line up.
+        let conv = Conv2d::initialization(
+            (1, 4, 4),
+            2,
+            (3, 3),
+            1,
+            0,
+            RELU.clone(),
+            &mut StdRng::seed_from_u64(0),
+        );
+        // Conv2d output is (2, 2, 2) = 8 features; a Dense taking 8 inputs matches on count.
+        let head = Dense::initialization(
+            8,
+            &NeuronLayerSpec::output_for(2),
+            &mut StdRng::seed_from_u64(1),
+        );
+        let _ = NeuralNetwork::single(conv).with_layer(head);
     }
 
     #[test]
@@ -590,14 +790,14 @@ mod tests {
         let activations = model.forward(inputs.view()).unwrap();
         let predicted = model.predict(inputs.view()).unwrap();
 
-        assert_eq!(predicted, *activations.last().unwrap());
+        assert_eq!(predicted.into_dyn(), *activations.last().unwrap());
     }
 
     #[test]
     #[should_panic(expected = "non-finite predictions")]
     fn predict_panics_when_model_has_diverged() {
         let mut model = make_network(Array2::zeros((1, 2)), Array1::zeros(1), SIGMOID.clone());
-        *dense_mut(&mut model, 0).weights_mut() = array![[f32::NAN, 0.0]];
+        *dense_mut(&mut model, 0).affine_mut().weights_mut() = array![[f32::NAN, 0.0]];
         let inputs = array![[1.0], [1.0]];
         let _ = model.predict(inputs.view());
     }
@@ -611,14 +811,14 @@ mod tests {
     #[test]
     fn is_finite_detects_nan_in_weights() {
         let mut model = make_network(Array2::zeros((1, 2)), Array1::zeros(1), SIGMOID.clone());
-        dense_mut(&mut model, 0).weights_mut()[[0, 0]] = f32::NAN;
+        dense_mut(&mut model, 0).affine_mut().weights_mut()[[0, 0]] = f32::NAN;
         assert!(!model.is_finite());
     }
 
     #[test]
     fn is_finite_detects_inf_in_biases() {
         let mut model = make_network(Array2::zeros((1, 2)), Array1::zeros(1), SIGMOID.clone());
-        dense_mut(&mut model, 0).biases_mut()[0] = f32::INFINITY;
+        dense_mut(&mut model, 0).affine_mut().biases_mut()[0] = f32::INFINITY;
         assert!(!model.is_finite());
     }
 
@@ -633,25 +833,6 @@ mod tests {
         let multi =
             NeuralNetwork::initialization(3, &NeuronLayerSpec::network_for(vec![4], &*RELU, 5), 0);
         assert_eq!(multi.n_classes(), 5);
-    }
-
-    #[test]
-    fn predict_single_matches_predict_on_one_sample() {
-        let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 2);
-        let model = NeuralNetwork::initialization(3, &specs, 0);
-
-        let sample = array![1.0, 2.0, 3.0];
-        let single = model.predict_single(sample.view()).unwrap();
-
-        let batch = array![[1.0], [2.0], [3.0]]; // (features, 1 sample)
-        let batch_output = model.predict(batch.view()).unwrap();
-
-        assert!(
-            (single - batch_output.column(0))
-                .mapv(f32::abs)
-                .iter()
-                .all(|&v| v < 1e-6)
-        );
     }
 
     // infer_from branches — complexity score = ln(n_features * n_classes / n_samples)

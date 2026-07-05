@@ -12,17 +12,18 @@
 //! use nrn::data::scalers::{ZScoreScaler, Scaler};
 //! use ndarray::{array, Axis};
 //!
+//! // Features on the leading axis: two features (rows), three samples (columns).
 //! let mut data = array![[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]];
 //! let scaler = ZScoreScaler::default().fit(data.view());
-//! scaler.apply_inplace(data.view_mut()).unwrap();
-//! // Each feature now has approximately zero mean
-//! let mean = data.mean_axis(Axis(0)).unwrap();
+//! scaler.apply_inplace(data.view_mut().into_dyn()).unwrap();
+//! // Each feature now has approximately zero mean over its samples
+//! let mean = data.mean_axis(Axis(1)).unwrap();
 //! assert!(mean.iter().all(|&m| m.abs() < 1e-5));
 //! ```
 //!
 
 use crate::data::scalers::{Scaler, ScalerFeatureMismatch};
-use ndarray::{Array1, ArrayView2, ArrayViewMut2, Axis};
+use ndarray::{Array1, ArrayView, ArrayViewMutD, Axis, RemoveAxis};
 /// ZScoreScaler that normalizes each feature to zero mean and unit variance.
 ///
 /// This scaler fits the mean and standard deviation per feature (column),
@@ -36,15 +37,24 @@ pub struct ZScoreScaler {
 }
 
 impl ZScoreScaler {
-    /// Fits the scaler by computing mean and standard deviation per feature,
-    /// consuming the current scaler instance and returning a new fitted instance.
+    /// Fits the scaler by computing mean and standard deviation per feature from
+    /// samples-last input of any rank, consuming the current scaler instance and
+    /// returning a new fitted instance.
+    ///
+    /// Features run along the leading axis; each is reduced over the remaining axes.
     ///
     /// # Panics
     /// This method panics if unable to compute mean (e.g., empty input).
     ///
-    pub fn fit(mut self, data: ArrayView2<f32>) -> Self {
-        self.mean = data.mean_axis(Axis(0)).expect("Unable to compute mean");
-        self.std_dev = data.std_axis(Axis(0), 0.0);
+    pub fn fit<D: RemoveAxis>(mut self, data: ArrayView<f32, D>) -> Self {
+        self.mean = data
+            .axis_iter(Axis(0))
+            .map(|feature| feature.mean().expect("unable to compute mean"))
+            .collect();
+        self.std_dev = data
+            .axis_iter(Axis(0))
+            .map(|feature| feature.std(0.0))
+            .collect();
         // To avoid division by zero, replace any zero std_dev by epsilon
         self.std_dev
             .mapv_inplace(|x| if x == 0.0 { f32::EPSILON } else { x });
@@ -71,22 +81,22 @@ impl Scaler for ZScoreScaler {
     ///
     /// # Arguments
     ///
-    /// * `data` - Mutable 2D array view whose features will be normalized.
+    /// * `inputs` - Mutable samples-last array to normalize, features on the leading axis.
     ///
     /// # Errors
     ///
-    /// [`ScalerFeatureMismatch`] when the input's feature columns do not match the scaler.
-    fn apply_inplace(&self, mut data: ArrayViewMut2<f32>) -> Result<(), ScalerFeatureMismatch> {
-        let (expected, found) = (self.mean.len(), data.shape()[1]);
+    /// [`ScalerFeatureMismatch`] when the leading axis of `inputs` does not match the scaler.
+    fn apply_inplace(&self, mut inputs: ArrayViewMutD<f32>) -> Result<(), ScalerFeatureMismatch> {
+        let (expected, found) = (self.mean.len(), inputs.shape()[0]);
         (found == expected)
             .then_some(())
             .ok_or(ScalerFeatureMismatch { expected, found })?;
 
-        for (mut col, (&mean, &std)) in data
-            .axis_iter_mut(Axis(1))
+        for (mut feature, (&mean, &std)) in inputs
+            .axis_iter_mut(Axis(0))
             .zip(self.mean.iter().zip(self.std_dev.iter()))
         {
-            for v in col.iter_mut() {
+            for v in feature.iter_mut() {
                 *v = (*v - mean) / std;
             }
         }
@@ -101,7 +111,8 @@ mod tests {
 
     #[test]
     fn fit_computes_mean_per_feature() {
-        let data = array![[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]];
+        // Two features (rows): [1, 3, 5] and [2, 4, 6].
+        let data = array![[1.0, 3.0, 5.0], [2.0, 4.0, 6.0]];
         let scaler = ZScoreScaler::default().fit(data.view());
         assert!((scaler.mean[0] - 3.0).abs() < 1e-5); // mean de [1, 3, 5]
         assert!((scaler.mean[1] - 4.0).abs() < 1e-5); // mean de [2, 4, 6]
@@ -109,32 +120,29 @@ mod tests {
 
     #[test]
     fn apply_rejects_feature_count_mismatch() {
-        // Fitted on 2 features, applied to 3-column data → error, not a panic.
+        // Fitted on 2 features, applied to inputs with 3 on the leading axis → error.
         let scaler = ZScoreScaler::default().fit(array![[1.0, 2.0], [3.0, 4.0]].view());
-        let mut wrong = array![[0.0, 0.0, 0.0]];
-        let error = scaler.apply_inplace(wrong.view_mut()).unwrap_err();
+        let mut wrong = array![[0.0], [0.0], [0.0]];
+        let error = scaler
+            .apply_inplace(wrong.view_mut().into_dyn())
+            .unwrap_err();
         assert_eq!((error.expected, error.found), (2, 3));
     }
 
     #[test]
     fn scaled_data_has_zero_mean_and_unit_variance() {
-        let data = array![
-            [1.0, 10.0],
-            [2.0, 20.0],
-            [3.0, 30.0],
-            [4.0, 40.0],
-            [5.0, 50.0]
-        ];
+        // Two features (rows), five samples each (columns).
+        let data = array![[1.0, 2.0, 3.0, 4.0, 5.0], [10.0, 20.0, 30.0, 40.0, 50.0]];
         let scaler = ZScoreScaler::default().fit(data.view());
         let mut scaled = data.clone();
-        scaler.apply_inplace(scaled.view_mut()).unwrap();
+        scaler.apply_inplace(scaled.view_mut().into_dyn()).unwrap();
 
-        let mean = scaled.mean_axis(Axis(0)).unwrap();
+        let mean = scaled.mean_axis(Axis(1)).unwrap();
         for &m in mean.iter() {
             assert!(m.abs() < 1e-5, "Mean {} not close to 0", m);
         }
 
-        let std = scaled.std_axis(Axis(0), 0.0);
+        let std = scaled.std_axis(Axis(1), 0.0);
         for &s in std.iter() {
             assert!((s - 1.0).abs() < 1e-5, "Std {} not close to 1", s);
         }
@@ -142,21 +150,21 @@ mod tests {
 
     #[test]
     fn known_values_transform_correctly() {
-        // [0, 2] → mean=1, std_population=1 → [-1, 1]
-        let data = array![[0.0], [2.0]];
+        // One feature [0, 2] → mean=1, std_population=1 → [-1, 1]
+        let data = array![[0.0, 2.0]];
         let scaler = ZScoreScaler::default().fit(data.view());
         let mut scaled = data.clone();
-        scaler.apply_inplace(scaled.view_mut()).unwrap();
+        scaler.apply_inplace(scaled.view_mut().into_dyn()).unwrap();
         assert!((scaled[[0, 0]] - (-1.0)).abs() < 1e-5);
-        assert!((scaled[[1, 0]] - 1.0).abs() < 1e-5);
+        assert!((scaled[[0, 1]] - 1.0).abs() < 1e-5);
     }
 
     #[test]
     fn constant_feature_does_not_panic() {
-        // First feature is constant — std would be zero without epsilon guard
-        let data = array![[5.0, 1.0], [5.0, 2.0], [5.0, 3.0]];
+        // First feature (row) is constant — std would be zero without epsilon guard.
+        let data = array![[5.0, 5.0, 5.0], [1.0, 2.0, 3.0]];
         let scaler = ZScoreScaler::default().fit(data.view());
         let mut scaled = data.clone();
-        scaler.apply_inplace(scaled.view_mut()).unwrap();
+        scaler.apply_inplace(scaled.view_mut().into_dyn()).unwrap();
     }
 }

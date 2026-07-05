@@ -21,12 +21,6 @@ impl CrossEntropyLoss {
     /// and the upper clamp a no-op. A saturated sigmoid output of exactly `1.0` would
     /// then drive the binary-CE gradient's `p(1 − p)` denominator to zero — `NaN`/`inf`.
     pub(crate) const PROBABILITY_EPSILON: f32 = 1e-7;
-
-    /// Clips the predicted probabilities so that they lie within a safe numerical range
-    /// to prevent invalid logarithms during loss computation.
-    pub(crate) fn clip_probabilities(probabilities: &ArrayView2<f32>) -> Array2<f32> {
-        probabilities.mapv(|p| p.clamp(Self::PROBABILITY_EPSILON, 1.0 - Self::PROBABILITY_EPSILON))
-    }
 }
 
 impl LossFunction for CrossEntropyLoss {
@@ -43,7 +37,7 @@ impl LossFunction for CrossEntropyLoss {
     /// # Returns
     /// Average loss over the batch.
     fn compute(&self, predictions: ArrayView2<f32>, targets: ArrayView2<f32>) -> f32 {
-        let clipped = Self::clip_probabilities(&predictions);
+        let clipped = self.stabilize(predictions);
         let n_samples = predictions.ncols() as f32;
         let log_p = clipped.mapv(|p| p.ln());
 
@@ -59,9 +53,10 @@ impl LossFunction for CrossEntropyLoss {
 
     /// Computes ∂L/∂a — the gradient of the loss with respect to the predicted probabilities.
     ///
-    /// Expects `predictions` to be clipped to a safe interior of (0, 1) by the caller;
-    /// no clipping is applied here so that the caller can pass identical values to the
-    /// activation's `vjp`, ensuring exact compositional cancellation.
+    /// Expects `predictions` to be clipped to a safe interior of (0, 1) by the caller
+    /// (via [`stabilize`](LossFunction::stabilize)); no clipping is applied here so that
+    /// the caller can pass identical values to the activation's `vjp`, ensuring exact
+    /// compositional cancellation.
     ///
     /// # Arguments
     /// * `predictions` - Same as in `compute`.
@@ -80,6 +75,12 @@ impl LossFunction for CrossEntropyLoss {
             // Multi-class CE: ∂L/∂p_i = -y_i / p_i
             -targets.to_owned() / predictions.to_owned()
         }
+    }
+
+    /// Clips the predicted probabilities into the open interval `(0, 1)` so that `ln(p)`
+    /// stays finite and the binary gradient's `p(1 − p)` denominator never reaches zero.
+    fn stabilize(&self, predictions: ArrayView2<f32>) -> Array2<f32> {
+        predictions.mapv(|p| p.clamp(Self::PROBABILITY_EPSILON, 1.0 - Self::PROBABILITY_EPSILON))
     }
 }
 
@@ -101,7 +102,7 @@ mod tests {
     #[test]
     fn clip_keeps_saturated_probabilities_off_the_open_ends() {
         // Regression: a saturated 0.0/1.0 must land strictly inside (0, 1).
-        let clipped = CrossEntropyLoss::clip_probabilities(&array![[0.0, 1.0]].view());
+        let clipped = CrossEntropyLoss.stabilize(array![[0.0, 1.0]].view());
         assert!(clipped.iter().all(|&p| p > 0.0 && p < 1.0), "{clipped:?}");
     }
 
@@ -114,7 +115,7 @@ mod tests {
         assert!(loss.is_finite() && loss >= 0.0, "loss = {loss}");
 
         // gradient() expects pre-clipped inputs, mirroring the backward pass.
-        let safe = CrossEntropyLoss::clip_probabilities(&predictions.view());
+        let safe = CrossEntropyLoss.stabilize(predictions.view());
         let grad = CrossEntropyLoss.gradient(safe.view(), targets.view());
         assert!(grad.iter().all(|v| v.is_finite()), "grad = {grad:?}");
     }

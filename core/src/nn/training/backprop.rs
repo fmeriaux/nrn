@@ -1,10 +1,10 @@
 use crate::data::ModelDataset;
 use crate::gradients::{GradientClipping, LayerGradients};
-use crate::loss_functions::{CrossEntropyLoss, LossFunction};
-use crate::model::{FeatureCountMismatch, NeuralNetwork, last_activation};
+use crate::loss_functions::LossFunction;
+use crate::model::{InputShapeMismatch, NeuralNetwork, last_activation};
 use crate::optimizers::Optimizer;
 use crate::schedulers::Scheduler;
-use ndarray::{Array2, ArrayView2};
+use ndarray::{ArrayD, ArrayView2, Ix2};
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::rngs::StdRng;
 use std::sync::Arc;
@@ -38,7 +38,7 @@ impl MiniBatch {
 impl NeuralNetwork {
     /// Trains the network for one epoch using the provided dataset.
     /// # Errors
-    /// [`FeatureCountMismatch`] when the dataset's feature rows do not match [`Self::input_size`].
+    /// [`InputShapeMismatch`] when the dataset's feature rows do not match [`Self::input_size`].
     /// # Arguments
     /// - `dataset`: The dataset containing inputs and targets for training.
     /// - `loss_function`: The loss function to use for computing the loss and its gradient.
@@ -55,7 +55,7 @@ impl NeuralNetwork {
         scheduler: &mut dyn Scheduler,
         clipping: &GradientClipping,
         mini_batch: Option<MiniBatch>,
-    ) -> Result<(), FeatureCountMismatch> {
+    ) -> Result<(), InputShapeMismatch> {
         // Scheduler steps once per epoch regardless of batch size
         let lr = scheduler.step();
         optimizer.set_learning_rate(lr);
@@ -97,7 +97,7 @@ impl NeuralNetwork {
     /// - `clipping`: The gradient clipping strategy to apply during training.
     fn update_parameters(
         &mut self,
-        activations: &[Array2<f32>],
+        activations: &[ArrayD<f32>],
         targets: ArrayView2<f32>,
         loss_function: &Arc<dyn LossFunction>,
         optimizer: &mut dyn Optimizer,
@@ -126,16 +126,18 @@ impl NeuralNetwork {
     /// - `targets`: A 2D array representing the true labels for the inputs.
     fn backward(
         &self,
-        activations: &[Array2<f32>],
+        activations: &[ArrayD<f32>],
         targets: ArrayView2<f32>,
         loss_function: &Arc<dyn LossFunction>,
     ) -> Vec<LayerGradients> {
-        let last_act = last_activation(activations);
-        // Clip to (0, 1) interior so gradient() and vjp() see the same values;
+        let last_act = last_activation(activations)
+            .into_dimensionality::<Ix2>()
+            .expect("the output layer produces rank-2 (classes, samples) activations");
+        // Project into the loss's safe domain so gradient() and vjp() see the same values;
         // their product then cancels exactly to p − y even near saturation.
-        let safe_act = CrossEntropyLoss::clip_probabilities(&last_act.view());
+        let safe_act = loss_function.stabilize(last_act.view());
         // dL/d(output) handed to the output layer.
-        let mut da = loss_function.gradient(safe_act.view(), targets);
+        let mut da = loss_function.gradient(safe_act.view(), targets).into_dyn();
 
         let layers = self.layers();
         let mut gradients = Vec::with_capacity(layers.len());
@@ -144,7 +146,7 @@ impl NeuralNetwork {
         for i in (0..layers.len()).rev() {
             let input = activations[i].view();
             let output = if i == last {
-                safe_act.view()
+                safe_act.view().into_dyn()
             } else {
                 activations[i + 1].view()
             };
@@ -174,7 +176,7 @@ mod tests {
     use crate::optimizers::StochasticGradientDescent;
     use crate::schedulers::ConstantScheduler;
     use crate::weight_decay::WeightDecay;
-    use ndarray::{Array1, array};
+    use ndarray::{Array1, Array2, array};
 
     /// Downcasts a network's layer to the concrete [`Dense`] to read its weights and biases.
     fn dense(model: &NeuralNetwork, index: usize) -> &Dense {
@@ -211,10 +213,10 @@ mod tests {
         let mut model = NeuralNetwork::initialization(2, &specs, 0);
 
         // Fixed weights for reproducibility
-        *dense_mut(&mut model, 0).weights_mut() = array![[0.1, -0.2], [0.3, 0.1]];
-        *dense_mut(&mut model, 0).biases_mut() = Array1::from_vec(vec![0.05, -0.05]);
-        *dense_mut(&mut model, 1).weights_mut() = array![[0.4, -0.1]];
-        *dense_mut(&mut model, 1).biases_mut() = Array1::from_vec(vec![0.1]);
+        *dense_mut(&mut model, 0).affine_mut().weights_mut() = array![[0.1, -0.2], [0.3, 0.1]];
+        *dense_mut(&mut model, 0).affine_mut().biases_mut() = Array1::from_vec(vec![0.05, -0.05]);
+        *dense_mut(&mut model, 1).affine_mut().weights_mut() = array![[0.4, -0.1]];
+        *dense_mut(&mut model, 1).affine_mut().biases_mut() = Array1::from_vec(vec![0.1]);
 
         let inputs = array![[0.5, -0.3, 0.8], [0.2, 0.7, -0.5]]; // (2 features, 3 samples)
         let targets = array![[1.0, 0.0, 1.0]]; // (1 output, 3 samples)
@@ -244,9 +246,11 @@ mod tests {
             for i in 0..rows {
                 for j in 0..cols {
                     let mut m_plus = model.clone();
-                    dense_mut(&mut m_plus, layer_idx).weights_mut()[[i, j]] += eps;
+                    dense_mut(&mut m_plus, layer_idx).affine_mut().weights_mut()[[i, j]] += eps;
                     let mut m_minus = model.clone();
-                    dense_mut(&mut m_minus, layer_idx).weights_mut()[[i, j]] -= eps;
+                    dense_mut(&mut m_minus, layer_idx)
+                        .affine_mut()
+                        .weights_mut()[[i, j]] -= eps;
                     let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
                         - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
                         / (2.0 * eps);
@@ -260,9 +264,9 @@ mod tests {
 
             for i in 0..dense(&model, layer_idx).biases().len() {
                 let mut m_plus = model.clone();
-                dense_mut(&mut m_plus, layer_idx).biases_mut()[i] += eps;
+                dense_mut(&mut m_plus, layer_idx).affine_mut().biases_mut()[i] += eps;
                 let mut m_minus = model.clone();
-                dense_mut(&mut m_minus, layer_idx).biases_mut()[i] -= eps;
+                dense_mut(&mut m_minus, layer_idx).affine_mut().biases_mut()[i] -= eps;
                 let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
                     - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
                     / (2.0 * eps);
@@ -285,8 +289,10 @@ mod tests {
         let specs = NeuronLayerSpec::network_for(vec![], &*SIGMOID, 3);
         let mut model = NeuralNetwork::initialization(2, &specs, 0);
 
-        *dense_mut(&mut model, 0).weights_mut() = array![[0.5, -0.3], [0.2, 0.8], [-0.4, 0.1]];
-        *dense_mut(&mut model, 0).biases_mut() = Array1::from_vec(vec![0.1, -0.2, 0.1]);
+        *dense_mut(&mut model, 0).affine_mut().weights_mut() =
+            array![[0.5, -0.3], [0.2, 0.8], [-0.4, 0.1]];
+        *dense_mut(&mut model, 0).affine_mut().biases_mut() =
+            Array1::from_vec(vec![0.1, -0.2, 0.1]);
 
         // 4 samples across 3 classes
         let inputs = array![[1.0, -1.0, 0.5, -0.5], [0.5, 0.5, -0.5, -0.5]];
@@ -317,9 +323,11 @@ mod tests {
             for i in 0..rows {
                 for j in 0..cols {
                     let mut m_plus = model.clone();
-                    dense_mut(&mut m_plus, layer_idx).weights_mut()[[i, j]] += eps;
+                    dense_mut(&mut m_plus, layer_idx).affine_mut().weights_mut()[[i, j]] += eps;
                     let mut m_minus = model.clone();
-                    dense_mut(&mut m_minus, layer_idx).weights_mut()[[i, j]] -= eps;
+                    dense_mut(&mut m_minus, layer_idx)
+                        .affine_mut()
+                        .weights_mut()[[i, j]] -= eps;
                     let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
                         - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
                         / (2.0 * eps);
@@ -332,9 +340,9 @@ mod tests {
             }
             for i in 0..dense(&model, layer_idx).biases().len() {
                 let mut m_plus = model.clone();
-                dense_mut(&mut m_plus, layer_idx).biases_mut()[i] += eps;
+                dense_mut(&mut m_plus, layer_idx).affine_mut().biases_mut()[i] += eps;
                 let mut m_minus = model.clone();
-                dense_mut(&mut m_minus, layer_idx).biases_mut()[i] -= eps;
+                dense_mut(&mut m_minus, layer_idx).affine_mut().biases_mut()[i] -= eps;
                 let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
                     - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
                     / (2.0 * eps);
@@ -355,8 +363,8 @@ mod tests {
         let mut model = NeuralNetwork::initialization(2, &specs, 0);
 
         // Large weights so the single sample's logit saturates the sigmoid.
-        *dense_mut(&mut model, 0).weights_mut() = array![[100.0, 100.0]];
-        *dense_mut(&mut model, 0).biases_mut() = Array1::from_vec(vec![0.0]);
+        *dense_mut(&mut model, 0).affine_mut().weights_mut() = array![[100.0, 100.0]];
+        *dense_mut(&mut model, 0).affine_mut().biases_mut() = Array1::from_vec(vec![0.0]);
 
         let inputs = array![[1.0, -1.0], [1.0, -1.0]]; // logits +200 / -200 → 1.0 / 0.0
         let targets = array![[1.0, 0.0]];
@@ -364,7 +372,7 @@ mod tests {
         let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
         let activations = model.forward(inputs.view()).unwrap();
         // The forward output is genuinely saturated, so this exercises the clamp.
-        assert_eq!(last_activation(&activations), array![[1.0, 0.0]]);
+        assert_eq!(last_activation(&activations), array![[1.0, 0.0]].into_dyn());
 
         let grads = model.backward(&activations, targets.view(), &loss_fn);
         for g in &grads {
@@ -376,6 +384,166 @@ mod tests {
                 g.0
             );
         }
+    }
+
+    #[test]
+    fn backward_stabilizes_through_the_plugged_in_loss_not_cross_entropy() {
+        // Regression: backward() must project the output activation through the *plugged-in*
+        // loss's stabilize(), not a hardcoded cross-entropy clamp. A loss that keeps the
+        // default (identity) stabilize() must therefore see the raw activations — here the
+        // saturated 1.0/0.0 that cross-entropy would have clamped into (ε, 1 - ε).
+        use std::sync::Mutex;
+
+        struct RawSpyLoss {
+            seen: Mutex<Option<Array2<f32>>>,
+        }
+
+        impl LossFunction for RawSpyLoss {
+            fn name(&self) -> &'static str {
+                "RawSpy"
+            }
+            fn compute(&self, _predictions: ArrayView2<f32>, _targets: ArrayView2<f32>) -> f32 {
+                0.0
+            }
+            fn gradient(
+                &self,
+                predictions: ArrayView2<f32>,
+                _targets: ArrayView2<f32>,
+            ) -> Array2<f32> {
+                *self.seen.lock().unwrap() = Some(predictions.to_owned());
+                Array2::zeros(predictions.raw_dim())
+            }
+            // stabilize() left as the trait default (identity).
+        }
+
+        let specs = NeuronLayerSpec::network_for(vec![], &*SIGMOID, 2);
+        let mut model = NeuralNetwork::initialization(2, &specs, 0);
+        *dense_mut(&mut model, 0).affine_mut().weights_mut() = array![[100.0, 100.0]];
+        *dense_mut(&mut model, 0).affine_mut().biases_mut() = Array1::from_vec(vec![0.0]);
+        let inputs = array![[1.0, -1.0], [1.0, -1.0]]; // logits +200 / -200 → 1.0 / 0.0
+        let targets = array![[1.0, 0.0]];
+
+        let activations = model.forward(inputs.view()).unwrap();
+        assert_eq!(last_activation(&activations), array![[1.0, 0.0]].into_dyn());
+
+        let spy = Arc::new(RawSpyLoss {
+            seen: Mutex::new(None),
+        });
+        let loss_fn: Arc<dyn LossFunction> = spy.clone();
+        let _ = model.backward(&activations, targets.view(), &loss_fn);
+
+        let seen = spy
+            .seen
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("gradient was called");
+        assert_eq!(
+            seen,
+            array![[1.0, 0.0]],
+            "backward must feed the loss's own stabilize() output to gradient(), not a clamp"
+        );
+    }
+
+    #[test]
+    fn flatten_layer_threads_through_training_without_parameters() {
+        use crate::layers::Flatten;
+
+        // A parameterless Flatten as the first layer (rank-2 in, rank-2 out here, so a
+        // no-op reshape) must thread through forward, backprop, and the optimizer: the
+        // optimizer skips its empty parameter list while the Dense head still learns.
+        let head = Dense::initialization(
+            4,
+            &NeuronLayerSpec::output_for(2),
+            &mut StdRng::seed_from_u64(1),
+        );
+        let mut model = NeuralNetwork::new(vec![Box::new(Flatten::new(vec![4])), Box::new(head)]);
+
+        let before = dense(&model, 1).weights().to_owned();
+
+        let inputs = Array2::from_shape_fn((4, 12), |(r, c)| ((r + c) as f32).cos());
+        let mut targets = Array2::zeros((1, 12));
+        for c in 0..12 {
+            targets[[0, c]] = (c % 2) as f32;
+        }
+        let dataset = ModelDataset::new(inputs, targets);
+
+        let loss: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
+        let lr = LearningRate::new(0.1).unwrap();
+        let mut optimizer = StochasticGradientDescent::new(lr, WeightDecay::ZERO);
+        let mut scheduler = ConstantScheduler::new(lr);
+
+        model
+            .train(
+                &dataset,
+                &loss,
+                &mut optimizer as &mut dyn Optimizer,
+                &mut scheduler as &mut dyn Scheduler,
+                &GradientClipping::None,
+                None,
+            )
+            .unwrap();
+
+        let after = dense(&model, 1).weights().to_owned();
+        assert_ne!(before, after, "the Dense head should have learned");
+    }
+
+    #[test]
+    fn training_a_convolutional_network_decreases_the_loss() {
+        use crate::activations::Activation;
+        use crate::layers::{Conv2d, Flatten};
+        use ndarray::Array4;
+
+        // Conv2d(1×4×4 → 2×2×2) → Flatten(8) → Dense(8 → 1, sigmoid binary): a spatial
+        // stack trained end-to-end from a rank-4 samples-last dataset.
+        let mut rng = StdRng::seed_from_u64(0);
+        let sigmoid: Arc<dyn Activation> = SIGMOID.clone();
+        let conv = Conv2d::initialization((1, 4, 4), 2, (3, 3), 1, 0, sigmoid, &mut rng);
+        let flatten = Flatten::new(vec![2, 2, 2]);
+        let head = Dense::initialization(8, &NeuronLayerSpec::output_for(2), &mut rng);
+        let mut model = NeuralNetwork::single(conv)
+            .with_layer(flatten)
+            .with_layer(head);
+
+        // Two linearly separable clusters: the first half bright (label 1), the rest
+        // dark (label 0), so the loss has a clear direction to fall in.
+        let n = 16;
+        let inputs = Array4::from_shape_fn((1, 4, 4, n), |(_, h, w, s)| {
+            let sign = if s < n / 2 { 1.0 } else { -1.0 };
+            sign * (0.5 + 0.1 * ((h + w) as f32).cos())
+        });
+        let targets = Array2::from_shape_fn((1, n), |(_, s)| if s < n / 2 { 1.0 } else { 0.0 });
+        let dataset = ModelDataset::new(inputs.clone(), targets.clone());
+
+        let loss: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
+        let loss_now = |model: &NeuralNetwork| {
+            let pred = model.predict(inputs.view()).unwrap();
+            loss.compute(pred.view(), targets.view())
+        };
+
+        let initial = loss_now(&model);
+
+        let lr = LearningRate::new(0.5).unwrap();
+        let mut optimizer = StochasticGradientDescent::new(lr, WeightDecay::ZERO);
+        let mut scheduler = ConstantScheduler::new(lr);
+        for _ in 0..100 {
+            model
+                .train(
+                    &dataset,
+                    &loss,
+                    &mut optimizer as &mut dyn Optimizer,
+                    &mut scheduler as &mut dyn Scheduler,
+                    &GradientClipping::None,
+                    None,
+                )
+                .unwrap();
+        }
+
+        let final_loss = loss_now(&model);
+        assert!(
+            final_loss < initial,
+            "training a CNN should decrease the loss: initial={initial:.6}, final={final_loss:.6}"
+        );
     }
 
     #[test]

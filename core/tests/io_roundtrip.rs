@@ -65,8 +65,10 @@ fn full_pipeline_roundtrips_through_safetensors() {
     assert_eq!(dataset.labels(), loaded.labels());
 
     // --- Scaler (serialized as JSON, not safetensors) -------------------
-    let scaler = ScalerMethod::MinMax(MinMaxScaler::default().fit(dataset.features().view()));
-    let mut expected = dataset.features().clone();
+    // Scalers work on the model dataset's samples-last inputs (features leading).
+    let model_dataset = dataset.to_model_dataset();
+    let scaler = ScalerMethod::MinMax(MinMaxScaler::default().fit(model_dataset.inputs().view()));
+    let mut expected = model_dataset.inputs().clone();
     scaler.apply_inplace(expected.view_mut()).unwrap();
 
     let scaler_path = dir.join("scaler");
@@ -74,12 +76,11 @@ fn full_pipeline_roundtrips_through_safetensors() {
     record.save(&scaler_path).unwrap();
     let reloaded_scaler: ScalerMethod = ScalerRecord::load(&scaler_path).unwrap().into();
 
-    let mut actual = dataset.features().clone();
+    let mut actual = model_dataset.inputs().clone();
     reloaded_scaler.apply_inplace(actual.view_mut()).unwrap();
     assert_eq!(expected, actual);
 
     // --- Model + training run (incremental writer → directory load) --
-    let model_dataset = dataset.to_model_dataset();
     let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![4]), 2, &*RELU).unwrap();
     let mut model = NeuralNetwork::initialization(2, &specs, 0);
 

@@ -1,7 +1,7 @@
-use crate::activations::ActivationProvider;
 use crate::io::tensors::{self, F32Tensor};
-use crate::layers::{Dense, Layer};
+use crate::layers::{Layer, LayerKind};
 use crate::model::NeuralNetwork;
+use ndarray::ArrayD;
 use safetensors::SafeTensors;
 use std::collections::HashMap;
 use std::io::ErrorKind::InvalidData;
@@ -18,9 +18,9 @@ impl NeuralNetwork {
         metadata.insert("n_layers".to_string(), self.layers().len().to_string());
 
         for (i, layer) in self.layers().iter().enumerate() {
-            metadata.insert(format!("layer{i}.kind"), layer.kind().to_string());
-            if let Some(activation) = layer.activation_name() {
-                metadata.insert(format!("layer{i}.activation"), activation.to_string());
+            metadata.insert(format!("layer{i}.kind"), layer.kind().as_str().to_string());
+            for (key, value) in layer.config() {
+                metadata.insert(format!("layer{i}.{key}"), value);
             }
             for (name, tensor) in layer.named_tensors() {
                 entries.push((format!("layer{i}.{name}"), tensors::tensor(&tensor)));
@@ -41,16 +41,14 @@ impl NeuralNetwork {
         let mut layers: Vec<Box<dyn Layer>> = Vec::with_capacity(n_layers);
 
         for i in 0..n_layers {
-            let kind = tensors::meta(metadata, &format!("layer{i}.kind"))?;
-            let layer = match kind {
-                "dense" => dense_from_tensors(i, st, metadata)?,
-                other => {
-                    return Err(Error::new(
-                        InvalidData,
-                        format!("Unknown layer kind: {other}"),
-                    ));
-                }
-            };
+            let prefix = format!("layer{i}.");
+            let kind = LayerKind::try_from(tensors::meta(metadata, &format!("{prefix}kind"))?)
+                .map_err(|e| Error::new(InvalidData, e.to_string()))?;
+            let config = layer_config(metadata, &prefix);
+            let tensors = read_layer_tensors(st, &prefix)?;
+            let layer = kind
+                .instantiate(&config, tensors)
+                .map_err(|e| Error::new(InvalidData, e.to_string()))?;
             layers.push(layer);
         }
 
@@ -79,24 +77,30 @@ impl NeuralNetwork {
     }
 }
 
-/// Reconstructs a [`Dense`] layer at index `i` from its weights, biases, and activation name.
-fn dense_from_tensors(
-    i: usize,
-    st: &SafeTensors,
-    metadata: &HashMap<String, String>,
-) -> Result<Box<dyn Layer>> {
-    let weights = tensors::read_array2(&format!("layer{i}.weights"), st)?;
-    let biases = tensors::read_array1(&format!("layer{i}.biases"), st)?;
+/// Collects one layer's configuration from the metadata map, stripping the `layer{i}.`
+/// prefix from each key.
+fn layer_config(metadata: &HashMap<String, String>, prefix: &str) -> HashMap<String, String> {
+    metadata
+        .iter()
+        .filter_map(|(key, value)| {
+            key.strip_prefix(prefix)
+                .map(|k| (k.to_string(), value.clone()))
+        })
+        .collect()
+}
 
-    let activation_name = tensors::meta(metadata, &format!("layer{i}.activation"))?;
-    let activation = ActivationProvider::get_by_name(activation_name).ok_or_else(|| {
-        Error::new(
-            InvalidData,
-            format!("Unknown activation function: {activation_name}"),
-        )
-    })?;
-
-    Ok(Box::new(Dense::new(weights, biases, activation)))
+/// Reads one layer's tensors from the buffer, stripping the `layer{i}.` prefix from each name.
+fn read_layer_tensors(st: &SafeTensors, prefix: &str) -> Result<HashMap<String, ArrayD<f32>>> {
+    let mut tensors = HashMap::new();
+    for name in st.names() {
+        if let Some(key) = name.strip_prefix(prefix) {
+            let view = st
+                .tensor(name)
+                .map_err(|e| Error::new(InvalidData, e.to_string()))?;
+            tensors.insert(key.to_string(), tensors::read_arrayd(&view)?);
+        }
+    }
+    Ok(tensors)
 }
 
 #[cfg(test)]
@@ -123,6 +127,46 @@ mod tests {
         let predictions_before = model.predict(inputs.view());
 
         let path = temp_path("model");
+        model.save(&path).unwrap();
+
+        let loaded = NeuralNetwork::load(&path).unwrap();
+        let predictions_after = loaded.predict(inputs.view());
+
+        cleanup(&path);
+
+        assert_eq!(predictions_before, predictions_after);
+    }
+
+    #[test]
+    fn cnn_save_load_roundtrip_predictions_are_identical() {
+        use crate::activations::{RELU, SIGMOID};
+        use crate::layers::{Conv2d, Dense, Flatten, Layer};
+        use ndarray::{Array, IxDyn};
+        use ndarray_rand::rand::SeedableRng;
+        use ndarray_rand::rand::rngs::StdRng;
+
+        // A full CNN: Conv2d → Flatten → Dense, exercising every layer kind through io.
+        let mut rng = StdRng::seed_from_u64(3);
+        let conv = Conv2d::initialization((1, 4, 4), 2, (3, 3), 1, 0, RELU.clone(), &mut rng);
+        let flatten = Flatten::new(conv.output_shape());
+        let dense = Dense::initialization(
+            flatten.output_size(),
+            &NeuronLayerSpec {
+                neurons: 1,
+                activation: SIGMOID.clone(),
+            },
+            &mut rng,
+        );
+        let model = NeuralNetwork::single(conv)
+            .with_layer(flatten)
+            .with_layer(dense);
+
+        let inputs = Array::from_shape_fn(IxDyn(&[1, 4, 4, 5]), |d| {
+            (d[1] * 4 + d[2]) as f32 * 0.1 + d[3] as f32
+        });
+        let predictions_before = model.predict(inputs.view());
+
+        let path = temp_path("cnn_model");
         model.save(&path).unwrap();
 
         let loaded = NeuralNetwork::load(&path).unwrap();
@@ -164,7 +208,7 @@ mod tests {
         cleanup(&path);
 
         let message = result.err().map(|e| e.to_string()).unwrap_or_default();
-        assert!(message.contains("Unknown activation"), "got: {message}");
+        assert!(message.contains("unknown activation"), "got: {message}");
     }
 
     #[test]

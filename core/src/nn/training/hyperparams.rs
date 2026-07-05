@@ -7,7 +7,7 @@ use crate::data::scalers::{ScalerFeatureMismatch, ScalerKind, ScalerMethod};
 use crate::gradients::{GradientClipping, GradientClippingError};
 use crate::learning_rate::{LearningRate, LearningRateError};
 use crate::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
-use crate::model::{FeatureCountMismatch, NeuralNetwork};
+use crate::model::{InputShapeMismatch, NeuralNetwork};
 use crate::optimizers::{Adam, Optimizer, StochasticGradientDescent};
 use crate::schedulers::{
     ConstantScheduler, CosineAnnealing, CosineAnnealingError, Scheduler, StepDecay, StepDecayError,
@@ -441,7 +441,7 @@ impl HyperParameters {
     /// [`Trainer::restore`](crate::training::Trainer::restore) on the result.
     ///
     /// # Errors
-    /// [`FeatureCountMismatch`] when `model`'s input size does not match the dataset's
+    /// [`InputShapeMismatch`] when `model`'s input size does not match the dataset's
     /// feature count. The two are supplied separately (e.g. resuming a run with a fresh
     /// dataset), so this is the one place their compatibility is checked; once past it,
     /// every forward pass over the split is guaranteed to fit.
@@ -450,7 +450,7 @@ impl HyperParameters {
         model: NeuralNetwork,
         data: TrainingData,
         callbacks: Callbacks,
-    ) -> Result<Trainer, FeatureCountMismatch> {
+    ) -> Result<Trainer, InputShapeMismatch> {
         model.validate_inputs(data.split.train.inputs().view())?;
 
         let optimizer = self.optimizer.instantiate(self.lr, self.weight_decay);
@@ -782,10 +782,11 @@ mod tests {
         use crate::data::scalers::MinMaxScaler;
         use ndarray::array;
 
-        // A scaler fitted on a far wider range than the data; reused verbatim it
-        // keeps every input well below 0.5 (refitting on the train split would not).
+        // A scaler fitted on a far wider range than the data (features on rows); reused
+        // verbatim it keeps every input well below 0.5 (refitting on the train split
+        // would not).
         let supplied = ScalerMethod::MinMax(
-            MinMaxScaler::default().fit(array![[0.0, 0.0], [100.0, 100.0]].view()),
+            MinMaxScaler::default().fit(array![[0.0, 100.0], [0.0, 100.0]].view()),
         );
 
         let hp = spec_with_scaler(None);
