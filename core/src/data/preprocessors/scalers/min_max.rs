@@ -9,14 +9,15 @@
 //! use nrn::data::scalers::{MinMaxScaler, Scaler};
 //! use ndarray::array;
 //!
+//! // Features on the leading axis: two features (rows), two samples (columns).
 //! let mut data = array![[0.0, 5.0], [10.0, 20.0]];
 //! let scaler = MinMaxScaler::default().fit(data.view());
-//! scaler.apply_inplace(data.view_mut()).unwrap();
+//! scaler.apply_inplace(data.view_mut().into_dyn()).unwrap();
 //! assert!(data.iter().all(|&v| v >= 0.0 && v <= 1.0 + 1e-5));
 //! ```
 
 use crate::data::scalers::{Scaler, ScalerFeatureMismatch};
-use ndarray::{Array1, ArrayView2, ArrayViewMut2, Axis};
+use ndarray::{Array1, ArrayView, ArrayViewMutD, Axis, RemoveAxis};
 
 /// Scaler that linearly rescales data feature-wise to a target range using the min-max method.
 /// See also the [`Scaler`] trait for interface details.
@@ -48,21 +49,28 @@ impl MinMaxScaler {
         }
     }
 
-    /// Calculates the minimum and maximum values per feature from the input data,
-    /// returning a new `MinMaxScaler` instance configured for scaling.
+    /// Calculates the minimum and maximum per feature from samples-last input of
+    /// any rank, returning a new `MinMaxScaler` instance configured for scaling.
     ///
-    /// This method consumes the current instance and returns a new one with
-    /// fitted parameters.
+    /// Features run along the leading axis; each is reduced over the remaining axes.
+    /// This method consumes the current instance and returns a new one with fitted
+    /// parameters.
     ///
     /// # Arguments
-    /// * `data` - 2D array view of training data.
+    /// * `data` - Array view of training data, features on the leading axis.
     ///
     /// # Returns
     /// A new `MinMaxScaler` configured with min/max per feature.
     ///
-    pub fn fit(mut self, data: ArrayView2<f32>) -> Self {
-        self.min = data.fold_axis(Axis(0), f32::INFINITY, |&a, &b| a.min(b));
-        self.max = data.fold_axis(Axis(0), f32::NEG_INFINITY, |&a, &b| a.max(b));
+    pub fn fit<D: RemoveAxis>(mut self, data: ArrayView<f32, D>) -> Self {
+        self.min = data
+            .axis_iter(Axis(0))
+            .map(|feature| feature.fold(f32::INFINITY, |a, &b| a.min(b)))
+            .collect();
+        self.max = data
+            .axis_iter(Axis(0))
+            .map(|feature| feature.fold(f32::NEG_INFINITY, |a, &b| a.max(b)))
+            .collect();
         self
     }
 }
@@ -91,27 +99,27 @@ impl Scaler for MinMaxScaler {
     ///
     /// # Errors
     ///
-    /// [`ScalerFeatureMismatch`] when the number of columns in `data` does not match the
+    /// [`ScalerFeatureMismatch`] when the leading axis of `inputs` does not match the
     /// number of features in the scaler (`min` and `max` length).
     ///
     /// # Arguments
     ///
-    /// * `data` - Mutable 2D array view of data to scale in-place.
+    /// * `inputs` - Mutable samples-last array to scale in-place, features on the leading axis.
     ///
-    fn apply_inplace(&self, mut data: ArrayViewMut2<f32>) -> Result<(), ScalerFeatureMismatch> {
-        let (expected, found) = (self.min.len(), data.shape()[1]);
+    fn apply_inplace(&self, mut inputs: ArrayViewMutD<f32>) -> Result<(), ScalerFeatureMismatch> {
+        let (expected, found) = (self.min.len(), inputs.shape()[0]);
         (found == expected)
             .then_some(())
             .ok_or(ScalerFeatureMismatch { expected, found })?;
 
         let (min_range, max_range) = self.range;
         let scale = max_range - min_range;
-        for (mut col, (&min, &max)) in data
-            .axis_iter_mut(Axis(1))
+        for (mut feature, (&min, &max)) in inputs
+            .axis_iter_mut(Axis(0))
             .zip(self.min.iter().zip(self.max.iter()))
         {
             let denom = max - min + f32::EPSILON;
-            for v in col.iter_mut() {
+            for v in feature.iter_mut() {
                 *v = ((*v - min) / denom) * scale + min_range;
             }
         }
@@ -126,7 +134,8 @@ mod tests {
 
     #[test]
     fn fit_computes_min_max_per_feature() {
-        let data = array![[1.0, 10.0], [3.0, 20.0], [2.0, 30.0]];
+        // Two features (rows), three samples each (columns).
+        let data = array![[1.0, 3.0, 2.0], [10.0, 20.0, 30.0]];
         let scaler = MinMaxScaler::default().fit(data.view());
         assert_eq!(scaler.min[0], 1.0);
         assert_eq!(scaler.min[1], 10.0);
@@ -136,22 +145,25 @@ mod tests {
 
     #[test]
     fn apply_rejects_feature_count_mismatch() {
-        // Fitted on 2 features, applied to 3-column data → error, not a panic.
+        // Fitted on 2 features, applied to inputs with 3 on the leading axis → error.
         let scaler = MinMaxScaler::default().fit(array![[0.0, 0.0], [1.0, 1.0]].view());
-        let mut wrong = array![[0.0, 0.0, 0.0]];
-        let error = scaler.apply_inplace(wrong.view_mut()).unwrap_err();
+        let mut wrong = array![[0.0], [0.0], [0.0]];
+        let error = scaler
+            .apply_inplace(wrong.view_mut().into_dyn())
+            .unwrap_err();
         assert_eq!((error.expected, error.found), (2, 3));
     }
 
     #[test]
     fn min_maps_to_zero_max_maps_to_one() {
-        let data = array![[0.0, 0.0], [10.0, 100.0]];
+        // Feature 0 spans [0, 10], feature 1 spans [0, 100] (one feature per row).
+        let data = array![[0.0, 10.0], [0.0, 100.0]];
         let scaler = MinMaxScaler::default().fit(data.view());
         let mut scaled = data.clone();
-        scaler.apply_inplace(scaled.view_mut()).unwrap();
+        scaler.apply_inplace(scaled.view_mut().into_dyn()).unwrap();
         assert!((scaled[[0, 0]] - 0.0).abs() < 1e-5);
-        assert!((scaled[[1, 0]] - 1.0).abs() < 1e-5);
-        assert!((scaled[[0, 1]] - 0.0).abs() < 1e-5);
+        assert!((scaled[[0, 1]] - 1.0).abs() < 1e-5);
+        assert!((scaled[[1, 0]] - 0.0).abs() < 1e-5);
         assert!((scaled[[1, 1]] - 1.0).abs() < 1e-5);
     }
 
@@ -160,7 +172,7 @@ mod tests {
         let data = array![[1.0, 5.0], [2.0, 15.0], [3.0, 25.0]];
         let scaler = MinMaxScaler::default().fit(data.view());
         let mut scaled = data.clone();
-        scaler.apply_inplace(scaled.view_mut()).unwrap();
+        scaler.apply_inplace(scaled.view_mut().into_dyn()).unwrap();
         for &v in scaled.iter() {
             assert!((0.0..=1.0 + 1e-5).contains(&v), "Value {} out of [0, 1]", v);
         }
@@ -168,27 +180,36 @@ mod tests {
 
     #[test]
     fn constant_feature_does_not_panic() {
-        // First feature is constant — denom would be zero without epsilon guard
-        let data = array![[5.0, 1.0], [5.0, 2.0], [5.0, 3.0]];
+        // First feature (row) is constant — denom would be zero without epsilon guard.
+        let data = array![[5.0, 5.0, 5.0], [1.0, 2.0, 3.0]];
         let scaler = MinMaxScaler::default().fit(data.view());
         let mut scaled = data.clone();
-        scaler.apply_inplace(scaled.view_mut()).unwrap();
+        scaler.apply_inplace(scaled.view_mut().into_dyn()).unwrap();
         // Constant feature maps to range lower bound (0.0)
         assert!((scaled[[0, 0]] - 0.0).abs() < 1e-3);
     }
 
     #[test]
-    fn apply_single_matches_batch_apply() {
-        let data = array![[1.0, 10.0], [3.0, 30.0]];
+    fn scales_rank_n_inputs_per_feature() {
+        use ndarray::Array4;
+
+        // (features=2, height=1, width=2, samples=3): feature 0 spans [0, 10] and
+        // feature 1 [0, 100] across all spatial cells and samples. Each feature is
+        // normalized over its whole slab, not per spatial cell.
+        let data = Array4::from_shape_fn((2, 1, 2, 3), |(f, _h, w, s)| {
+            let scale = if f == 0 { 1.0 } else { 10.0 };
+            let cell = if w == 0 { 0.0 } else { 8.0 };
+            (cell + s as f32) * scale
+        });
         let scaler = MinMaxScaler::default().fit(data.view());
+        let mut scaled = data.clone().into_dyn();
+        scaler.apply_inplace(scaled.view_mut()).unwrap();
 
-        let mut single = ndarray::array![2.0, 20.0];
-        scaler.apply_single_inplace(single.view_mut()).unwrap();
-
-        let mut batch = array![[2.0, 20.0]];
-        scaler.apply_inplace(batch.view_mut()).unwrap();
-
-        assert!((single[0] - batch[[0, 0]]).abs() < 1e-6);
-        assert!((single[1] - batch[[0, 1]]).abs() < 1e-6);
+        assert_eq!(scaler.min.len(), 2);
+        assert!(scaled.iter().all(|&v| (0.0..=1.0 + 1e-5).contains(&v)));
+        // An interior sample of feature 0 (value 1 in [0, 10]) lands at 0.1, not 0.5:
+        // the whole feature shares one min/max, it is not scaled per spatial cell.
+        assert!((scaled[[0, 0, 0, 1]] - 0.1).abs() < 1e-5);
+        assert!((scaled[[0, 0, 1, 0]] - 0.8).abs() < 1e-5);
     }
 }

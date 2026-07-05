@@ -4,7 +4,7 @@ mod z_score;
 pub use min_max::MinMaxScaler;
 pub use z_score::ZScoreScaler;
 
-use ndarray::{ArrayView2, ArrayViewMut1, ArrayViewMut2, Axis};
+use ndarray::{ArrayView, ArrayViewMutD, RemoveAxis};
 
 /// An input's feature count did not match the scaler's fitted feature count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,41 +35,25 @@ impl std::error::Error for ScalerFeatureMismatch {}
 /// - Z-score Normalization (Standardization): centers data around zero with unit variance.
 ///
 /// # Usage
-/// Implementors of this trait provide a scaling transformation applied feature-wise
-/// to a 2D array of floating-point values (e.g., features in a dataset).
+/// Implementors of this trait provide a scaling transformation applied per feature
+/// along the leading axis of a samples-last array (e.g., features in a dataset).
 pub trait Scaler: Send + Sync {
     /// Returns the canonical name of the scaler method.
     fn name(&self) -> &'static str;
 
-    /// Applies the scaling transformation in-place to the input 2D array.
+    /// Applies the scaling transformation in-place to samples-last inputs of any rank.
     ///
+    /// Features run along the leading axis; each is scaled over the remaining axes.
     /// The input array is modified directly; no new allocation occurs.
     ///
     /// # Parameters
     ///
-    /// * `input` - A mutable 2D array view representing dataset features.
+    /// * `inputs` - A mutable samples-last array view, features on the leading axis.
     ///
     /// # Errors
-    /// [`ScalerFeatureMismatch`] when the input's feature columns do not match the
-    /// scaler's fitted feature count.
-    fn apply_inplace(&self, input: ArrayViewMut2<f32>) -> Result<(), ScalerFeatureMismatch>;
-
-    /// Applies the scaling transformation to a single 1D array (vector) in-place.
-    ///
-    /// # Arguments
-    /// * `input` - A mutable 1D array (vector) of `f32` values representing a single data point.
-    ///
-    /// # Behavior
-    /// This method expands the 1D input into a 2D view, applies the transformation in-place,
-    /// and modifies the original vector without allocation.
-    ///
-    /// # Errors
-    /// [`ScalerFeatureMismatch`] when the input's length does not match the scaler's
+    /// [`ScalerFeatureMismatch`] when the leading axis does not match the scaler's
     /// fitted feature count.
-    fn apply_single_inplace(&self, input: ArrayViewMut1<f32>) -> Result<(), ScalerFeatureMismatch> {
-        let mut expanded = input.insert_axis(Axis(0));
-        self.apply_inplace(expanded.view_mut())
-    }
+    fn apply_inplace(&self, inputs: ArrayViewMutD<f32>) -> Result<(), ScalerFeatureMismatch>;
 }
 
 /// Defines the available built-in scaling methods.
@@ -83,9 +67,10 @@ pub trait Scaler: Send + Sync {
 /// use nrn::data::scalers::{ScalerMethod, MinMaxScaler, Scaler};
 /// use ndarray::array;
 ///
+/// // Features on the leading axis: two features (rows), two samples (columns).
 /// let mut data = array![[0.0, 5.0], [10.0, 20.0]];
 /// let scaler = ScalerMethod::MinMax(MinMaxScaler::default().fit(data.view()));
-/// scaler.apply_inplace(data.view_mut()).unwrap();
+/// scaler.apply_inplace(data.view_mut().into_dyn()).unwrap();
 /// assert!(data.iter().all(|&v| v >= 0.0 && v <= 1.0 + 1e-5));
 /// ```
 #[derive(Clone, Debug)]
@@ -106,9 +91,9 @@ pub enum ScalerKind {
 }
 
 impl ScalerKind {
-    /// Fits the chosen scaler on `data` (samples along rows, features along
-    /// columns), returning the fitted method.
-    pub fn fit(self, data: ArrayView2<f32>) -> ScalerMethod {
+    /// Fits the chosen scaler on samples-last `data` (features along the leading
+    /// axis), returning the fitted method.
+    pub fn fit<D: RemoveAxis>(self, data: ArrayView<f32, D>) -> ScalerMethod {
         match self {
             ScalerKind::MinMax => ScalerMethod::MinMax(MinMaxScaler::default().fit(data)),
             ScalerKind::ZScore => ScalerMethod::ZScore(ZScoreScaler::default().fit(data)),
@@ -134,10 +119,10 @@ impl Scaler for ScalerMethod {
         }
     }
 
-    fn apply_inplace(&self, input: ArrayViewMut2<f32>) -> Result<(), ScalerFeatureMismatch> {
+    fn apply_inplace(&self, inputs: ArrayViewMutD<f32>) -> Result<(), ScalerFeatureMismatch> {
         match self {
-            ScalerMethod::MinMax(s) => s.apply_inplace(input),
-            ScalerMethod::ZScore(s) => s.apply_inplace(input),
+            ScalerMethod::MinMax(s) => s.apply_inplace(inputs),
+            ScalerMethod::ZScore(s) => s.apply_inplace(inputs),
         }
     }
 }
@@ -148,21 +133,6 @@ mod tests {
     use ndarray::array;
 
     #[test]
-    fn apply_single_inplace_scales_a_lone_vector() {
-        // `apply_single_inplace` treats each element as its own feature (column),
-        // so fit on three features each spanning [0, 10].
-        let data = array![[0.0, 0.0, 0.0], [10.0, 10.0, 10.0]];
-        let scaler = MinMaxScaler::default().fit(data.view());
-
-        let mut vector = array![0.0, 5.0, 10.0];
-        scaler.apply_single_inplace(vector.view_mut()).unwrap();
-
-        assert!((vector[0] - 0.0).abs() < 1e-5);
-        assert!((vector[1] - 0.5).abs() < 1e-5);
-        assert!((vector[2] - 1.0).abs() < 1e-5);
-    }
-
-    #[test]
     fn method_min_max_delegates_name_and_transform() {
         let data = array![[0.0, 5.0], [10.0, 20.0]];
         let method = ScalerMethod::MinMax(MinMaxScaler::default().fit(data.view()));
@@ -170,7 +140,9 @@ mod tests {
         assert_eq!(method.name(), "min-max");
 
         let mut to_scale = data.clone();
-        method.apply_inplace(to_scale.view_mut()).unwrap();
+        method
+            .apply_inplace(to_scale.view_mut().into_dyn())
+            .unwrap();
         assert!(to_scale.iter().all(|&v| (0.0..=1.0 + 1e-5).contains(&v)));
     }
 
@@ -193,13 +165,15 @@ mod tests {
 
         assert_eq!(method.name(), "z-score");
 
-        // Features run along columns (fit averages over Axis(0)); each should be
-        // centred near zero mean after standardization.
+        // Features run along rows (the leading axis); each should be centred near
+        // zero mean over its samples after standardization.
         let mut to_scale = data.clone();
-        method.apply_inplace(to_scale.view_mut()).unwrap();
-        for col in to_scale.columns() {
-            let mean: f32 = col.sum() / col.len() as f32;
-            assert!(mean.abs() < 1e-5, "column mean was {}", mean);
+        method
+            .apply_inplace(to_scale.view_mut().into_dyn())
+            .unwrap();
+        for row in to_scale.rows() {
+            let mean: f32 = row.sum() / row.len() as f32;
+            assert!(mean.abs() < 1e-5, "row mean was {}", mean);
         }
     }
 }

@@ -2,7 +2,7 @@
 //! probabilities, ranked most likely first.
 
 use crate::model::{PredictionError, Predictor};
-use ndarray::ArrayView1;
+use ndarray::{ArrayView, ArrayView1, Dimension};
 use std::cmp::Ordering::Equal;
 
 /// Class probabilities for one instance, ordered by descending probability.
@@ -42,15 +42,15 @@ impl Classification {
 }
 
 impl Predictor {
-    /// Classifies a single raw input vector, returning the class probabilities
+    /// Classifies a single raw instance of any rank, returning the class probabilities
     /// ranked most likely first. The scaler is applied first when present.
     ///
     /// # Errors
-    /// [`PredictionError`](crate::model::PredictionError) when the input's length does not
-    /// match the scaler's fitted feature count or the network's input size.
-    pub fn classify_single(
+    /// [`PredictionError`](crate::model::PredictionError) when the instance does not match
+    /// the scaler's fitted feature count or the network's input shape.
+    pub fn classify_single<D: Dimension>(
         &self,
-        input: ArrayView1<f32>,
+        input: ArrayView<f32, D>,
     ) -> Result<Classification, PredictionError> {
         Ok(Classification::from_outputs(
             self.predict_single(input)?.view(),

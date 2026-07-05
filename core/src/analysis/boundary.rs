@@ -317,9 +317,9 @@ mod tests {
             array![-0.5],
             SIGMOID.clone(),
         ));
-        // MinMax fitted on raw x0 ∈ [0, 2]: scaled 0.5 maps back to raw 1.0.
+        // MinMax fitted on raw x0 ∈ [0, 2] (features on rows): scaled 0.5 maps back to raw 1.0.
         let scaler = ScalerMethod::MinMax(
-            MinMaxScaler::default().fit(array![[0.0, 0.0], [2.0, 2.0]].view()),
+            MinMaxScaler::default().fit(array![[0.0, 2.0], [0.0, 2.0]].view()),
         );
         let predictor = Predictor::new(network, Some(scaler));
 

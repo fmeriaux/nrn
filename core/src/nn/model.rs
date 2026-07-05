@@ -7,7 +7,7 @@
 use crate::activations::{Activation, SIGMOID, SOFTMAX};
 use crate::data::scalers::{Scaler, ScalerFeatureMismatch, ScalerMethod};
 use crate::layers::{Dense, Layer};
-use ndarray::{Array1, Array2, ArrayD, ArrayView, ArrayView1, ArrayView2, Axis, Dimension, Ix2};
+use ndarray::{Array1, Array2, ArrayD, ArrayView, Axis, Dimension, Ix2};
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::rngs::StdRng;
 use std::fmt;
@@ -254,19 +254,6 @@ impl NeuralNetwork {
         );
         Ok(output)
     }
-
-    /// Predicts the output of the network given a single input vector, returning the final activation.
-    /// # Arguments
-    /// - `input`: A 1D array representing a single input vector to the network.
-    /// # Errors
-    /// [`InputShapeMismatch`] when `input`'s length does not match [`Self::input_size`].
-    pub fn predict_single(
-        &self,
-        input: ArrayView1<f32>,
-    ) -> Result<Array1<f32>, InputShapeMismatch> {
-        let inputs = input.insert_axis(Axis(1));
-        Ok(self.predict(inputs)?.column(0).to_owned())
-    }
 }
 
 /// A trained [`NeuralNetwork`] paired with the scaler fitted alongside it.
@@ -284,33 +271,41 @@ impl Predictor {
         Self { network, scaler }
     }
 
-    /// Predicts on a single raw input vector, applying the scaler first when present.
+    /// Predicts on a single raw instance of any rank (samples-last, minus the sample
+    /// axis), applying the scaler first when present.
     ///
     /// # Errors
-    /// [`PredictionError::Scaling`] when a scaler is present and the input does not match
-    /// its fitted feature count, or [`PredictionError::Network`] when it does not match the
-    /// network's input size.
-    pub fn predict_single(&self, input: ArrayView1<f32>) -> Result<Array1<f32>, PredictionError> {
-        let mut input = input.to_owned();
-        if let Some(scaler) = &self.scaler {
-            scaler.apply_single_inplace(input.view_mut())?;
-        }
-        Ok(self.network.predict_single(input.view())?)
+    /// [`PredictionError::Scaling`] when a scaler is present and the instance does not
+    /// match its fitted feature count, or [`PredictionError::Network`] when it does not
+    /// match the network's input shape.
+    pub fn predict_single<D: Dimension>(
+        &self,
+        input: ArrayView<f32, D>,
+    ) -> Result<Array1<f32>, PredictionError> {
+        let sample_axis = input.ndim();
+        let inputs = input.insert_axis(Axis(sample_axis));
+        Ok(self.predict(inputs)?.column(0).to_owned())
     }
 
-    /// Predicts on a batch of raw inputs `(features, samples)`, applying the scaler
-    /// first when present.
+    /// Predicts on a batch of raw inputs of any rank (samples on the trailing axis),
+    /// applying the scaler first when present.
     ///
     /// # Errors
     /// [`PredictionError::Scaling`] when a scaler is present and the inputs do not match
     /// its fitted feature count, or [`PredictionError::Network`] when they do not match the
-    /// network's input size.
-    pub fn predict(&self, inputs: ArrayView2<f32>) -> Result<Array2<f32>, PredictionError> {
-        let mut inputs = inputs.to_owned();
-        if let Some(scaler) = &self.scaler {
-            scaler.apply_inplace(inputs.view_mut().reversed_axes())?;
+    /// network's input shape.
+    pub fn predict<D: Dimension>(
+        &self,
+        inputs: ArrayView<f32, D>,
+    ) -> Result<Array2<f32>, PredictionError> {
+        match &self.scaler {
+            Some(scaler) => {
+                let mut owned = inputs.to_owned().into_dyn();
+                scaler.apply_inplace(owned.view_mut())?;
+                Ok(self.network.predict(owned.view())?)
+            }
+            None => Ok(self.network.predict(inputs)?),
         }
-        Ok(self.network.predict(inputs.view())?)
     }
 }
 
@@ -585,6 +580,45 @@ mod tests {
     }
 
     #[test]
+    fn predictor_applies_a_per_feature_scaler_to_a_spatial_batch() {
+        use crate::data::scalers::ScalerKind;
+        use crate::layers::Flatten;
+        use ndarray::{Array4, s};
+
+        // Flatten (2×2×2 → 8) → Dense (1 sigmoid, binary): a network that accepts a
+        // rank-4 spatial batch. Two identical builds (same seed) let one go into the
+        // predictor and the other check the bare network on manually scaled inputs.
+        let network = |seed| {
+            NeuralNetwork::single(Flatten::new(vec![2, 2, 2])).with_layer(Dense::initialization(
+                8,
+                &NeuronLayerSpec::output_for(2),
+                &mut StdRng::seed_from_u64(seed),
+            ))
+        };
+
+        // (features=2, height=2, width=2, samples=4), the two features on different scales.
+        let inputs = Array4::from_shape_fn((2, 2, 2, 4), |(f, h, w, s)| {
+            (f as f32 + 1.0) * 10.0 * (h + w + s) as f32
+        });
+        let scaler = ScalerKind::MinMax.fit(inputs.view());
+        let predictor = Predictor::new(network(1), Some(scaler.clone()));
+
+        // The predictor scales the rank-4 batch per feature before the network: its
+        // output matches the bare network run on the manually scaled inputs.
+        let via_predictor = predictor.predict(inputs.view()).unwrap();
+        let mut scaled = inputs.clone().into_dyn();
+        scaler.apply_inplace(scaled.view_mut()).unwrap();
+        let via_network = network(1).predict(scaled.view()).unwrap();
+        assert_eq!(via_predictor, via_network);
+
+        // A single rank-3 instance is scaled with the same parameters, so it matches
+        // the corresponding column of the batch prediction.
+        let instance = inputs.slice(s![.., .., .., 0]).to_owned();
+        let single = predictor.predict_single(instance.view()).unwrap();
+        assert_eq!(single, via_predictor.column(0).to_owned());
+    }
+
+    #[test]
     fn validate_inputs_rejects_a_matching_count_but_wrong_arrangement() {
         use crate::layers::Conv2d;
 
@@ -747,25 +781,6 @@ mod tests {
         let multi =
             NeuralNetwork::initialization(3, &NeuronLayerSpec::network_for(vec![4], &*RELU, 5), 0);
         assert_eq!(multi.n_classes(), 5);
-    }
-
-    #[test]
-    fn predict_single_matches_predict_on_one_sample() {
-        let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 2);
-        let model = NeuralNetwork::initialization(3, &specs, 0);
-
-        let sample = array![1.0, 2.0, 3.0];
-        let single = model.predict_single(sample.view()).unwrap();
-
-        let batch = array![[1.0], [2.0], [3.0]]; // (features, 1 sample)
-        let batch_output = model.predict(batch.view()).unwrap();
-
-        assert!(
-            (single - batch_output.column(0))
-                .mapv(f32::abs)
-                .iter()
-                .all(|&v| v < 1e-6)
-        );
     }
 
     // infer_from branches — complexity score = ln(n_features * n_classes / n_samples)

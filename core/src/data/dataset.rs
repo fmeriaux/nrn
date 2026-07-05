@@ -1,6 +1,6 @@
 use crate::data::origin::DatasetOrigin;
 use crate::data::scalers::{Scaler, ScalerFeatureMismatch, ScalerKind, ScalerMethod};
-use ndarray::{Array, Array1, Array2, ArrayD, Axis, Dimension, Ix2};
+use ndarray::{Array, Array1, Array2, ArrayD, Axis, Dimension};
 use ndarray_rand::rand::Rng;
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::prelude::{SliceRandom, StdRng};
@@ -425,52 +425,21 @@ impl ModelDataset {
         })
     }
 
-    /// The number of features per sample, the product of the leading axes.
-    fn n_features(&self) -> usize {
-        self.inputs.shape()[..self.inputs.ndim() - 1]
-            .iter()
-            .product()
-    }
-
-    /// Fits a per-feature scaler of the given `kind` on these inputs. The leading
-    /// feature axes are merged into a single axis and the view transposed to the
-    /// `(samples, features)` layout fitting expects.
+    /// Fits a per-feature scaler of the given `kind` on these inputs. Features run
+    /// along the leading axis; each is fitted over the remaining spatial and sample
+    /// axes.
     pub fn fit_scaler(&self, kind: ScalerKind) -> ScalerMethod {
-        let (n_features, n_samples) = (self.n_features(), self.targets.ncols());
-        let flat = self
-            .inputs
-            .to_shape((n_features, n_samples))
-            .expect("samples-last inputs reshape to (features, samples)");
-        kind.fit(flat.t())
+        kind.fit(self.inputs.view())
     }
 
-    /// Applies a per-feature scaler to the inputs in-place. The leading feature axes
-    /// are merged into a single axis and the mutable view transposed to the
-    /// `(samples, features)` layout the scaler expects.
+    /// Applies a per-feature scaler to the inputs in place, scaling each leading-axis
+    /// feature over the remaining spatial and sample axes.
     ///
     /// # Errors
     /// [`ScalerFeatureMismatch`] when the scaler's fitted feature count does not match
     /// these inputs.
     pub fn scale_inplace(&mut self, scaler: &dyn Scaler) -> Result<(), ScalerFeatureMismatch> {
-        // Rank-2 tabular inputs are already `(features, samples)`: transpose the view
-        // in place, no axis merge and no copy, whatever the underlying layout.
-        if let Ok(flat) = self.inputs.view_mut().into_dimensionality::<Ix2>() {
-            return scaler.apply_inplace(flat.reversed_axes());
-        }
-
-        // Higher-rank inputs merge their leading feature axes, which needs a
-        // contiguous buffer: scale a standard-layout copy and write it back.
-        let (n_features, n_samples) = (self.n_features(), self.targets.ncols());
-        let mut standard = self.inputs.as_standard_layout().into_owned();
-        {
-            let flat = standard
-                .view_mut()
-                .into_shape_with_order((n_features, n_samples))
-                .expect("standard-layout inputs merge their feature axes into (features, samples)");
-            scaler.apply_inplace(flat.reversed_axes())?;
-        }
-        self.inputs = standard;
-        Ok(())
+        scaler.apply_inplace(self.inputs.view_mut())
     }
 }
 
@@ -807,14 +776,17 @@ mod tests {
     }
 
     #[test]
-    fn fit_scaler_generalizes_to_rank_n_inputs() {
+    fn fit_scaler_normalizes_rank_n_inputs_per_leading_feature() {
         use ndarray::Array4;
 
-        // (channels=1, height=2, width=2, samples=3): the four spatial cells are the
-        // per-feature statistics, merged from the leading axes; each scales over its
-        // three samples.
-        let inputs = Array4::from_shape_fn((1, 2, 2, 3), |(_, h, w, s)| {
-            (h * 2 + w) as f32 * 10.0 + s as f32
+        // (features=2, height=1, width=2, samples=3): feature 0 spans [0, 10] and
+        // feature 1 [0, 100] across all spatial cells and samples. Fitting and scaling
+        // through the dataset keeps the spatial shape and normalizes per feature, not
+        // per spatial cell.
+        let inputs = Array4::from_shape_fn((2, 1, 2, 3), |(f, _h, w, s)| {
+            let scale = if f == 0 { 1.0 } else { 10.0 };
+            let cell = if w == 0 { 0.0 } else { 8.0 };
+            (cell + s as f32) * scale
         });
         let targets = Array2::from_shape_fn((1, 3), |(_, s)| (s % 2) as f32);
         let mut model = ModelDataset::new(inputs, targets);
@@ -822,13 +794,17 @@ mod tests {
         let scaler = model.fit_scaler(ScalerKind::MinMax);
         model.scale_inplace(&scaler).unwrap();
 
-        assert_eq!(model.inputs().shape(), &[1, 2, 2, 3]);
+        assert_eq!(model.inputs().shape(), &[2, 1, 2, 3]);
         assert!(
             model
                 .inputs
                 .iter()
                 .all(|&v| (0.0..=1.0 + 1e-5).contains(&v))
         );
+        // An interior sample of feature 0 (value 1 in [0, 10]) lands at 0.1, not 0.5:
+        // the feature is normalized as a whole, not per spatial cell.
+        assert!((model.inputs[[0, 0, 0, 1]] - 0.1).abs() < 1e-5);
+        assert!((model.inputs[[0, 0, 1, 0]] - 0.8).abs() < 1e-5);
     }
 
     #[test]

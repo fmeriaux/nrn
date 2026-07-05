@@ -255,7 +255,9 @@ impl Predictor {
     ) -> Result<ActivationDiagram, PredictionError> {
         let mut input = input.to_owned();
         if let Some(scaler) = &self.scaler {
-            scaler.apply_single_inplace(input.view_mut())?;
+            // Scale the lone instance: features on the leading axis, a single sample.
+            let mut expanded = input.view_mut().insert_axis(Axis(1)).into_dyn();
+            scaler.apply_inplace(expanded.view_mut())?;
         }
         Ok(self.network.activation_diagram(input.view(), options)?)
     }

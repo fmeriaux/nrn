@@ -782,10 +782,11 @@ mod tests {
         use crate::data::scalers::MinMaxScaler;
         use ndarray::array;
 
-        // A scaler fitted on a far wider range than the data; reused verbatim it
-        // keeps every input well below 0.5 (refitting on the train split would not).
+        // A scaler fitted on a far wider range than the data (features on rows); reused
+        // verbatim it keeps every input well below 0.5 (refitting on the train split
+        // would not).
         let supplied = ScalerMethod::MinMax(
-            MinMaxScaler::default().fit(array![[0.0, 0.0], [100.0, 100.0]].view()),
+            MinMaxScaler::default().fit(array![[0.0, 100.0], [0.0, 100.0]].view()),
         );
 
         let hp = spec_with_scaler(None);
