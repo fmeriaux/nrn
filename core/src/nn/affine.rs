@@ -47,10 +47,9 @@ impl Affine {
     /// # Arguments
     /// - `dz`: The gradient of the loss with respect to the pre-activation, `(outputs, samples)`.
     /// - `input`: The batch fed to [`forward`](Affine::forward), `(inputs, samples)`.
-    /// - `m`: The sample count the parameter gradients average over. Passed explicitly because
-    ///   it is not always `input.ncols()`: a convolution's affine input is the `im2col` matrix,
-    ///   whose columns span spatial positions as well as samples, yet its gradients must still
-    ///   average over samples alone.
+    /// - `m`: The number of samples the parameter gradients average over. For a convolution
+    ///   this differs from `input.ncols()`, whose columns span spatial positions as well as
+    ///   samples.
     /// - `compute_input_gradient`: Whether to also compute the gradient with respect to `input`.
     /// # Returns
     /// - `(dw, db, dinput)`: the weight gradient `(outputs, inputs)`, the bias gradient

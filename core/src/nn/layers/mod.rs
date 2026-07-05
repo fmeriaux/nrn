@@ -74,9 +74,9 @@ pub trait Layer: DynClone + Debug {
     /// returned by [`backward`](Layer::backward).
     fn parameters_mut(&mut self) -> Vec<Parameter<'_>>;
 
-    /// The per-sample input shape this layer expects, the sample axis excluded — the
-    /// single source of truth for the layer's input geometry (e.g. `[features]` for a
-    /// dense layer, `[channels, height, width]` for a convolution).
+    /// The per-sample input shape this layer expects, the sample axis excluded
+    /// (e.g. `[features]` for a dense layer, `[channels, height, width]` for a
+    /// convolution).
     fn input_shape(&self) -> Vec<usize>;
 
     /// The per-sample output shape this layer produces, the sample axis excluded.

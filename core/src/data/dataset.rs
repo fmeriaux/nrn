@@ -425,15 +425,14 @@ impl ModelDataset {
         })
     }
 
-    /// Fits a per-feature scaler of the given `kind` on these inputs. Features run
-    /// along the leading axis; each is fitted over the remaining spatial and sample
-    /// axes.
+    /// Fits a scaler of the given `kind` on these inputs, laid out samples-last with
+    /// features along the leading axis.
     pub fn fit_scaler(&self, kind: ScalerKind) -> ScalerMethod {
         kind.fit(self.inputs.view())
     }
 
-    /// Applies a per-feature scaler to the inputs in place, scaling each leading-axis
-    /// feature over the remaining spatial and sample axes.
+    /// Applies `scaler` to the inputs in place. The inputs are laid out samples-last
+    /// with features along the leading axis.
     ///
     /// # Errors
     /// [`ScalerFeatureMismatch`] when the scaler's fitted feature count does not match
