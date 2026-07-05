@@ -165,16 +165,23 @@ impl NeuralNetwork {
         if out == 1 { 2 } else { out }
     }
 
-    /// Returns a summary of the network's architecture as a string,
-    /// showing the number of neurons in each layer, including the input layer.
+    /// Returns a summary of the network's architecture as a string, showing the per-sample
+    /// input shape and each layer's output shape (with its activation, when it has one).
     pub fn summary(&self) -> String {
-        once(format!("[{}]", self.input_size()))
+        fn shape(dims: &[usize]) -> String {
+            let dims = dims.iter().map(usize::to_string).collect::<Vec<_>>();
+            format!("[{}]", dims.join(", "))
+        }
+
+        once(shape(&self.layers[0].input_shape()))
             .chain(
                 self.layers
                     .iter()
                     .map(|layer| match layer.activation_name() {
-                        Some(activation) => format!("{}-{}", layer.output_size(), activation),
-                        None => layer.output_size().to_string(),
+                        Some(activation) => {
+                            format!("{}-{}", shape(&layer.output_shape()), activation)
+                        }
+                        None => shape(&layer.output_shape()),
                     }),
             )
             .collect::<Vec<String>>()
@@ -542,7 +549,24 @@ mod tests {
         assert_eq!(model.layers[0].output_size(), 4);
         assert_eq!(model.layers[1].output_size(), 3);
 
-        assert_eq!(model.summary(), "[3] -> 4-relu -> 3-softmax");
+        assert_eq!(model.summary(), "[3] -> [4]-relu -> [3]-softmax");
+    }
+
+    #[test]
+    fn summary_shows_per_sample_shapes_and_omits_the_suffix_for_a_layer_without_activation() {
+        use crate::layers::Flatten;
+
+        // Flatten (2×2×2 → 8) preserves the spatial input shape in the summary and carries
+        // no activation, so its segment is the bare output shape with no "-activation"
+        // suffix; the Dense head keeps its suffix.
+        let model =
+            NeuralNetwork::single(Flatten::new(vec![2, 2, 2])).with_layer(Dense::initialization(
+                8,
+                &NeuronLayerSpec::output_for(2),
+                &mut StdRng::seed_from_u64(0),
+            ));
+
+        assert_eq!(model.summary(), "[2, 2, 2] -> [8] -> [1]-sigmoid");
     }
 
     #[test]
