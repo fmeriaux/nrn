@@ -14,11 +14,14 @@ pub use conv2d::Conv2d;
 pub use dense::Dense;
 pub use flatten::Flatten;
 
+use crate::activations::{Activation, ActivationProvider};
 use crate::gradients::LayerGradients;
 use dyn_clone::DynClone;
-use ndarray::{ArrayD, ArrayView2, ArrayViewD, ArrayViewMutD};
+use ndarray::{Array, ArrayD, ArrayView2, ArrayViewD, ArrayViewMutD, Dimension};
 use std::any::Any;
-use std::fmt::Debug;
+use std::collections::HashMap;
+use std::fmt::{self, Debug};
+use std::sync::Arc;
 
 /// One trainable parameter of a layer, exposed for an optimizer to update in place.
 pub struct Parameter<'a> {
@@ -92,8 +95,16 @@ pub trait Layer: DynClone + Debug {
     /// Whether every parameter value is finite (no NaN or Inf).
     fn is_finite(&self) -> bool;
 
-    /// A short identifier for the layer type, such as `"dense"`.
-    fn kind(&self) -> &'static str;
+    /// The concrete kind of this layer.
+    fn kind(&self) -> LayerKind;
+
+    /// The layer's non-tensor hyperparameters, as name/value pairs: the configuration that
+    /// describes this layer beyond its [`named_tensors`](Layer::named_tensors), such as a
+    /// convolution's stride and padding or its activation's name. Empty for a layer with no
+    /// such configuration.
+    fn config(&self) -> Vec<(String, String)> {
+        vec![]
+    }
 
     /// The layer's parameters as named tensors.
     fn named_tensors(&self) -> Vec<(String, ArrayD<f32>)>;
@@ -113,3 +124,176 @@ pub trait Layer: DynClone + Debug {
 }
 
 dyn_clone::clone_trait_object!(Layer);
+
+/// The concrete kind of a [`Layer`]. It names the layer type and rebuilds a layer of that
+/// kind from its [`config`](Layer::config) and [`named_tensors`](Layer::named_tensors) via
+/// [`instantiate`](LayerKind::instantiate).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayerKind {
+    /// A fully connected [`Dense`] layer.
+    Dense,
+    /// A 2D convolution [`Conv2d`] layer.
+    Conv2d,
+    /// A reshaping [`Flatten`] layer.
+    Flatten,
+}
+
+impl LayerKind {
+    /// The stable string tag naming this kind.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LayerKind::Dense => "dense",
+            LayerKind::Conv2d => "conv2d",
+            LayerKind::Flatten => "flatten",
+        }
+    }
+
+    /// Builds a layer of this kind from its configuration and tensors.
+    /// # Arguments
+    /// - `config`: The layer's non-tensor hyperparameters, as produced by [`Layer::config`].
+    /// - `tensors`: The layer's named tensors, as produced by [`Layer::named_tensors`].
+    pub fn instantiate(
+        &self,
+        config: &HashMap<String, String>,
+        tensors: HashMap<String, ArrayD<f32>>,
+    ) -> Result<Box<dyn Layer>, LayerConfigError> {
+        Ok(match self {
+            LayerKind::Dense => Box::new(Dense::from_config(config, tensors)?),
+            LayerKind::Conv2d => Box::new(Conv2d::from_config(config, tensors)?),
+            LayerKind::Flatten => Box::new(Flatten::from_config(config, tensors)?),
+        })
+    }
+}
+
+impl TryFrom<&str> for LayerKind {
+    type Error = LayerConfigError;
+
+    fn try_from(tag: &str) -> Result<Self, LayerConfigError> {
+        match tag {
+            "dense" => Ok(LayerKind::Dense),
+            "conv2d" => Ok(LayerKind::Conv2d),
+            "flatten" => Ok(LayerKind::Flatten),
+            other => Err(LayerConfigError::UnknownKind(other.to_string())),
+        }
+    }
+}
+
+/// Error returned when a layer cannot be built from its configuration and tensors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LayerConfigError {
+    /// A required configuration key was absent.
+    MissingConfig(String),
+    /// A configuration value could not be parsed.
+    InvalidConfig {
+        /// The offending key.
+        key: String,
+        /// Why the value was rejected.
+        reason: String,
+    },
+    /// A required tensor was absent.
+    MissingTensor(String),
+    /// A tensor did not have the rank the layer requires.
+    WrongTensorRank {
+        /// The tensor's name.
+        name: String,
+        /// The rank the layer requires.
+        expected: usize,
+        /// The rank the tensor actually had.
+        got: usize,
+    },
+    /// The named activation is not registered.
+    UnknownActivation(String),
+    /// The kind tag does not name a known layer.
+    UnknownKind(String),
+}
+
+impl fmt::Display for LayerConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LayerConfigError::MissingConfig(key) => write!(f, "missing config key `{key}`"),
+            LayerConfigError::InvalidConfig { key, reason } => {
+                write!(f, "config key `{key}` is invalid: {reason}")
+            }
+            LayerConfigError::MissingTensor(name) => write!(f, "missing tensor `{name}`"),
+            LayerConfigError::WrongTensorRank {
+                name,
+                expected,
+                got,
+            } => write!(f, "tensor `{name}` has rank {got}, expected {expected}"),
+            LayerConfigError::UnknownActivation(name) => {
+                write!(f, "unknown activation function: {name}")
+            }
+            LayerConfigError::UnknownKind(tag) => write!(f, "unknown layer kind: {tag}"),
+        }
+    }
+}
+
+impl std::error::Error for LayerConfigError {}
+
+/// Reads a required string entry from a layer's configuration.
+fn config_str<'a>(
+    config: &'a HashMap<String, String>,
+    key: &str,
+) -> Result<&'a str, LayerConfigError> {
+    config
+        .get(key)
+        .map(String::as_str)
+        .ok_or_else(|| LayerConfigError::MissingConfig(key.to_string()))
+}
+
+/// Reads a required unsigned integer entry from a layer's configuration.
+fn config_usize(config: &HashMap<String, String>, key: &str) -> Result<usize, LayerConfigError> {
+    config_str(config, key)?
+        .parse()
+        .map_err(
+            |e: std::num::ParseIntError| LayerConfigError::InvalidConfig {
+                key: key.to_string(),
+                reason: e.to_string(),
+            },
+        )
+}
+
+/// Reads a comma-separated dimension list (e.g. `"1,28,28"`) from a layer's configuration.
+fn config_dims(
+    config: &HashMap<String, String>,
+    key: &str,
+) -> Result<Vec<usize>, LayerConfigError> {
+    config_str(config, key)?
+        .split(',')
+        .map(|part| {
+            part.trim()
+                .parse::<usize>()
+                .map_err(|e| LayerConfigError::InvalidConfig {
+                    key: key.to_string(),
+                    reason: e.to_string(),
+                })
+        })
+        .collect()
+}
+
+/// Resolves the activation named under `"activation"` in a layer's configuration.
+fn config_activation(
+    config: &HashMap<String, String>,
+) -> Result<Arc<dyn Activation>, LayerConfigError> {
+    let name = config_str(config, "activation")?;
+    ActivationProvider::get_by_name(name)
+        .ok_or_else(|| LayerConfigError::UnknownActivation(name.to_string()))
+}
+
+/// Removes a required tensor and casts it to the rank `D` the layer expects.
+fn take_tensor<D: Dimension>(
+    tensors: &mut HashMap<String, ArrayD<f32>>,
+    name: &str,
+) -> Result<Array<f32, D>, LayerConfigError> {
+    let tensor = tensors
+        .remove(name)
+        .ok_or_else(|| LayerConfigError::MissingTensor(name.to_string()))?;
+    let got = tensor.ndim();
+    tensor
+        .into_dimensionality::<D>()
+        .map_err(|_| LayerConfigError::WrongTensorRank {
+            name: name.to_string(),
+            expected: D::NDIM.unwrap_or(got),
+            got,
+        })
+}

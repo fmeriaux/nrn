@@ -1,11 +1,12 @@
 use crate::activations::Activation;
 use crate::affine::Affine;
 use crate::gradients::LayerGradients;
-use crate::layers::{BackwardPass, Layer, Parameter};
+use crate::layers::{BackwardPass, Layer, LayerConfigError, LayerKind, Parameter};
 use crate::model::NeuronLayerSpec;
-use ndarray::{Array1, Array2, ArrayD, ArrayView1, ArrayView2, ArrayViewD, Ix2};
+use ndarray::{Array1, Array2, ArrayD, ArrayView1, ArrayView2, ArrayViewD, Ix1, Ix2};
 use ndarray_rand::rand::RngCore;
 use std::any::Any;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// A fully connected layer: an affine map `weights · input + bias` followed by an
@@ -77,6 +78,20 @@ impl Dense {
     /// The activation applied to this layer's output.
     pub fn activation(&self) -> &Arc<dyn Activation> {
         &self.activation
+    }
+
+    /// Builds a `Dense` layer from its configuration and tensors.
+    /// # Arguments
+    /// - `config`: Carries the `"activation"` name.
+    /// - `tensors`: Carries the `"weights"` (rank-2) and `"biases"` (rank-1) tensors.
+    pub(super) fn from_config(
+        config: &HashMap<String, String>,
+        mut tensors: HashMap<String, ArrayD<f32>>,
+    ) -> Result<Self, LayerConfigError> {
+        let weights = super::take_tensor::<Ix2>(&mut tensors, "weights")?;
+        let biases = super::take_tensor::<Ix1>(&mut tensors, "biases")?;
+        let activation = super::config_activation(config)?;
+        Ok(Dense::new(weights, biases, activation))
     }
 
     /// Mutable access to this layer's affine map.
@@ -161,8 +176,12 @@ impl Layer for Dense {
         self.affine.is_finite()
     }
 
-    fn kind(&self) -> &'static str {
-        "dense"
+    fn kind(&self) -> LayerKind {
+        LayerKind::Dense
+    }
+
+    fn config(&self) -> Vec<(String, String)> {
+        vec![("activation".to_string(), self.activation.name().to_string())]
     }
 
     fn named_tensors(&self) -> Vec<(String, ArrayD<f32>)> {
@@ -207,7 +226,7 @@ mod tests {
         let layer = Dense::new(Array2::zeros((2, 3)), Array1::zeros(2), RELU.clone());
         assert_eq!(layer.output_size(), 2);
         assert_eq!(layer.input_size(), 3);
-        assert_eq!(layer.kind(), "dense");
+        assert_eq!(layer.kind(), LayerKind::Dense);
         assert_eq!(layer.activation_name(), Some("relu"));
         assert_eq!(layer.weight_matrix().unwrap().dim(), (2, 3));
 
