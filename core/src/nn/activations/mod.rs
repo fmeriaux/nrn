@@ -7,10 +7,12 @@
 //!
 //! All built-in activations are registered using the `inventory` crate, allowing for easy discovery and use.
 //!
+mod identity;
 mod relu;
 mod sigmoid;
 mod softmax;
 
+pub use identity::IDENTITY;
 pub use relu::RELU;
 pub use sigmoid::SIGMOID;
 pub use softmax::SOFTMAX;

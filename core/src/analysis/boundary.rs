@@ -244,7 +244,7 @@ fn generate_points_recursive(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activations::{SIGMOID, SOFTMAX};
+    use crate::activations::IDENTITY;
     use crate::data::scalers::{MinMaxScaler, ScalerMethod};
     use crate::layers::Dense;
     use crate::model::NeuralNetwork;
@@ -269,23 +269,28 @@ mod tests {
         assert_eq!(inputs.shape(), &[2, 9]);
     }
 
-    /// A 2-input → 1-output sigmoid predictor. With weights [1, 0] and zero bias,
-    /// the prediction is `sigmoid(x0)`, which equals exactly 0.5 when x0 == 0.
+    /// A 2-input → 1-output binary predictor. With a linear output of weights [1, 0] and zero
+    /// bias the logit is `x0`, so the predicted probability is `sigmoid(x0)`, which equals
+    /// exactly 0.5 when x0 == 0.
     fn binary_model() -> Predictor {
         Predictor::new(
-            NeuralNetwork::single(Dense::new(array![[1.0, 0.0]], array![0.0], SIGMOID.clone())),
+            NeuralNetwork::single(Dense::new(
+                array![[1.0, 0.0]],
+                array![0.0],
+                IDENTITY.clone(),
+            )),
             None,
         )
     }
 
-    /// A 2-input → 3-output softmax predictor with symmetric weights for two of the
-    /// classes, so a tie (equal top-two probabilities) occurs along x0 == 0.
+    /// A 2-input → 3-output predictor with a linear output and symmetric weights for two of
+    /// the classes, so a tie (equal top-two softmax probabilities) occurs along x0 == 0.
     fn multiclass_model() -> Predictor {
         Predictor::new(
             NeuralNetwork::single(Dense::new(
                 array![[1.0, 0.0], [-1.0, 0.0], [0.0, 0.0]],
                 array![0.0, 0.0, -10.0],
-                SOFTMAX.clone(),
+                IDENTITY.clone(),
             )),
             None,
         )
@@ -315,7 +320,7 @@ mod tests {
         let network = NeuralNetwork::single(Dense::new(
             array![[1.0, 0.0]],
             array![-0.5],
-            SIGMOID.clone(),
+            IDENTITY.clone(),
         ));
         // MinMax fitted on raw x0 ∈ [0, 2] (features on rows): scaled 0.5 maps back to raw 1.0.
         let scaler = ScalerMethod::MinMax(

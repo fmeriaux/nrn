@@ -88,7 +88,7 @@ mod tests {
     use ndarray::{Array1, Array2, array};
 
     /// A hidden ReLU layer whose middle neuron dies, then a two-class output
-    /// layer resolving to probabilities `[0.3, 0.4]`.
+    /// layer of logits `[0.3, 0.4]` that softmax resolves to `[47.5%, 52.5%]`.
     fn diagram() -> ActivationDiagram {
         let net = NeuralNetwork::single(Dense::new(
             array![[1.0, 0.0], [-1.0, 0.0], [2.0, 0.0]],
@@ -126,11 +126,11 @@ mod tests {
     #[test]
     fn to_console_reads_the_output_layer_as_class_probabilities() {
         let text = diagram().to_console();
-        // The output neurons read as their class and probability, not raw values.
+        // The output neurons read as their class and softmax probability, not raw values.
         assert!(text.contains("class 0"));
         assert!(text.contains("class 1"));
-        assert!(text.contains("30.0%"));
-        assert!(text.contains("40.0%"));
+        assert!(text.contains("47.5%"));
+        assert!(text.contains("52.5%"));
     }
 
     #[test]

@@ -3,11 +3,11 @@
 //! This module provides the `BinaryAccuracy` struct, which implements the `Accuracy` trait for binary classification tasks.
 //! Binary accuracy measures the percentage of correct predictions for problems with two possible classes (0 or 1).
 //!
-//! The metric expects predictions and ground truth labels as tensors of shape (1, n_samples), where each value is a probability or binary label.
-//! Predictions are thresholded at 0.5 to determine the predicted class. The accuracy is computed as the ratio of correct predictions to the total number of samples.
+//! The metric expects the network's output logits and ground truth labels as tensors of shape (1, n_samples).
+//! A logit is thresholded at 0 (positive → class 1) to determine the predicted class. The accuracy is the ratio of correct predictions to the total number of samples.
 
 use crate::accuracies::Accuracy;
-use ndarray::ArrayView2;
+use ndarray::{ArrayView2, Zip};
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 
@@ -18,7 +18,7 @@ impl Accuracy for BinaryAccuracy {
     ///
     /// # Arguments
     ///
-    /// * `predictions` - A 2D tensor of shape (1, n_samples), containing predicted probabilities or binary values for each sample.
+    /// * `outputs` - A 2D tensor of shape (1, n_samples), containing the network's output for each sample.
     /// * `targets` - A 2D tensor of shape (1, n_samples), containing ground truth binary labels (0 or 1) for each sample.
     ///
     /// # Returns
@@ -27,30 +27,27 @@ impl Accuracy for BinaryAccuracy {
     ///
     /// # Panics
     ///
-    /// Panics if the shapes of `predictions` and `targets` do not match, or if the number of rows is not 1.
-    fn compute(&self, predictions: ArrayView2<f32>, targets: ArrayView2<f32>) -> f32 {
+    /// Panics if the shapes of `outputs` and `targets` do not match, or if the number of rows is not 1.
+    fn compute(&self, outputs: ArrayView2<f32>, targets: ArrayView2<f32>) -> f32 {
         assert_eq!(
-            predictions.shape(),
+            outputs.shape(),
             targets.shape(),
-            "Predictions and targets must have the same shape."
+            "Outputs and targets must have the same shape."
         );
         assert_eq!(
-            predictions.nrows(),
+            outputs.nrows(),
             1,
             "Binary accuracy expects tensors of shape (1, n_samples). For one-hot or multi-class, use another accuracy."
         );
 
-        let n_samples = predictions.ncols();
-        let mut correct = 0;
-        for i in 0..n_samples {
-            let pred = predictions[[0, i]];
-            let exp = targets[[0, i]];
-            let pred_label = if pred >= 0.5 { 1.0_f32 } else { 0.0_f32 };
-            if pred_label == exp {
-                correct += 1;
-            }
-        }
-        (correct as f32) * 100.0 / (n_samples as f32)
+        let correct =
+            Zip::from(&outputs)
+                .and(&targets)
+                .fold(0usize, |correct, &output, &target| {
+                    let label = if output >= 0.0 { 1.0 } else { 0.0 };
+                    correct + usize::from(label == target)
+                });
+        correct as f32 * 100.0 / (outputs.ncols() as f32)
     }
 }
 
@@ -63,20 +60,20 @@ mod tests {
     use ndarray::array;
 
     #[test]
-    fn threshold_at_05_predicts_positive() {
-        // pred=0.5 → threshold to 1.0 (>= 0.5) → correct when target=1.0
-        // pred=0.4999 → threshold to 0.0 → correct when target=0.0
-        let predictions = array![[0.5_f32, 0.4999]];
+    fn threshold_at_zero_predicts_positive() {
+        // output=0.0 → threshold to 1.0 (>= 0) → correct when target=1.0
+        // output=-0.0001 → threshold to 0.0 → correct when target=0.0
+        let outputs = array![[0.0_f32, -0.0001]];
         let targets = array![[1.0_f32, 0.0]];
-        let acc = BINARY_ACCURACY.compute(predictions.view(), targets.view());
+        let acc = BINARY_ACCURACY.compute(outputs.view(), targets.view());
         assert!((acc - 100.0).abs() < 1e-5, "Expected 100%, got {acc}");
     }
 
     #[test]
     fn all_wrong_predictions_give_zero_accuracy() {
-        let predictions = array![[0.9_f32, 0.9, 0.1]];
+        let outputs = array![[3.0_f32, 3.0, -3.0]];
         let targets = array![[0.0_f32, 0.0, 1.0]];
-        let acc = BINARY_ACCURACY.compute(predictions.view(), targets.view());
+        let acc = BINARY_ACCURACY.compute(outputs.view(), targets.view());
         assert!((acc - 0.0).abs() < 1e-5, "Expected 0%, got {acc}");
     }
 }

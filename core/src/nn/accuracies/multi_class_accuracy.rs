@@ -19,7 +19,7 @@ impl Accuracy for MultiClassAccuracy {
     ///
     /// # Arguments
     ///
-    /// * `predictions` - A 2D tensor of shape (n_classes, n_samples), containing predicted scores or probabilities for each class and sample.
+    /// * `outputs` - A 2D tensor of shape (n_classes, n_samples), containing the network's output for each class and sample.
     /// * `targets` - A 2D tensor of shape (n_classes, n_samples), containing one-hot encoded ground truth labels for each sample.
     ///
     /// # Returns
@@ -28,20 +28,18 @@ impl Accuracy for MultiClassAccuracy {
     ///
     /// # Panics
     ///
-    /// Panics if the shapes of `predictions` and `targets` do not match, or if there are fewer than 2 classes.
-    fn compute(&self, predictions: ArrayView2<f32>, targets: ArrayView2<f32>) -> f32 {
+    /// Panics if the shapes of `outputs` and `targets` do not match, or if there are fewer than 2 classes.
+    fn compute(&self, outputs: ArrayView2<f32>, targets: ArrayView2<f32>) -> f32 {
         assert_eq!(
-            predictions.shape(),
+            outputs.shape(),
             targets.shape(),
-            "Predictions and targets must have the same shape."
+            "Outputs and targets must have the same shape."
         );
         assert!(
-            predictions.nrows() >= 2,
+            outputs.nrows() >= 2,
             "MultiClassAccuracy expects tensors with at least 2 classes (n_classes >= 2)."
         );
-        let n_samples = predictions.ncols();
-        let mut correct = 0;
-        // Closure to find the index of the maximum value in a 1D array (argmax)
+        // Index of the maximum value in a 1D array (argmax).
         let argmax = |col: ArrayView1<f32>| -> usize {
             col.iter()
                 .enumerate()
@@ -49,16 +47,13 @@ impl Accuracy for MultiClassAccuracy {
                 .map(|(idx, _)| idx)
                 .unwrap()
         };
-        for i in 0..n_samples {
-            let pred_col = predictions.column(i);
-            let exp_col = targets.column(i);
-            let pred_label = argmax(pred_col);
-            let exp_label = argmax(exp_col);
-            if pred_label == exp_label {
-                correct += 1;
-            }
-        }
-        (correct as f32) * 100.0 / (n_samples as f32)
+        let correct = outputs
+            .columns()
+            .into_iter()
+            .zip(targets.columns())
+            .filter(|(prediction, target)| argmax(*prediction) == argmax(*target))
+            .count();
+        correct as f32 * 100.0 / (outputs.ncols() as f32)
     }
 }
 
@@ -73,16 +68,16 @@ mod tests {
 
     #[test]
     fn does_not_panic_on_nan_predictions() {
-        let predictions = array![[f32::NAN, 1.0], [0.5_f32, 0.8]];
+        let outputs = array![[f32::NAN, 1.0], [0.5_f32, 0.8]];
         let targets = array![[0.0_f32, 1.0], [1.0, 0.0]];
-        let _ = MULTI_CLASS_ACCURACY.compute(predictions.view(), targets.view());
+        let _ = MULTI_CLASS_ACCURACY.compute(outputs.view(), targets.view());
     }
 
     #[test]
     fn all_correct_gives_100_percent() {
-        let predictions = array![[0.9_f32, 0.1], [0.1, 0.9]];
+        let outputs = array![[0.9_f32, 0.1], [0.1, 0.9]];
         let targets = array![[1.0_f32, 0.0], [0.0, 1.0]];
-        let acc = MULTI_CLASS_ACCURACY.compute(predictions.view(), targets.view());
+        let acc = MULTI_CLASS_ACCURACY.compute(outputs.view(), targets.view());
         assert!((acc - 100.0).abs() < 1e-5, "Expected 100%, got {acc}");
     }
 }

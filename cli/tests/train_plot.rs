@@ -1143,7 +1143,7 @@ fn start_with_auto_layers_infers_architecture() {
 
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("relu") && stdout.contains("sigmoid"),
+        stdout.contains("relu") && stdout.contains("identity"),
         "expected an inferred hidden-layer architecture in the recap: {stdout}"
     );
     assert!(model_exists(dir, ds_name));

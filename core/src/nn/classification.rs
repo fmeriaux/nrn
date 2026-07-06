@@ -14,7 +14,7 @@ use std::cmp::Ordering::Equal;
 pub struct Classification(Vec<(usize, f32)>);
 
 impl Classification {
-    /// Builds a ranking from a network's raw output activations for one instance.
+    /// Builds a ranking from a network's class probabilities for one instance.
     ///
     /// A single output is the binary positive-class probability, expanded into
     /// `[(0, 1 - p), (1, p)]`; otherwise each output is the probability of its

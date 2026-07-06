@@ -133,23 +133,15 @@ impl NeuralNetwork {
         let last_act = last_activation(activations)
             .into_dimensionality::<Ix2>()
             .expect("the output layer produces rank-2 (classes, samples) activations");
-        // Project into the loss's safe domain so gradient() and vjp() see the same values;
-        // their product then cancels exactly to p − y even near saturation.
-        let safe_act = loss_function.stabilize(last_act.view());
-        // dL/d(output) handed to the output layer.
-        let mut da = loss_function.gradient(safe_act.view(), targets).into_dyn();
+
+        let mut da = loss_function.gradient(last_act.view(), targets).into_dyn();
 
         let layers = self.layers();
         let mut gradients = Vec::with_capacity(layers.len());
-        let last = layers.len() - 1;
 
         for i in (0..layers.len()).rev() {
             let input = activations[i].view();
-            let output = if i == last {
-                safe_act.view().into_dyn()
-            } else {
-                activations[i + 1].view()
-            };
+            let output = activations[i + 1].view();
             // The input layer (i == 0) has no upstream layer to receive an input gradient.
             let pass = layers[i].backward(da.view(), input, output, i > 0);
             gradients.push(pass.gradients);
@@ -201,14 +193,14 @@ mod tests {
         targets: &Array2<f32>,
         loss_fn: &Arc<dyn LossFunction>,
     ) -> f32 {
-        let pred = model.predict(inputs.view()).unwrap();
+        let pred = model.output(inputs.view()).unwrap();
         loss_fn.compute(pred.view(), targets.view())
     }
 
     #[test]
     fn backprop_gradients_match_numerical_approximation() {
-        // Network: 2 inputs -> 2 hidden (sigmoid) -> 1 output (sigmoid, binary)
-        // Using sigmoid everywhere to avoid relu's non-differentiable point at 0
+        // Network: 2 inputs -> 2 hidden (sigmoid) -> 1 output (linear logits, binary)
+        // Using sigmoid in the hidden layer to avoid relu's non-differentiable point at 0
         let specs = NeuronLayerSpec::network_for(vec![2], &*SIGMOID, 2);
         let mut model = NeuralNetwork::initialization(2, &specs, 0);
 
@@ -281,11 +273,9 @@ mod tests {
 
     #[test]
     fn backprop_gradients_match_numerical_approximation_softmax_output() {
-        // Single-layer network (inputs → softmax), no hidden layers.
-        // Verifies that loss.gradient() (→ -y/p) composed with softmax.vjp() yields the
-        // correct dz (= p - y) and that the resulting weight/bias gradients match finite
-        // differences. The hidden-layer chain rule is covered by the sigmoid test.
-        // A single output layer keeps gradients large (O(0.1)) and well within f32 precision.
+        // Single-layer network (inputs → linear logits), no hidden layers.
+        // Checks the with-logits gradient (p − y) against finite differences; a single output
+        // keeps gradients O(0.1), well within f32 precision.
         let specs = NeuronLayerSpec::network_for(vec![], &*SIGMOID, 3);
         let mut model = NeuralNetwork::initialization(2, &specs, 0);
 
@@ -356,23 +346,25 @@ mod tests {
     }
 
     #[test]
-    fn backward_is_finite_when_binary_sigmoid_saturates() {
-        // Regression: a saturated sigmoid output (exactly 1.0/0.0 in f32) must not
-        // make the binary-CE gradient non-finite via its p(1 - p) divisor.
+    fn backward_is_finite_when_binary_logit_saturates() {
+        // Regression: an extreme output logit must still yield finite gradients.
         let specs = NeuronLayerSpec::network_for(vec![], &*SIGMOID, 2);
         let mut model = NeuralNetwork::initialization(2, &specs, 0);
 
-        // Large weights so the single sample's logit saturates the sigmoid.
+        // Large weights drive the single output logit to ±200.
         *dense_mut(&mut model, 0).affine_mut().weights_mut() = array![[100.0, 100.0]];
         *dense_mut(&mut model, 0).affine_mut().biases_mut() = Array1::from_vec(vec![0.0]);
 
-        let inputs = array![[1.0, -1.0], [1.0, -1.0]]; // logits +200 / -200 → 1.0 / 0.0
+        let inputs = array![[1.0, -1.0], [1.0, -1.0]]; // logits +200 / -200
         let targets = array![[1.0, 0.0]];
 
         let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
         let activations = model.forward(inputs.view()).unwrap();
-        // The forward output is genuinely saturated, so this exercises the clamp.
-        assert_eq!(last_activation(&activations), array![[1.0, 0.0]].into_dyn());
+        // The linear output emits logits.
+        assert_eq!(
+            last_activation(&activations),
+            array![[200.0, -200.0]].into_dyn()
+        );
 
         let grads = model.backward(&activations, targets.view(), &loss_fn);
         for g in &grads {
@@ -380,27 +372,24 @@ mod tests {
                 g.iter()
                     .flat_map(|tensor| tensor.iter())
                     .all(|v| v.is_finite()),
-                "saturated sigmoid produced non-finite gradients: {:?}",
+                "saturated logit produced non-finite gradients: {:?}",
                 g.0
             );
         }
     }
 
     #[test]
-    fn backward_stabilizes_through_the_plugged_in_loss_not_cross_entropy() {
-        // Regression: backward() must project the output activation through the *plugged-in*
-        // loss's stabilize(), not a hardcoded cross-entropy clamp. A loss that keeps the
-        // default (identity) stabilize() must therefore see the raw activations — here the
-        // saturated 1.0/0.0 that cross-entropy would have clamped into (ε, 1 - ε).
+    fn backward_feeds_raw_output_to_the_loss_gradient() {
+        // backward() hands the output layer's raw logits to the loss's gradient, unclamped.
         use std::sync::Mutex;
 
-        struct RawSpyLoss {
+        struct SpyLoss {
             seen: Mutex<Option<Array2<f32>>>,
         }
 
-        impl LossFunction for RawSpyLoss {
+        impl LossFunction for SpyLoss {
             fn name(&self) -> &'static str {
-                "RawSpy"
+                "Spy"
             }
             fn compute(&self, _predictions: ArrayView2<f32>, _targets: ArrayView2<f32>) -> f32 {
                 0.0
@@ -413,20 +402,22 @@ mod tests {
                 *self.seen.lock().unwrap() = Some(predictions.to_owned());
                 Array2::zeros(predictions.raw_dim())
             }
-            // stabilize() left as the trait default (identity).
         }
 
         let specs = NeuronLayerSpec::network_for(vec![], &*SIGMOID, 2);
         let mut model = NeuralNetwork::initialization(2, &specs, 0);
         *dense_mut(&mut model, 0).affine_mut().weights_mut() = array![[100.0, 100.0]];
         *dense_mut(&mut model, 0).affine_mut().biases_mut() = Array1::from_vec(vec![0.0]);
-        let inputs = array![[1.0, -1.0], [1.0, -1.0]]; // logits +200 / -200 → 1.0 / 0.0
+        let inputs = array![[1.0, -1.0], [1.0, -1.0]]; // logits +200 / -200
         let targets = array![[1.0, 0.0]];
 
         let activations = model.forward(inputs.view()).unwrap();
-        assert_eq!(last_activation(&activations), array![[1.0, 0.0]].into_dyn());
+        assert_eq!(
+            last_activation(&activations),
+            array![[200.0, -200.0]].into_dyn()
+        );
 
-        let spy = Arc::new(RawSpyLoss {
+        let spy = Arc::new(SpyLoss {
             seen: Mutex::new(None),
         });
         let loss_fn: Arc<dyn LossFunction> = spy.clone();
@@ -440,8 +431,8 @@ mod tests {
             .expect("gradient was called");
         assert_eq!(
             seen,
-            array![[1.0, 0.0]],
-            "backward must feed the loss's own stabilize() output to gradient(), not a clamp"
+            array![[200.0, -200.0]],
+            "backward must feed the raw output logits to gradient(), not a clamped copy"
         );
     }
 
@@ -517,7 +508,7 @@ mod tests {
 
         let loss: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
         let loss_now = |model: &NeuralNetwork| {
-            let pred = model.predict(inputs.view()).unwrap();
+            let pred = model.output(inputs.view()).unwrap();
             loss.compute(pred.view(), targets.view())
         };
 

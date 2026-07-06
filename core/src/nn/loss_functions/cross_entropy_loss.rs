@@ -1,26 +1,23 @@
-//! Cross entropy loss module for binary and multi-class classification.
+//! Cross-entropy loss for binary and multi-class classification, computed from **logits**.
 //!
-//! This module defines the `LossFunction` trait and a cross-entropy
-//! implementation usable for classification tasks.
-//!
-//! The loss computes the difference between predicted probabilities
-//! and true one-hot labels, providing both the scalar loss and its gradient.
+//! - multi-class: softmax + categorical cross-entropy, valued via log-sum-exp;
+//! - binary (a single logit): sigmoid + binary cross-entropy, valued via the softplus form.
 
+use crate::activations::{Activation, SIGMOID, SOFTMAX};
 use crate::loss_functions::LossFunction;
-use ndarray::{Array2, ArrayView2};
+use ndarray::{Array1, Array2, ArrayView2, Axis, Zip};
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 
 pub struct CrossEntropyLoss;
 
-impl CrossEntropyLoss {
-    /// Distance kept from the open ends of `(0, 1)` when clamping probabilities.
-    ///
-    /// Sized for `f32`: the largest float below `1.0` is `1 − 2⁻²⁴ ≈ 1 − 6e-8`, so an
-    /// epsilon any smaller than that makes `1.0 − epsilon` round straight back to `1.0`
-    /// and the upper clamp a no-op. A saturated sigmoid output of exactly `1.0` would
-    /// then drive the binary-CE gradient's `p(1 − p)` denominator to zero — `NaN`/`inf`.
-    pub(crate) const PROBABILITY_EPSILON: f32 = 1e-7;
+/// Log-sum-exp of each column, `ln Σ e^{zᵢ}`, computed stably by subtracting the column max.
+fn logsumexp_columns(logits: ArrayView2<f32>) -> Array1<f32> {
+    logits.map_axis(Axis(0), |col| {
+        let max = col.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let sum: f32 = col.iter().map(|&z| (z - max).exp()).sum();
+        max + sum.ln()
+    })
 }
 
 impl LossFunction for CrossEntropyLoss {
@@ -28,59 +25,51 @@ impl LossFunction for CrossEntropyLoss {
         "Cross-Entropy"
     }
 
-    /// Computes the scalar loss value given predictions and true labels.
+    /// Computes the scalar loss value from logits.
     ///
     /// # Arguments
-    /// * `predictions` - 2D array where each row is the predicted probability distribution for a sample.
-    /// * `targets` - 2D array where each row is the true one-hot encoded label for a sample.
+    /// * `logits` - 2D array `(classes, samples)` of the output layer's logits.
+    /// * `targets` - 2D array `(classes, samples)` of true one-hot labels.
     ///
     /// # Returns
     /// Average loss over the batch.
-    fn compute(&self, predictions: ArrayView2<f32>, targets: ArrayView2<f32>) -> f32 {
-        let clipped = self.stabilize(predictions);
-        let n_samples = predictions.ncols() as f32;
-        let log_p = clipped.mapv(|p| p.ln());
+    fn compute(&self, logits: ArrayView2<f32>, targets: ArrayView2<f32>) -> f32 {
+        let n_samples = logits.ncols() as f32;
 
-        if predictions.nrows() == 1 {
-            // Binary (1 sigmoid output): both terms needed since y can be 0
-            let log_1_p = clipped.mapv(|p| (1.0 - p).ln());
-            -(&targets * &log_p + (1.0 - &targets) * &log_1_p).sum() / n_samples
+        if logits.nrows() == 1 {
+            // Binary sigmoid BCE from the logit, via the stable softplus form:
+            // L = max(z, 0) − z·y + ln(1 + e^{−|z|}), finite for any logit.
+            let per_element = Zip::from(&logits)
+                .and(&targets)
+                .map_collect(|&z, &y| z.max(0.0) - z * y + (1.0 + (-z.abs()).exp()).ln());
+            per_element.sum() / n_samples
         } else {
-            // Multi-class (softmax): one-hot y is always 1 somewhere, so -(y*log(p)) is complete
-            -(&targets * &log_p).sum() / n_samples
+            // Multi-class softmax CE from logits, via log-sum-exp: per sample,
+            // −Σ yᵢ (zᵢ − logsumexp(z)) = logsumexp(z)·Σy − Σ yᵢ zᵢ.
+            let lse = logsumexp_columns(logits);
+            let y_sum = targets.sum_axis(Axis(0));
+            let yz = (&targets * &logits).sum_axis(Axis(0));
+            (&lse * &y_sum - &yz).sum() / n_samples
         }
     }
 
-    /// Computes ∂L/∂a — the gradient of the loss with respect to the predicted probabilities.
+    /// Computes ∂L/∂z — the gradient of the loss with respect to the logits: `p − y`.
     ///
-    /// Expects `predictions` to be clipped to a safe interior of (0, 1) by the caller
-    /// (via [`stabilize`](LossFunction::stabilize)); no clipping is applied here so that
-    /// the caller can pass identical values to the activation's `vjp`, ensuring exact
-    /// compositional cancellation.
+    /// `p` is `sigmoid(z)` for the binary head and `softmax(z)` for the multi-class head.
     ///
     /// # Arguments
-    /// * `predictions` - Same as in `compute`.
+    /// * `logits` - Same as in `compute`.
     /// * `targets` - Same as in `compute`.
     ///
     /// # Returns
-    /// Gradient array (`Array2<f32>`) of the same shape as predictions.
-    /// Binary CE: `(p - y) / (p * (1 - p))`. Multi-class CE: `-y / p`.
-    fn gradient(&self, predictions: ArrayView2<f32>, targets: ArrayView2<f32>) -> Array2<f32> {
-        if predictions.nrows() == 1 {
-            // Binary CE: ∂L/∂p = (p - y) / (p * (1 - p))
-            let p = predictions.to_owned();
-            let denom = &p * p.mapv(|x| 1.0 - x);
-            (p - targets) / denom
+    /// Gradient array (`Array2<f32>`) of the same shape as `logits`.
+    fn gradient(&self, logits: ArrayView2<f32>, targets: ArrayView2<f32>) -> Array2<f32> {
+        let probabilities = if logits.nrows() == 1 {
+            SIGMOID.apply(logits)
         } else {
-            // Multi-class CE: ∂L/∂p_i = -y_i / p_i
-            -targets.to_owned() / predictions.to_owned()
-        }
-    }
-
-    /// Clips the predicted probabilities into the open interval `(0, 1)` so that `ln(p)`
-    /// stays finite and the binary gradient's `p(1 − p)` denominator never reaches zero.
-    fn stabilize(&self, predictions: ArrayView2<f32>) -> Array2<f32> {
-        predictions.mapv(|p| p.clamp(Self::PROBABILITY_EPSILON, 1.0 - Self::PROBABILITY_EPSILON))
+            SOFTMAX.apply(logits)
+        };
+        probabilities - targets
     }
 }
 
@@ -100,23 +89,42 @@ mod tests {
     }
 
     #[test]
-    fn clip_keeps_saturated_probabilities_off_the_open_ends() {
-        // Regression: a saturated 0.0/1.0 must land strictly inside (0, 1).
-        let clipped = CrossEntropyLoss.stabilize(array![[0.0, 1.0]].view());
-        assert!(clipped.iter().all(|&p| p > 0.0 && p < 1.0), "{clipped:?}");
+    fn binary_gradient_is_sigmoid_of_logit_minus_target() {
+        let logits = array![[2.0, -1.0]];
+        let targets = array![[1.0, 0.0]];
+        let grad = CrossEntropyLoss.gradient(logits.view(), targets.view());
+        assert_eq!(grad, SIGMOID.apply(logits.view()) - &targets);
     }
 
     #[test]
-    fn saturated_binary_predictions_give_finite_loss_and_gradient() {
-        // Correctly classified but saturated: loss ≈ 0 and gradient ≈ 0, not NaN/inf.
-        let predictions = array![[1.0, 0.0]];
+    fn multiclass_gradient_is_softmax_of_logits_minus_target() {
+        let logits = array![[2.0, 0.5], [0.1, -1.0], [-0.3, 1.5]];
+        let targets = array![[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]];
+        let grad = CrossEntropyLoss.gradient(logits.view(), targets.view());
+        assert_eq!(grad, SOFTMAX.apply(logits.view()) - &targets);
+    }
+
+    #[test]
+    fn multiclass_compute_matches_negative_log_softmax() {
+        let logits = array![[2.0, 0.5], [0.1, -1.0], [-0.3, 1.5]];
+        let targets = array![[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]];
+        let probabilities = SOFTMAX.apply(logits.view());
+        let n_samples = logits.ncols() as f32;
+        let expected = -(&targets * &probabilities.mapv(f32::ln)).sum() / n_samples;
+
+        let loss = CrossEntropyLoss.compute(logits.view(), targets.view());
+        assert!((loss - expected).abs() < 1e-5, "loss {loss} vs {expected}");
+    }
+
+    #[test]
+    fn saturated_logits_give_finite_loss_and_gradient() {
+        let logits = array![[1000.0, -1000.0]];
         let targets = array![[1.0, 0.0]];
-        let loss = CrossEntropyLoss.compute(predictions.view(), targets.view());
+
+        let loss = CrossEntropyLoss.compute(logits.view(), targets.view());
         assert!(loss.is_finite() && loss >= 0.0, "loss = {loss}");
 
-        // gradient() expects pre-clipped inputs, mirroring the backward pass.
-        let safe = CrossEntropyLoss.stabilize(predictions.view());
-        let grad = CrossEntropyLoss.gradient(safe.view(), targets.view());
+        let grad = CrossEntropyLoss.gradient(logits.view(), targets.view());
         assert!(grad.iter().all(|v| v.is_finite()), "grad = {grad:?}");
     }
 }

@@ -209,7 +209,7 @@ fn line_series(epochs: &[usize], series: [(Vec<f32>, Color, &str); 3]) -> Vec<Se
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activations::SIGMOID;
+    use crate::activations::IDENTITY;
     use crate::data::Dataset;
     use crate::evaluation::{Evaluation, EvaluationSet};
     use crate::evaluation_history::{EpochEvaluation, EvaluationHistory};
@@ -237,10 +237,14 @@ mod tests {
         .unwrap()
     }
 
-    /// A 2-input → 1-output sigmoid predictor.
+    /// A 2-input → 1-output binary predictor with an identity (logits) output.
     fn binary_predictor() -> Predictor {
         Predictor::new(
-            NeuralNetwork::single(Dense::new(array![[1.0, 0.0]], array![0.0], SIGMOID.clone())),
+            NeuralNetwork::single(Dense::new(
+                array![[1.0, 0.0]],
+                array![0.0],
+                IDENTITY.clone(),
+            )),
             None,
         )
     }

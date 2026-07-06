@@ -4,7 +4,7 @@
 //! Each layer contains its weights, biases, and activation function, enabling flexible and modular
 //! construction of multi-layer perceptron and similar models.
 
-use crate::activations::{Activation, SIGMOID, SOFTMAX};
+use crate::activations::{Activation, IDENTITY, SIGMOID, SOFTMAX};
 use crate::data::scalers::{Scaler, ScalerFeatureMismatch, ScalerMethod};
 use crate::layers::{Dense, Layer};
 use ndarray::{Array1, Array2, ArrayD, ArrayView, Axis, Dimension, Ix2};
@@ -71,6 +71,20 @@ pub fn last_activation(activations: &[ArrayD<f32>]) -> ArrayD<f32> {
         .last()
         .expect("forward always yields at least the input activation")
         .to_owned()
+}
+
+/// The output activation a classification network's logits are mapped through at inference,
+/// inferred from the output width: a single logit is binary (sigmoid), `k` logits are
+/// multi-class (softmax). The network trains on logits (a linear output layer), so this is
+/// applied as a post-processing step by [`NeuralNetwork::probabilities`] and the inference
+/// consumers, never as a layer in the differentiated graph.
+pub fn output_activation_for(n_outputs: usize) -> Arc<dyn Activation> {
+    let activation: Arc<dyn Activation> = if n_outputs == 1 {
+        SIGMOID.clone()
+    } else {
+        SOFTMAX.clone()
+    };
+    activation
 }
 
 impl NeuralNetwork {
@@ -242,24 +256,23 @@ impl NeuralNetwork {
             })
     }
 
-    /// Predicts the output of the network given the inputs, returning the final activations.
+    /// Predicts the output of the network given the inputs, returning the output layer's raw
+    /// logits (the linear output applies no activation).
+    ///
+    /// For class probabilities use [`probabilities`](NeuralNetwork::probabilities); training
+    /// and the loss/accuracy metrics operate directly on these logits.
     /// # Arguments
     /// - `inputs`: An array whose last axis is samples and whose leading axes are the features
     ///   (rank-2 `(features, samples)` for a dense network, higher-rank for a spatial one).
     /// # Errors
     /// [`InputShapeMismatch`] when the leading (feature) axes differ from the network's input shape.
-    pub fn predict<D: Dimension>(
+    pub fn output<D: Dimension>(
         &self,
         inputs: ArrayView<f32, D>,
     ) -> Result<Array2<f32>, InputShapeMismatch> {
-        let output = last_activation(&self.forward(inputs)?)
+        Ok(last_activation(&self.forward(inputs)?)
             .into_dimensionality::<Ix2>()
-            .expect("the output layer produces rank-2 (classes, samples) activations");
-        assert!(
-            output.iter().all(|v| v.is_finite()),
-            "non-finite predictions (NaN or inf): the model likely diverged during training"
-        );
-        Ok(output)
+            .expect("the output layer produces rank-2 (classes, samples) activations"))
     }
 }
 
@@ -294,8 +307,9 @@ impl Predictor {
         Ok(self.predict(inputs)?.column(0).to_owned())
     }
 
-    /// Predicts on a batch of raw inputs of any rank (samples on the trailing axis),
-    /// applying the scaler first when present.
+    /// Predicts class probabilities for a batch of raw inputs of any rank (samples on the
+    /// trailing axis): applies the scaler first when present, then maps the network's logits
+    /// through the inferred output activation ([`output_activation_for`]).
     ///
     /// # Errors
     /// [`PredictionError::Scaling`] when a scaler is present and the inputs do not match
@@ -305,14 +319,15 @@ impl Predictor {
         &self,
         inputs: ArrayView<f32, D>,
     ) -> Result<Array2<f32>, PredictionError> {
-        match &self.scaler {
+        let logits = match &self.scaler {
             Some(scaler) => {
                 let mut owned = inputs.to_owned().into_dyn();
                 scaler.apply_inplace(owned.view_mut())?;
-                Ok(self.network.predict(owned.view())?)
+                self.network.output(owned.view())?
             }
-            None => Ok(self.network.predict(inputs)?),
-        }
+            None => self.network.output(inputs)?,
+        };
+        Ok(output_activation_for(logits.nrows()).apply(logits.view()))
     }
 }
 
@@ -392,8 +407,10 @@ impl NeuronLayerSpec {
 
     /// Creates an output layer specification based on the number of classes.
     ///
-    /// - For binary classification (n_classes = 2): 1 neuron with sigmoid activation
-    /// - For multi-class classification (n_classes > 2): n_classes neurons with softmax activation
+    /// The output layer is **linear** (it emits logits): softmax/sigmoid is not applied in the
+    /// forward pass but folded into the cross-entropy loss during training and reapplied at
+    /// inference by [`output_activation_for`]. The width still encodes the task — 1 logit for
+    /// binary, `n_classes` logits for multi-class — so the inference activation stays inferable.
     ///
     /// # Panics
     /// When `n_classes` is less than or equal to 1. This is a precondition the caller
@@ -408,15 +425,10 @@ impl NeuronLayerSpec {
             "Number of classes must be greater than 1, got {}",
             n_classes
         );
-        match n_classes {
-            2 => NeuronLayerSpec {
-                neurons: 1,
-                activation: SIGMOID.clone(),
-            },
-            _ => NeuronLayerSpec {
-                neurons: n_classes,
-                activation: SOFTMAX.clone(),
-            },
+        let neurons = if n_classes == 2 { 1 } else { n_classes };
+        NeuronLayerSpec {
+            neurons,
+            activation: IDENTITY.clone(),
         }
     }
 
@@ -540,7 +552,7 @@ mod tests {
 
     #[test]
     fn network_reports_input_size_and_summary() {
-        // 3 inputs -> 4 relu -> 3 softmax
+        // 3 inputs -> 4 relu -> 3 identity (logits)
         let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 3);
         let model = NeuralNetwork::initialization(3, &specs, 0);
 
@@ -549,7 +561,7 @@ mod tests {
         assert_eq!(model.layers[0].output_size(), 4);
         assert_eq!(model.layers[1].output_size(), 3);
 
-        assert_eq!(model.summary(), "[3] -> [4]-relu -> [3]-softmax");
+        assert_eq!(model.summary(), "[3] -> [4]-relu -> [3]-identity");
     }
 
     #[test]
@@ -566,14 +578,14 @@ mod tests {
                 &mut StdRng::seed_from_u64(0),
             ));
 
-        assert_eq!(model.summary(), "[2, 2, 2] -> [8] -> [1]-sigmoid");
+        assert_eq!(model.summary(), "[2, 2, 2] -> [8] -> [1]-identity");
     }
 
     #[test]
     fn convolutional_network_predicts_end_to_end_on_a_spatial_batch() {
         use crate::layers::{Conv2d, Flatten};
 
-        // Conv2d (1×4×4 → 2×2×2) → Flatten (8) → Dense (1 sigmoid, binary). The rank-4
+        // Conv2d (1×4×4 → 2×2×2) → Flatten (8) → Dense (1 identity logit, binary). The rank-4
         // spatial batch threads through forward/predict unchanged; the Flatten collapses it
         // to the rank-2 the Dense head consumes, and predict yields (classes, samples).
         let conv = Conv2d::initialization(
@@ -598,7 +610,7 @@ mod tests {
         let inputs = Array::from_shape_fn(IxDyn(&[1, 4, 4, 3]), |idx| {
             ((idx[1] + idx[2] + idx[3]) as f32).sin()
         });
-        let output = model.predict(inputs.view()).unwrap();
+        let output = Predictor::new(model, None).predict(inputs.view()).unwrap();
         assert_eq!(output.shape(), &[1, 3]); // (classes, samples)
         assert!(output.iter().all(|&v| (0.0..=1.0).contains(&v)));
     }
@@ -609,7 +621,7 @@ mod tests {
         use crate::layers::Flatten;
         use ndarray::{Array4, s};
 
-        // Flatten (2×2×2 → 8) → Dense (1 sigmoid, binary): a network that accepts a
+        // Flatten (2×2×2 → 8) → Dense (1 identity logit, binary): a network that accepts a
         // rank-4 spatial batch. Two identical builds (same seed) let one go into the
         // predictor and the other check the bare network on manually scaled inputs.
         let network = |seed| {
@@ -632,7 +644,9 @@ mod tests {
         let via_predictor = predictor.predict(inputs.view()).unwrap();
         let mut scaled = inputs.clone().into_dyn();
         scaler.apply_inplace(scaled.view_mut()).unwrap();
-        let via_network = network(1).predict(scaled.view()).unwrap();
+        let via_network = Predictor::new(network(1), None)
+            .predict(scaled.view())
+            .unwrap();
         assert_eq!(via_predictor, via_network);
 
         // A single rank-3 instance is scaled with the same parameters, so it matches
@@ -731,7 +745,7 @@ mod tests {
         let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 3);
         let model = NeuralNetwork::initialization(3, &specs, 0);
         let inputs = Array2::zeros((3, 5)); // (features, samples)
-        let output = model.predict(inputs.view()).unwrap();
+        let output = model.output(inputs.view()).unwrap();
         assert_eq!(output.shape(), &[3, 5]); // (classes, samples)
     }
 
@@ -744,7 +758,7 @@ mod tests {
 
         // Any input should produce relu(1.0)=1.0 and relu(-1.0)=0.0
         let inputs = array![[5.0, 9.0], [2.0, 7.0], [8.0, 3.0]];
-        let output = model.predict(inputs.view()).unwrap();
+        let output = model.output(inputs.view()).unwrap();
         for col in output.columns() {
             assert!((col[0] - 1.0).abs() < 1e-6);
             assert!((col[1] - 0.0).abs() < 1e-6);
@@ -756,22 +770,22 @@ mod tests {
         // weights = I, bias = 0, relu -> output == input for positive values
         let model = make_network(Array2::eye(3), Array1::zeros(3), RELU.clone());
         let inputs = array![[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]];
-        let output = model.predict(inputs.view()).unwrap();
+        let output = model.output(inputs.view()).unwrap();
         assert!((&output - &inputs).mapv(f32::abs).iter().all(|&v| v < 1e-6));
     }
 
     #[test]
-    fn sigmoid_output_always_in_zero_one() {
+    fn probabilities_always_in_zero_one() {
         let specs = NeuronLayerSpec::network_for(vec![], &*SIGMOID, 2);
         let model = NeuralNetwork::initialization(4, &specs, 0);
-        // f32 saturates to exactly 0.0 or 1.0 for large inputs, so use closed interval
+        // f32 saturates to exactly 0.0 or 1.0 for large logits, so use closed interval
         let inputs = array![
             [100.0, -100.0],
             [100.0, -100.0],
             [100.0, -100.0],
             [100.0, -100.0]
         ];
-        let output = model.predict(inputs.view()).unwrap();
+        let output = Predictor::new(model, None).predict(inputs.view()).unwrap();
         for &v in output.iter() {
             assert!(
                 (0.0..=1.0).contains(&v),
@@ -788,18 +802,20 @@ mod tests {
         let inputs = Array2::zeros((3, 5));
 
         let activations = model.forward(inputs.view()).unwrap();
-        let predicted = model.predict(inputs.view()).unwrap();
+        let predicted = model.output(inputs.view()).unwrap();
 
         assert_eq!(predicted.into_dyn(), *activations.last().unwrap());
     }
 
     #[test]
-    #[should_panic(expected = "non-finite predictions")]
-    fn predict_panics_when_model_has_diverged() {
+    fn predict_passes_through_a_diverged_model_output() {
+        // predict is a pure forward pass and does not guard against divergence (the trainer
+        // does, via weight finiteness), so a NaN weight surfaces as a NaN prediction.
         let mut model = make_network(Array2::zeros((1, 2)), Array1::zeros(1), SIGMOID.clone());
         *dense_mut(&mut model, 0).affine_mut().weights_mut() = array![[f32::NAN, 0.0]];
         let inputs = array![[1.0], [1.0]];
-        let _ = model.predict(inputs.view());
+        let prediction = model.output(inputs.view()).unwrap();
+        assert!(prediction.iter().any(|v| v.is_nan()));
     }
 
     #[test]

@@ -9,7 +9,9 @@
 
 use crate::classification::Classification;
 use crate::data::scalers::Scaler;
-use crate::model::{InputShapeMismatch, NeuralNetwork, PredictionError, Predictor};
+use crate::model::{
+    InputShapeMismatch, NeuralNetwork, PredictionError, Predictor, output_activation_for,
+};
 use crate::plot::scene::Color;
 use ndarray::{Array2, ArrayView1, ArrayView2, Axis, Ix2};
 
@@ -178,7 +180,7 @@ impl NeuralNetwork {
         input: ArrayView1<f32>,
         options: &DiagramOptions,
     ) -> Result<ActivationDiagram, InputShapeMismatch> {
-        let activations: Vec<Array2<f32>> = self
+        let mut activations: Vec<Array2<f32>> = self
             .forward(input.insert_axis(Axis(1)))?
             .into_iter()
             .map(|values| {
@@ -188,6 +190,11 @@ impl NeuralNetwork {
             })
             .collect();
         let last_stage = activations.len() - 1;
+        // The output layer is linear (logits); replace them with the class probabilities the
+        // inference activation produces, so the diagram's output units and its ranking read as
+        // probabilities (softmax/sigmoid) rather than raw logits.
+        activations[last_stage] = output_activation_for(activations[last_stage].nrows())
+            .apply(activations[last_stage].view());
         let shown: Vec<Vec<usize>> = activations
             .iter()
             .map(|values| shown_indices(values.column(0), options.max_units))
@@ -364,7 +371,7 @@ fn edges_for(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activations::{Activation, RELU};
+    use crate::activations::{Activation, RELU, SOFTMAX};
     use crate::layers::Dense;
     use crate::model::NeuralNetwork;
     use ndarray::{Array1, Array2, array};
@@ -636,17 +643,17 @@ mod tests {
 
     #[test]
     fn output_neuron_intensity_tracks_its_probability_not_the_layer_peak() {
-        // Output activations [0.3, 0.4]: read as probabilities, each neuron's
-        // intensity is its own value, not the smaller one scaled up against the
-        // peak (which would make the 0.3 class render at 0.75 intensity).
+        // Output logits [0.3, 0.4]: the diagram applies softmax, and each output neuron's
+        // intensity is its own probability, not the smaller one scaled up against the peak.
         let net = relu_network(array![[0.3, 0.0], [0.4, 0.0]], array![0.0, 0.0]);
         let diagram = net
             .activation_diagram(array![1.0, 0.0].view(), &DiagramOptions::default())
             .unwrap();
 
+        let probabilities = SOFTMAX.apply(array![[0.3], [0.4]].view());
         let output = diagram.layers.last().unwrap();
-        assert_eq!(output.units[0].intensity, 0.3);
-        assert_eq!(output.units[1].intensity, 0.4);
+        assert_eq!(output.units[0].intensity, probabilities[[0, 0]]);
+        assert_eq!(output.units[1].intensity, probabilities[[1, 0]]);
     }
 
     #[test]

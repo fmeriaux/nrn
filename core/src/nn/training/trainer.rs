@@ -212,7 +212,7 @@ impl Trainer {
 
     /// Computes an evaluation for the current model and reports it via
     /// [`Callbacks::on_checkpoint`]. Returns `None` without evaluating if the model
-    /// has diverged (non-finite weights), since evaluating it would panic.
+    /// has diverged (non-finite weights), since its evaluation would be meaningless.
     fn checkpoint(
         &mut self,
         evaluator: &Evaluator,

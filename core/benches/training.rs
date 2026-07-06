@@ -180,7 +180,7 @@ fn bench_inference(c: &mut Criterion) {
         ("cnn", cnn_workload()),
     ] {
         group.bench_function(name, |b| {
-            b.iter(|| black_box(w.model.predict(w.dataset.inputs().view())));
+            b.iter(|| black_box(w.model.output(w.dataset.inputs().view())));
         });
     }
     group.finish();
