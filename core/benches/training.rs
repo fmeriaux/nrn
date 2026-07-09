@@ -20,7 +20,7 @@ use nrn::data::ModelDataset;
 use nrn::gradients::GradientClipping;
 use nrn::layers::{Conv2d, Dense, Flatten};
 use nrn::learning_rate::LearningRate;
-use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
+use nrn::loss_functions::{CategoricalCrossEntropy, LossFunction, Reduction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::{Adam, Optimizer};
 use nrn::schedulers::{ConstantScheduler, Scheduler};
@@ -153,7 +153,7 @@ fn cnn_workload() -> Workload {
 }
 
 fn loss() -> Arc<dyn LossFunction> {
-    CROSS_ENTROPY_LOSS.clone()
+    Arc::new(CategoricalCrossEntropy::new(Reduction::Mean))
 }
 
 /// Runs one training epoch on `model` — the unit the epoch benchmarks measure.

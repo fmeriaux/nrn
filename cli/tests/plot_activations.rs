@@ -47,7 +47,6 @@ fn console_prints_the_diagram_without_the_ranked_decision() {
         .assert()
         .success()
         .stdout(contains("Input (2 features)"))
-        .stdout(contains("class 1"))
         // A figure, not a report: the classification ranking belongs to `predict`.
         .stdout(contains("CLASSIFICATION").not());
 }

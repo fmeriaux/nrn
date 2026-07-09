@@ -68,9 +68,8 @@ fn activations_flag_prints_the_diagram_above_the_classification() {
         .write_stdin("0.3\n0.7\n")
         .assert()
         .success()
-        // The forward-pass diagram, its output neuron read as a class probability,
+        // The forward-pass diagram,
         .stdout(contains("Input (2 features)"))
-        .stdout(contains("class 1"))
         // then the ranked classification with the winning class arrow-marked.
         .stdout(contains("CLASSIFICATION"))
         .stdout(contains('\u{25c0}'));

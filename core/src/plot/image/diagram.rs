@@ -39,9 +39,8 @@ impl ActivationDiagram {
     /// neurons per layer from input (left) to output (right), each neuron a
     /// circle tinted by activation intensity (hollow when silent) and each
     /// connection a line colored by weight sign, its width and opacity scaled by
-    /// magnitude. The input neurons are annotated with their feature values and the
-    /// output neurons with their class probability, and a legend runs along the
-    /// bottom.
+    /// magnitude. The input and output neurons are annotated with their values, and
+    /// a legend runs along the bottom.
     pub fn to_image(&self, cfg: &ImageConfig) -> Result<RasterImage, Box<dyn Error>> {
         let mut bytes = vec![255u8; (cfg.width * cfg.height * 3) as usize];
         {
@@ -181,9 +180,8 @@ impl ActivationDiagram {
         Ok(())
     }
 
-    /// Labels every neuron below its marker in a reduced font: an output neuron by
-    /// its class, the rest by their index, so the sampled neurons of a large layer
-    /// stay identifiable.
+    /// Labels every neuron below its marker in a reduced font by its index, so the
+    /// sampled neurons of a large layer stay identifiable.
     fn draw_indices(
         &self,
         root: &DrawingArea<BitMapBackend, Shift>,
@@ -197,10 +195,7 @@ impl ActivationDiagram {
             .pos(Pos::new(HPos::Center, VPos::Top));
         for (layer, positions) in self.layers.iter().zip(positions) {
             for (unit, &(x, y)) in layer.units.iter().zip(positions) {
-                let label = match unit.class {
-                    Some(class) => format!("class {class}"),
-                    None => format!("n{}", unit.index),
-                };
+                let label = format!("n{}", unit.index);
                 root.draw(&Text::new(label, (x, y + radius + 2), font.clone()))?;
             }
         }
@@ -235,9 +230,8 @@ impl ActivationDiagram {
         Ok(())
     }
 
-    /// Annotates the input and output neurons alongside their markers: input
-    /// features to the left of their column as raw values, output neurons to the
-    /// right as their class probability.
+    /// Annotates the input and output neurons alongside their markers with their
+    /// values: input features to the left of their column, output neurons to the right.
     fn draw_values(
         &self,
         root: &DrawingArea<BitMapBackend, Shift>,
@@ -258,10 +252,7 @@ impl ActivationDiagram {
                 .color(&BLACK)
                 .pos(Pos::new(hpos, VPos::Center));
             for (unit, &(x, y)) in self.layers[column].units.iter().zip(&positions[column]) {
-                let label = match unit.class {
-                    Some(_) => format!("{:.1}%", unit.value * 100.0),
-                    None => format!("{:.4}", unit.value),
-                };
+                let label = format!("{:.4}", unit.value);
                 root.draw(&Text::new(label, (x + dx, y), font.clone()))?;
             }
         }

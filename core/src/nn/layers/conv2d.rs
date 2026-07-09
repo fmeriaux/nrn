@@ -2,7 +2,7 @@ use crate::activations::Activation;
 use crate::affine::Affine;
 use crate::gradients::LayerGradients;
 use crate::layers::{BackwardPass, Layer, LayerConfigError, LayerKind, Parameter};
-use ndarray::{Array1, Array2, Array4, ArrayD, ArrayView2, ArrayView4, ArrayViewD, Ix1, Ix4};
+use ndarray::{Array1, Array2, Array4, ArrayD, ArrayView2, ArrayView4, ArrayViewD, Ix1, Ix2, Ix4};
 use ndarray_rand::rand::RngCore;
 use std::any::Any;
 use std::collections::HashMap;
@@ -213,7 +213,7 @@ impl Layer for Conv2d {
         let out_h = conv_output_dim(height, kh, self.stride, self.padding);
         let out_w = conv_output_dim(width, kw, self.stride, self.padding);
         self.activation
-            .apply(pre_activation.view())
+            .apply(pre_activation.into_dyn().view())
             .to_shape((out_channels, out_h, out_w, samples))
             .expect("the matmul result folds back to (out_channels, out_h, out_w, samples)")
             .into_owned()
@@ -254,7 +254,12 @@ impl Layer for Conv2d {
 
         // The columns span spatial positions as well as samples, so the affine backward is told
         // to average over the sample count alone; col2im then folds the input gradient back.
-        let dz = self.activation.vjp(da.view(), output.view());
+        let dz = self
+            .activation
+            .vjp(da.view().into_dyn(), output.view().into_dyn())
+            .into_dimensionality::<Ix2>()
+            .expect("the VJP preserves the rank-2 (outputs, columns) shape");
+
         let cols = im2col(input, kh, kw, self.stride, self.padding);
         let (dw, db, dcols) = self.affine.backward(
             dz.view(),

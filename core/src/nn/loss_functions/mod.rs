@@ -1,26 +1,92 @@
-mod cross_entropy_loss;
+//! Loss functions used to evaluate model performance and drive gradient descent.
+//!
+//! Every implementation defines the per-term error (`terms`), from which the scalar
+//! evaluation (`compute`) is derived by [`Reduction`], plus the analytical derivative
+//! with respect to the evaluated network state (`gradient`).
 
-pub use cross_entropy_loss::{CROSS_ENTROPY_LOSS, CrossEntropyLoss};
+mod binary_cross_entropy;
+mod categorical_cross_entropy;
 
-use ndarray::{Array2, ArrayView2};
+pub use binary_cross_entropy::BinaryCrossEntropy;
+pub use categorical_cross_entropy::CategoricalCrossEntropy;
 
+use ndarray::{ArrayD, ArrayViewD};
+
+/// How a loss reduces its per-term values into the single scalar reported for a batch.
+///
+/// The per-term granularity is the loss's own: element-wise for binary cross-entropy
+/// (one term per logit), per-position for categorical cross-entropy (the class lane is
+/// already summed). `Mean` therefore averages over the same unit — positions — for both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Reduction {
+    /// Sum of every term.
+    Sum,
+    /// Mean over every term.
+    #[default]
+    Mean,
+}
+
+impl Reduction {
+    /// Collapses a loss's per-term array into the reported scalar.
+    fn reduce(self, terms: ArrayD<f32>) -> f32 {
+        match self {
+            Reduction::Sum => terms.sum(),
+            Reduction::Mean => terms.sum() / terms.len() as f32,
+        }
+    }
+}
+
+/// Defines the contract for a loss function.
+///
+/// Implementations of this trait are decoupled from specific model tasks. Standard
+/// classification losses (like Cross-Entropy) expect these `inputs` to be raw,
+/// un-activated scores (**logits**).
 pub trait LossFunction: Send + Sync {
     /// Returns a human-readable name for this loss function.
     fn name(&self) -> &'static str;
 
-    /// Computes the loss from the network's outputs and the true targets.
-    ///
-    /// # Arguments
-    ///
-    /// * `outputs` - A 2D array of the network's outputs, one column per sample.
-    /// * `targets` - A 2D array of the expected (true) values, one column per sample.
-    fn compute(&self, outputs: ArrayView2<f32>, targets: ArrayView2<f32>) -> f32;
+    /// The [`Reduction`] this loss applies to turn its per-term values into a scalar.
+    fn reduction(&self) -> Reduction;
 
-    /// Computes the gradient of the loss with respect to the network's output, ∂L/∂output —
-    /// the array the backward pass propagates back from the output layer.
+    /// Computes the per-term loss at the function's native granularity — element-wise
+    /// for binary cross-entropy, per-position for categorical — before reduction.
     ///
     /// # Arguments
-    /// * `outputs` - A 2D array of the network's outputs, one column per sample.
-    /// * `targets` - A 2D array of the expected (true) values, one column per sample.
-    fn gradient(&self, outputs: ArrayView2<f32>, targets: ArrayView2<f32>) -> Array2<f32>;
+    ///
+    /// * `inputs` - An N-Dimensional array view of the network's final layer outputs.
+    ///   Laid out samples-last, with the features/classes on the leading axis.
+    /// * `targets` - An N-Dimensional array view of the expected true values, matching
+    ///   the exact shape of `inputs`.
+    fn terms(&self, inputs: ArrayViewD<f32>, targets: ArrayViewD<f32>) -> ArrayD<f32>;
+
+    /// Computes the scalar loss over the given batch: [`terms`](Self::terms) collapsed by
+    /// the loss's [`reduction`](Self::reduction).
+    ///
+    /// # Arguments
+    ///
+    /// * `inputs` - An N-Dimensional array view of the network's final layer outputs.
+    ///   Laid out samples-last, with the features/classes on the leading axis.
+    /// * `targets` - An N-Dimensional array view of the expected true values, matching
+    ///   the exact shape of `inputs`.
+    fn compute(&self, inputs: ArrayViewD<f32>, targets: ArrayViewD<f32>) -> f32 {
+        self.reduction().reduce(self.terms(inputs, targets))
+    }
+
+    /// Computes `∂L/∂inputs` — the gradient of the loss with respect to the
+    /// incoming network outputs.
+    ///
+    /// This array serves as the entry point for the backward pass, which propagates
+    /// these derivatives back through the network layers.
+    ///
+    /// # Arguments
+    ///
+    /// * `inputs` - An N-Dimensional array view of the network's final layer outputs.
+    ///   Laid out samples-last, with the features/classes on the leading axis.
+    /// * `targets` - An N-Dimensional array view of the expected true values, matching
+    ///   the exact shape of `inputs`.
+    ///
+    /// # Returns
+    /// An owned N-Dimensional array (`ArrayD<f32>`) containing the gradients,
+    /// matching the exact shape of `inputs`.
+    fn gradient(&self, inputs: ArrayViewD<f32>, targets: ArrayViewD<f32>) -> ArrayD<f32>;
 }

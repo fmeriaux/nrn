@@ -1,7 +1,6 @@
 //! Rendering an [`ActivationDiagram`] to a colored, vertical list of layers:
-//! each neuron a marker beside its value and an intensity bar. The output layer
-//! reads its neurons as class probabilities. No connections are drawn, and the
-//! ranked decision is left to the caller.
+//! each neuron a marker beside its value and an intensity bar. No connections are
+//! drawn, and the ranked decision is left to the caller.
 
 use super::{colored, colored_str};
 use crate::plot::activations::{ActivationDiagram, DiagramLayer, Unit};
@@ -16,9 +15,8 @@ const BAR_WIDTH: usize = 24;
 impl ActivationDiagram {
     /// Renders the forward pass as a vertical list of layers from input to
     /// output: each neuron a colored marker beside its value — filled and tinted
-    /// by activation intensity when firing, hollow when silent. The output layer's
-    /// neurons read as their class probability. No connections are drawn; the
-    /// ranked decision is presented separately by the caller.
+    /// by activation intensity when firing, hollow when silent. No connections are
+    /// drawn; the ranked decision is presented separately by the caller.
     pub fn to_console(&self) -> String {
         let mut output = String::new();
         for layer in &self.layers {
@@ -41,19 +39,10 @@ fn render_layer(layer: &DiagramLayer) -> String {
     block
 }
 
-/// One neuron. An output neuron reads as its class and probability; otherwise its
-/// marker, index and value, followed by a bar whose length tracks activation
-/// intensity when firing, or a right-aligned `silent` flag when not.
+/// One neuron: its marker, index and value, followed by a bar whose length tracks
+/// activation intensity when firing, or a right-aligned `silent` flag when not.
 fn render_unit(unit: &Unit) -> String {
-    if let Some(class) = unit.class {
-        let filled = (unit.intensity * BAR_WIDTH as f32).round() as usize;
-        let bar = colored_str(&"\u{2588}".repeat(filled), unit.marker_color());
-        format!(
-            "  {} class {class}  {:>5.1}%  {bar}",
-            colored('\u{25cf}', unit.marker_color()),
-            unit.value * 100.0
-        )
-    } else if unit.firing {
+    if unit.firing {
         let filled = (unit.intensity * BAR_WIDTH as f32).round() as usize;
         let bar = colored_str(&"\u{2588}".repeat(filled), unit.marker_color());
         format!(
@@ -87,8 +76,8 @@ mod tests {
     use crate::plot::activations::DiagramOptions;
     use ndarray::{Array1, Array2, array};
 
-    /// A hidden ReLU layer whose middle neuron dies, then a two-class output
-    /// layer of logits `[0.3, 0.4]` that softmax resolves to `[47.5%, 52.5%]`.
+    /// A hidden ReLU layer whose middle neuron dies, then a two-unit output layer
+    /// with activations `[0.3, 0.4]`.
     fn diagram() -> ActivationDiagram {
         let net = NeuralNetwork::single(Dense::new(
             array![[1.0, 0.0], [-1.0, 0.0], [2.0, 0.0]],
@@ -121,16 +110,6 @@ mod tests {
         // Concrete activation values are printed beside their neuron.
         assert!(text.contains("n2"));
         assert!(text.contains("2.0000"));
-    }
-
-    #[test]
-    fn to_console_reads_the_output_layer_as_class_probabilities() {
-        let text = diagram().to_console();
-        // The output neurons read as their class and softmax probability, not raw values.
-        assert!(text.contains("class 0"));
-        assert!(text.contains("class 1"));
-        assert!(text.contains("47.5%"));
-        assert!(text.contains("52.5%"));
     }
 
     #[test]

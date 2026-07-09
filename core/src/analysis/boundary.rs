@@ -17,7 +17,7 @@
 //! can be used with external plotting libraries.
 
 use crate::model::Predictor;
-use ndarray::{Array2, ArrayView1};
+use ndarray::{Array2, ArrayView1, Ix2};
 
 impl Predictor {
     /// Computes decision boundary points within the given bounds.
@@ -68,8 +68,10 @@ impl Predictor {
         let n_dims = mins.len();
         let (grid_points, inputs) = make_grid_and_inputs(mins, maxs, resolution);
         let predictions = self
-            .predict(inputs.view())
-            .expect("grid dimensionality matches the network input size");
+            .class_probabilities(inputs.view())
+            .expect("grid dimensionality matches the network input size")
+            .into_dimensionality::<Ix2>()
+            .expect("a flat grid yields rank-2 (classes, points) probabilities");
 
         // Flat-index stride to reach the next grid point along each dimension.
         let strides: Vec<usize> = (0..n_dims)

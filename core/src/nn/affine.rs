@@ -67,6 +67,16 @@ impl Affine {
         (dw, db, dinput)
     }
 
+    /// The number of inputs this map takes — the width of each weight row.
+    pub fn inputs(&self) -> usize {
+        self.weights.ncols()
+    }
+
+    /// The number of outputs this map produces — one weight row and one bias per output.
+    pub fn outputs(&self) -> usize {
+        self.weights.nrows()
+    }
+
     /// This map's weight matrix `(outputs, inputs)`.
     pub fn weights(&self) -> ArrayView2<'_, f32> {
         self.weights.view()

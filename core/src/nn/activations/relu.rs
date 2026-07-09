@@ -6,7 +6,7 @@
 
 use crate::activations::{Activation, ActivationProvider};
 use crate::initializations::{HE_UNIFORM, Initialization};
-use ndarray::{Array2, ArrayView2};
+use ndarray::{ArrayD, ArrayViewD};
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 
@@ -20,12 +20,12 @@ impl Activation for ReLU {
     }
 
     /// Applies the ReLU function element-wise to the input matrix.
-    fn apply(&self, input: ArrayView2<f32>) -> Array2<f32> {
+    fn apply(&self, input: ArrayViewD<f32>) -> ArrayD<f32> {
         input.mapv(|x| x.max(0.0))
     }
 
     /// Computes ∂L/∂z = upstream ⊙ 1[a > 0].
-    fn vjp(&self, upstream: ArrayView2<f32>, activations: ArrayView2<f32>) -> Array2<f32> {
+    fn vjp(&self, upstream: ArrayViewD<f32>, activations: ArrayViewD<f32>) -> ArrayD<f32> {
         upstream.to_owned() * activations.mapv(|x| if x > 0.0 { 1.0 } else { 0.0 })
     }
 
@@ -48,49 +48,49 @@ mod tests {
 
     #[test]
     fn apply_passes_positive_values_unchanged() {
-        let input = array![[1.0, 2.0], [3.0, 4.0]];
+        let input = array![[1.0, 2.0], [3.0, 4.0]].into_dyn();
         let result = RELU.apply(input.view());
         assert_eq!(result, input);
     }
 
     #[test]
     fn apply_zeros_negative_values() {
-        let input = array![[-1.0, -2.0], [-3.0, -0.5]];
+        let input = array![[-1.0, -2.0], [-3.0, -0.5]].into_dyn();
         let result = RELU.apply(input.view());
-        assert_eq!(result, array![[0.0, 0.0], [0.0, 0.0]]);
+        assert_eq!(result, array![[0.0, 0.0], [0.0, 0.0]].into_dyn());
     }
 
     #[test]
     fn apply_mixed_values() {
-        let input = array![[-1.0, 2.0], [0.0, -3.0]];
+        let input = array![[-1.0, 2.0], [0.0, -3.0]].into_dyn();
         let result = RELU.apply(input.view());
-        assert_eq!(result, array![[0.0, 2.0], [0.0, 0.0]]);
+        assert_eq!(result, array![[0.0, 2.0], [0.0, 0.0]].into_dyn());
     }
 
     #[test]
     fn vjp_passes_upstream_for_positive_activations() {
-        let upstream = array![[1.0, 2.0], [3.0, 4.0]];
-        let activations = array![[0.5, 1.0], [2.0, 0.1]];
+        let upstream = array![[1.0, 2.0], [3.0, 4.0]].into_dyn();
+        let activations = array![[0.5, 1.0], [2.0, 0.1]].into_dyn();
         assert_eq!(RELU.vjp(upstream.view(), activations.view()), upstream);
     }
 
     #[test]
     fn vjp_blocks_upstream_for_nonpositive_activations() {
-        let upstream = array![[1.0, 2.0], [3.0, 4.0]];
-        let activations = array![[0.0, -1.0], [-2.0, 0.0]];
+        let upstream = array![[1.0, 2.0], [3.0, 4.0]].into_dyn();
+        let activations = array![[0.0, -1.0], [-2.0, 0.0]].into_dyn();
         assert_eq!(
             RELU.vjp(upstream.view(), activations.view()),
-            array![[0.0, 0.0], [0.0, 0.0]]
+            array![[0.0, 0.0], [0.0, 0.0]].into_dyn()
         );
     }
 
     #[test]
     fn vjp_mixed_activations() {
-        let upstream = array![[2.0, 3.0]];
-        let activations = array![[1.0, -1.0]];
+        let upstream = array![[2.0, 3.0]].into_dyn();
+        let activations = array![[1.0, -1.0]].into_dyn();
         assert_eq!(
             RELU.vjp(upstream.view(), activations.view()),
-            array![[2.0, 0.0]]
+            array![[2.0, 0.0]].into_dyn()
         );
     }
 }

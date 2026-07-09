@@ -1,19 +1,17 @@
 //! Activation diagram: a neural network's forward pass on a single instance,
 //! as a backend-neutral model of colored neurons and weighted connections.
 //!
-//! [`NeuralNetwork::activation_diagram`] runs the instance through the network
-//! and records, for every layer, each neuron's activation and the connections
-//! feeding it. Renderers (console, image) consume the diagram behind their own
-//! feature flags. Layers larger than [`DiagramOptions::max_units`] keep only
-//! their most active neurons so the model stays drawable.
+//! [`ActivationDiagram::from_activations`] records, for every layer, each neuron's
+//! activation and the connections feeding it, showing the values it is given.
+//! Renderers (console, image) consume the diagram behind their own feature flags.
+//! Layers larger than [`DiagramOptions::max_units`] keep only their most active
+//! neurons so the model stays drawable.
 
-use crate::classification::Classification;
+use crate::activations::probabilities_from_logits;
 use crate::data::scalers::Scaler;
-use crate::model::{
-    InputShapeMismatch, NeuralNetwork, PredictionError, Predictor, output_activation_for,
-};
+use crate::model::{InputShapeMismatch, NeuralNetwork, PredictionError, Predictor};
 use crate::plot::scene::Color;
-use ndarray::{Array2, ArrayView1, ArrayView2, Axis, Ix2};
+use ndarray::{ArrayD, ArrayView1, ArrayView2, Axis, Ix2};
 
 /// Activation magnitudes at or below this count as a silent neuron.
 const FIRING_EPSILON: f32 = 1e-6;
@@ -53,10 +51,6 @@ pub struct Unit {
     pub intensity: f32,
     /// Whether the neuron's magnitude exceeds the silence threshold.
     pub firing: bool,
-    /// The output class this neuron carries when it belongs to the output layer,
-    /// where its `value` is that class's probability; `None` for input and hidden
-    /// neurons.
-    pub class: Option<usize>,
 }
 
 impl Unit {
@@ -159,48 +153,37 @@ impl DiagramLayer {
     }
 }
 
-/// A neural network's forward pass on one instance: per-layer neuron activations,
-/// the connections between them, and the resulting class ranking.
+/// A neural network's forward pass on one instance: per-layer neuron activations and
+/// the connections between them.
 #[derive(Clone, Debug)]
 pub struct ActivationDiagram {
     /// The layers from input to output, in order.
     pub layers: Vec<DiagramLayer>,
-    /// The class probabilities, ranked most likely first.
-    pub classification: Classification,
 }
 
-impl NeuralNetwork {
-    /// Builds an [`ActivationDiagram`] from a forward pass on a single `input`
-    /// instance, capping and pruning per `options`.
-    ///
-    /// # Errors
-    /// [`InputShapeMismatch`] when `input`'s length does not match the network's input size.
-    pub fn activation_diagram(
-        &self,
-        input: ArrayView1<f32>,
+impl ActivationDiagram {
+    /// Builds a diagram from `network` and the per-layer `activations` of a single forward
+    /// pass, capping and pruning per `options`. Each neuron shows the value it is given.
+    pub fn from_activations(
+        network: &NeuralNetwork,
+        activations: &[ArrayD<f32>],
         options: &DiagramOptions,
-    ) -> Result<ActivationDiagram, InputShapeMismatch> {
-        let mut activations: Vec<Array2<f32>> = self
-            .forward(input.insert_axis(Axis(1)))?
-            .into_iter()
+    ) -> ActivationDiagram {
+        let stages: Vec<ArrayView2<f32>> = activations
+            .iter()
             .map(|values| {
                 values
+                    .view()
                     .into_dimensionality::<Ix2>()
                     .expect("the diagram visualizes rank-2 (features, samples) activations")
             })
             .collect();
-        let last_stage = activations.len() - 1;
-        // The output layer is linear (logits); replace them with the class probabilities the
-        // inference activation produces, so the diagram's output units and its ranking read as
-        // probabilities (softmax/sigmoid) rather than raw logits.
-        activations[last_stage] = output_activation_for(activations[last_stage].nrows())
-            .apply(activations[last_stage].view());
-        let shown: Vec<Vec<usize>> = activations
+        let shown: Vec<Vec<usize>> = stages
             .iter()
             .map(|values| shown_indices(values.column(0), options.max_units))
             .collect();
 
-        let layers = activations
+        let layers = stages
             .iter()
             .enumerate()
             .map(|(stage, values)| {
@@ -208,11 +191,11 @@ impl NeuralNetwork {
                 let (role, edges) = if stage == 0 {
                     (LayerRole::Input, Vec::new())
                 } else {
-                    let layer = &self.layers()[stage - 1];
+                    let layer = &network.layers()[stage - 1];
                     let edges = match layer.weight_matrix() {
                         Some(weights) => edges_for(
                             weights,
-                            activations[stage - 1].column(0),
+                            stages[stage - 1].column(0),
                             &shown[stage - 1],
                             &shown[stage],
                             options.min_edge_magnitude,
@@ -226,30 +209,42 @@ impl NeuralNetwork {
                         edges,
                     )
                 };
-                let mut units = units_for(column, &shown[stage]);
-                if stage == last_stage {
-                    label_output_classes(&mut units, column.len());
-                }
                 DiagramLayer {
                     role,
-                    units,
+                    units: units_for(column, &shown[stage]),
                     total_units: column.len(),
                     edges,
                 }
             })
             .collect();
 
-        let classification = Classification::from_outputs(activations.last().unwrap().column(0));
-        Ok(ActivationDiagram {
-            layers,
-            classification,
-        })
+        ActivationDiagram { layers }
+    }
+}
+
+impl NeuralNetwork {
+    /// Builds an [`ActivationDiagram`] from a forward pass on a single `input` instance,
+    /// showing each layer's raw activations.
+    ///
+    /// # Errors
+    /// [`InputShapeMismatch`] when `input`'s length does not match the network's input size.
+    pub fn activation_diagram(
+        &self,
+        input: ArrayView1<f32>,
+        options: &DiagramOptions,
+    ) -> Result<ActivationDiagram, InputShapeMismatch> {
+        let activations = self.forward(input.insert_axis(Axis(1)))?;
+        Ok(ActivationDiagram::from_activations(
+            self,
+            activations.stages(),
+            options,
+        ))
     }
 }
 
 impl Predictor {
-    /// Builds an [`ActivationDiagram`] for one raw `input`, applying the scaler
-    /// first when present so the diagram reflects what the network sees.
+    /// Builds an [`ActivationDiagram`] for one raw `input`, applying the scaler first when
+    /// present and showing the output layer as class probabilities.
     ///
     /// # Errors
     /// [`PredictionError::Scaling`] when a scaler is present and the input does not match
@@ -266,7 +261,18 @@ impl Predictor {
             let mut expanded = input.view_mut().insert_axis(Axis(1)).into_dyn();
             scaler.apply_inplace(expanded.view_mut())?;
         }
-        Ok(self.network.activation_diagram(input.view(), options)?)
+        let mut stages = self
+            .network
+            .forward(input.view().insert_axis(Axis(1)))?
+            .into_stages();
+        if let Some(output) = stages.last_mut() {
+            *output = probabilities_from_logits(output.view());
+        }
+        Ok(ActivationDiagram::from_activations(
+            &self.network,
+            &stages,
+            options,
+        ))
     }
 }
 
@@ -302,23 +308,9 @@ fn units_for(column: ArrayView1<f32>, shown: &[usize]) -> Vec<Unit> {
                 value,
                 intensity: if peak > 0.0 { value.abs() / peak } else { 0.0 },
                 firing: value.abs() > FIRING_EPSILON,
-                class: None,
             }
         })
         .collect()
-}
-
-/// Tags each output neuron with the class it carries: a single output is the
-/// binary positive class (`1`), while several outputs each stand for the class at
-/// their own index. Their `value` is already that class's probability, so the
-/// intensity is reset to track that probability directly rather than the layer's
-/// peak — the bar and tint then read as confidence, not relative rank.
-fn label_output_classes(units: &mut [Unit], output_count: usize) {
-    let binary = output_count == 1;
-    for unit in units {
-        unit.class = Some(if binary { 1 } else { unit.index });
-        unit.intensity = unit.value.clamp(0.0, 1.0);
-    }
 }
 
 /// The connections from the previous layer's shown neurons to this layer's, with
@@ -371,7 +363,7 @@ fn edges_for(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activations::{Activation, RELU, SOFTMAX};
+    use crate::activations::{Activation, RELU};
     use crate::layers::Dense;
     use crate::model::NeuralNetwork;
     use ndarray::{Array1, Array2, array};
@@ -578,14 +570,12 @@ mod tests {
             value: 1.0,
             intensity: 1.0,
             firing: true,
-            class: None,
         };
         let negative = Unit {
             index: 1,
             value: -1.0,
             intensity: 1.0,
             firing: true,
-            class: None,
         };
         // At full intensity the marker is its base hue, blue for positive and orange
         // for negative.
@@ -616,61 +606,23 @@ mod tests {
     }
 
     #[test]
-    fn the_classification_ranks_the_output_activations() {
-        let net = relu_network(array![[1.0, 0.0], [3.0, 0.0]], array![0.0, 0.0]);
-        let diagram = net
-            .activation_diagram(array![1.0, 0.0].view(), &DiagramOptions::default())
-            .unwrap();
-
-        // Output activations [1.0, 3.0]: class 1 leads.
-        assert_eq!(diagram.classification.top().0, 1);
-    }
-
-    #[test]
-    fn multi_output_neurons_carry_their_own_class() {
-        let net = relu_network(array![[1.0, 0.0], [3.0, 0.0]], array![0.0, 0.0]);
-        let diagram = net
-            .activation_diagram(array![1.0, 0.0].view(), &DiagramOptions::default())
-            .unwrap();
-
-        // Two output neurons stand for classes 0 and 1 at their own index.
-        let output = diagram.layers.last().unwrap();
-        assert_eq!(output.units[0].class, Some(0));
-        assert_eq!(output.units[1].class, Some(1));
-        // Hidden and input neurons carry no class.
-        assert!(diagram.layers[0].units.iter().all(|u| u.class.is_none()));
-    }
-
-    #[test]
-    fn output_neuron_intensity_tracks_its_probability_not_the_layer_peak() {
-        // Output logits [0.3, 0.4]: the diagram applies softmax, and each output neuron's
-        // intensity is its own probability, not the smaller one scaled up against the peak.
+    fn the_predictor_diagram_shows_the_output_layer_as_probabilities() {
+        // Output logits [0.3, 0.4]: the predictor converts the output stage, so its neurons
+        // carry the softmax probabilities rather than the raw logits.
         let net = relu_network(array![[0.3, 0.0], [0.4, 0.0]], array![0.0, 0.0]);
-        let diagram = net
+        let predictor = Predictor::new(net, None);
+        let diagram = predictor
             .activation_diagram(array![1.0, 0.0].view(), &DiagramOptions::default())
             .unwrap();
 
-        let probabilities = SOFTMAX.apply(array![[0.3], [0.4]].view());
+        let probabilities = probabilities_from_logits(array![[0.3], [0.4]].view().into_dyn());
         let output = diagram.layers.last().unwrap();
-        assert_eq!(output.units[0].intensity, probabilities[[0, 0]]);
-        assert_eq!(output.units[1].intensity, probabilities[[1, 0]]);
+        assert_eq!(output.units[0].value, probabilities[[0, 0]]);
+        assert_eq!(output.units[1].value, probabilities[[1, 0]]);
     }
 
     #[test]
-    fn a_single_output_neuron_carries_the_binary_positive_class() {
-        let net = relu_network(array![[1.0, 0.0]], array![0.0]);
-        let diagram = net
-            .activation_diagram(array![1.0, 1.0].view(), &DiagramOptions::default())
-            .unwrap();
-
-        // A lone output neuron is the sigmoid positive class (class 1).
-        let output = diagram.layers.last().unwrap();
-        assert_eq!(output.units.len(), 1);
-        assert_eq!(output.units[0].class, Some(1));
-    }
-
-    #[test]
-    fn a_scaler_free_predictor_diagram_matches_the_bare_network() {
+    fn a_scaler_free_predictor_diagram_feeds_the_raw_input_through() {
         let net = relu_network(array![[1.0, 0.0], [3.0, 0.0]], array![0.0, 0.0]);
         let predictor = Predictor::new(net.clone(), None);
         let options = DiagramOptions::default();
@@ -684,7 +636,6 @@ mod tests {
 
         // Without a scaler the predictor feeds the raw input straight through.
         assert_eq!(from_predictor.layers[0].units, from_network.layers[0].units);
-        assert_eq!(from_predictor.classification, from_network.classification);
     }
 
     #[test]
