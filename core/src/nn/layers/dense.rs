@@ -127,9 +127,8 @@ impl Layer for Dense {
         let mut output_shape = input.shape().to_vec();
         output_shape[0] = out_neurons;
         activated
-            .to_shape(output_shape)
+            .into_shape_with_order(output_shape)
             .expect("the matmul result folds back to the input shape with the output features")
-            .into_owned()
     }
 
     fn backward(
@@ -172,10 +171,8 @@ impl Layer for Dense {
 
         let input_gradient = dinput.map(|dinput| {
             dinput
-                .to_shape(input_shape)
+                .into_shape_with_order(input_shape)
                 .expect("the input gradient folds back to the input shape")
-                .into_owned()
-                .into_dyn()
         });
 
         BackwardPass {
