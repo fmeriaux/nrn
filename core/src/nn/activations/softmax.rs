@@ -8,7 +8,7 @@
 
 use crate::activations::{Activation, ActivationProvider};
 use crate::initializations::{Initialization, XAVIER_UNIFORM};
-use ndarray::{ArrayD, ArrayViewD, Axis};
+use ndarray::{ArrayD, ArrayViewD, Axis, Zip};
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 
@@ -28,12 +28,12 @@ impl Activation for Softmax {
     fn apply(&self, input: ArrayViewD<f32>) -> ArrayD<f32> {
         let mut result = input.to_owned();
 
-        for mut lane in result.lanes_mut(Axis(0)) {
+        Zip::from(result.lanes_mut(Axis(0))).for_each(|mut lane| {
             let max = lane.iter().copied().fold(f32::NEG_INFINITY, f32::max);
             lane.mapv_inplace(|x| (x - max).exp());
             let sum = lane.sum();
             lane /= sum;
-        }
+        });
 
         result
     }
