@@ -1,11 +1,42 @@
 //! The outcome of running a trained classifier on a single instance: the class
 //! probabilities, ranked most likely first.
 
-use crate::activations::probabilities_from_logits;
+use crate::activations::{Activation, SIGMOID, SOFTMAX};
 use crate::data::scalers::Scaler;
-use crate::model::{PredictionError, Predictor};
+use crate::model::{Activations, PredictionError, Predictor};
 use ndarray::{ArrayD, ArrayView, ArrayView1, Axis, Dimension, Ix2};
 use std::cmp::Ordering::Equal;
+
+/// Reads a forward pass's captured [`Activations`] through the classifier head, interpreting the
+/// output stage's logits as class probabilities.
+pub trait ClassifierActivations {
+    /// The output stage read as class probabilities: sigmoid for a single logit (binary), softmax
+    /// otherwise. The leading axis holds the classes; any trailing axes (samples, positions) are
+    /// preserved.
+    fn probabilities(&self) -> ArrayD<f32>;
+
+    /// The activations with the output stage materialized to class probabilities, the earlier
+    /// stages untouched.
+    fn with_probabilities(self) -> Activations;
+}
+
+impl ClassifierActivations for Activations {
+    fn probabilities(&self) -> ArrayD<f32> {
+        let logits = self.output();
+        if logits.shape()[0] == 1 {
+            SIGMOID.apply(logits)
+        } else {
+            SOFTMAX.apply(logits)
+        }
+    }
+
+    fn with_probabilities(self) -> Activations {
+        let output = self.probabilities();
+        let mut stages = self.into_stages();
+        *stages.last_mut().expect("Activations is never empty") = output;
+        Activations::new(stages)
+    }
+}
 
 /// Class probabilities for one instance, ordered by descending probability.
 ///
@@ -79,15 +110,15 @@ impl Predictor {
         &self,
         inputs: ArrayView<f32, D>,
     ) -> Result<ArrayD<f32>, PredictionError> {
-        let logits = match &self.scaler {
+        let activations = match &self.scaler {
             Some(scaler) => {
                 let scaled = scaler.apply(inputs.into_dyn())?;
-                self.network.output(scaled.view())?
+                self.network.forward(scaled.view())?
             }
-            None => self.network.output(inputs)?,
+            None => self.network.forward(inputs)?,
         };
 
-        Ok(probabilities_from_logits(logits.view()))
+        Ok(activations.probabilities())
     }
 }
 

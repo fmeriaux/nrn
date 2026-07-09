@@ -58,17 +58,6 @@ pub trait Activation: Send + Sync + Debug {
     fn initialization(&self) -> Arc<dyn Initialization>;
 }
 
-/// Interprets a classifier head's output logits as class probabilities, following the output
-/// convention: sigmoid for a single logit (binary), softmax otherwise. The leading axis holds
-/// the classes; any trailing axes (samples, spatial positions) are preserved.
-pub fn probabilities_from_logits(logits: ArrayViewD<f32>) -> ArrayD<f32> {
-    if logits.shape()[0] == 1 {
-        SIGMOID.apply(logits)
-    } else {
-        SOFTMAX.apply(logits)
-    }
-}
-
 /// Registration struct for activation implementations.
 /// This allows dynamic discovery and use of different activation functions
 pub struct ActivationProvider(pub fn() -> Arc<dyn Activation>);

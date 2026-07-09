@@ -7,11 +7,11 @@
 //! Layers larger than [`DiagramOptions::max_units`] keep only their most active
 //! neurons so the model stays drawable.
 
-use crate::activations::probabilities_from_logits;
+use crate::classification::ClassifierActivations;
 use crate::data::scalers::Scaler;
-use crate::model::{InputShapeMismatch, NeuralNetwork, PredictionError, Predictor};
+use crate::model::{Activations, InputShapeMismatch, NeuralNetwork, PredictionError, Predictor};
 use crate::plot::scene::Color;
-use ndarray::{ArrayD, ArrayView1, ArrayView2, Axis, Ix2};
+use ndarray::{ArrayView1, ArrayView2, Axis, Ix2};
 
 /// Activation magnitudes at or below this count as a silent neuron.
 const FIRING_EPSILON: f32 = 1e-6;
@@ -166,10 +166,11 @@ impl ActivationDiagram {
     /// pass, capping and pruning per `options`. Each neuron shows the value it is given.
     pub fn from_activations(
         network: &NeuralNetwork,
-        activations: &[ArrayD<f32>],
+        activations: &Activations,
         options: &DiagramOptions,
     ) -> ActivationDiagram {
         let stages: Vec<ArrayView2<f32>> = activations
+            .stages()
             .iter()
             .map(|values| {
                 values
@@ -236,7 +237,7 @@ impl NeuralNetwork {
         let activations = self.forward(input.insert_axis(Axis(1)))?;
         Ok(ActivationDiagram::from_activations(
             self,
-            activations.stages(),
+            &activations,
             options,
         ))
     }
@@ -261,16 +262,13 @@ impl Predictor {
             let mut expanded = input.view_mut().insert_axis(Axis(1)).into_dyn();
             scaler.apply_inplace(expanded.view_mut())?;
         }
-        let mut stages = self
+        let activations = self
             .network
             .forward(input.view().insert_axis(Axis(1)))?
-            .into_stages();
-        if let Some(output) = stages.last_mut() {
-            *output = probabilities_from_logits(output.view());
-        }
+            .with_probabilities();
         Ok(ActivationDiagram::from_activations(
             &self.network,
-            &stages,
+            &activations,
             options,
         ))
     }
@@ -363,7 +361,7 @@ fn edges_for(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activations::{Activation, RELU};
+    use crate::activations::{Activation, RELU, SOFTMAX};
     use crate::layers::Dense;
     use crate::model::NeuralNetwork;
     use ndarray::{Array1, Array2, array};
@@ -615,7 +613,7 @@ mod tests {
             .activation_diagram(array![1.0, 0.0].view(), &DiagramOptions::default())
             .unwrap();
 
-        let probabilities = probabilities_from_logits(array![[0.3], [0.4]].view().into_dyn());
+        let probabilities = SOFTMAX.apply(array![[0.3], [0.4]].view().into_dyn());
         let output = diagram.layers.last().unwrap();
         assert_eq!(output.units[0].value, probabilities[[0, 0]]);
         assert_eq!(output.units[1].value, probabilities[[1, 0]]);

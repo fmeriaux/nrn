@@ -71,7 +71,8 @@ impl NeuronLayerSpec {
     ///
     /// The output layer is **linear** (it emits logits): softmax/sigmoid is not applied in the
     /// forward pass but folded into the cross-entropy loss during training and reapplied at
-    /// inference by [`output_activation_for`]. The width still encodes the task — 1 logit for
+    /// inference by [`ClassifierActivations`](crate::classification::ClassifierActivations).
+    /// The width still encodes the task — 1 logit for
     /// binary, `n_classes` logits for multi-class — so the inference activation stays inferable.
     ///
     /// # Panics
