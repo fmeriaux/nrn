@@ -1,6 +1,6 @@
 use crate::data::origin::DatasetOrigin;
 use crate::data::scalers::{Scaler, ScalerFeatureMismatch, ScalerKind, ScalerMethod};
-use ndarray::{Array, Array1, Array2, ArrayD, Axis, Dimension, Ix2};
+use ndarray::{Array, Array1, Array2, ArrayD, ArrayViewD, Axis, Dimension, Ix2};
 use ndarray_rand::rand::Rng;
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::prelude::{SliceRandom, StdRng};
@@ -359,6 +359,18 @@ impl Dataset {
     }
 }
 
+/// Gathers the samples at `indices` along the trailing sample axis into a fresh owned array.
+/// A rank-2 `(features, samples)` array gathers on the static `Ix2` type, sidestepping the
+/// dynamic-rank indexing overhead of [`ArrayD::select`] on the common tabular path; higher-rank
+/// (spatial) arrays fall back to the dynamic gather.
+fn gather_samples(array: ArrayViewD<f32>, indices: &[usize]) -> ArrayD<f32> {
+    let sample_axis = Axis(array.ndim() - 1);
+    match array.view().into_dimensionality::<Ix2>() {
+        Ok(rank2) => rank2.select(Axis(1), indices).into_dyn(),
+        Err(_) => array.select(sample_axis, indices),
+    }
+}
+
 impl ModelDataset {
     /// Pairs samples-last `inputs` with samples-last `targets`: the trailing axis indexes
     /// samples in both. The two need not share a rank — a spatial classifier has rank-4
@@ -389,26 +401,13 @@ impl ModelDataset {
         self.inputs.shape()[self.inputs.ndim() - 1]
     }
 
-    /// The sample axis, the trailing axis of the samples-last inputs.
-    fn sample_axis(&self) -> Axis {
-        Axis(self.inputs.ndim() - 1)
-    }
-
     /// Gathers the samples at `indices` — along the trailing sample axis of both inputs
     /// and targets — into a fresh owned dataset.
     fn select(&self, indices: &[usize]) -> ModelDataset {
-        let targets = self.targets.select(Axis(self.targets.ndim() - 1), indices);
-        ModelDataset::new(self.select_samples(indices), targets)
-    }
-
-    /// Gathers the samples at `indices` along the sample axis into a fresh owned array.
-    /// Rank-2 inputs gather on the static `Ix2` type, which avoids the dynamic-rank
-    /// indexing overhead of [`ArrayD::select`] on the tabular hot path.
-    fn select_samples(&self, indices: &[usize]) -> ArrayD<f32> {
-        match self.inputs.view().into_dimensionality::<Ix2>() {
-            Ok(inputs) => inputs.select(Axis(1), indices).into_dyn(),
-            Err(_) => self.inputs.select(self.sample_axis(), indices),
-        }
+        ModelDataset::new(
+            gather_samples(self.inputs.view(), indices),
+            gather_samples(self.targets.view(), indices),
+        )
     }
 
     /// Returns the targets, samples-last (trailing axis indexes samples).
