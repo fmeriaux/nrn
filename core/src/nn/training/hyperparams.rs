@@ -525,6 +525,22 @@ mod tests {
     }
 
     #[test]
+    fn cross_entropy_resolves_to_binary_loss_for_two_classes() {
+        // A two-class output is a single sigmoid logit: cross-entropy resolves to the
+        // binary form. Mirrors accuracy_for's two-class selection.
+        let loss = LossConfig::CrossEntropy.instantiate(2);
+        assert_eq!(loss.name(), "Binary-Cross-Entropy");
+    }
+
+    #[test]
+    fn cross_entropy_resolves_to_categorical_loss_for_more_than_two_classes() {
+        // Three or more classes are softmax logits: cross-entropy resolves to the
+        // categorical form.
+        let loss = LossConfig::CrossEntropy.instantiate(3);
+        assert_eq!(loss.name(), "Categorical-Cross-Entropy");
+    }
+
+    #[test]
     fn rejects_zero_epochs() {
         assert_eq!(
             message(try_build(
