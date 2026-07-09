@@ -1,7 +1,7 @@
 //! The [`NeuralNetwork`]: a stack of layers applied in order, plus the per-stage
 //! [`Activations`] a forward pass captures and the [`InputShapeMismatch`] it can raise.
 
-use crate::layers::{Dense, Layer};
+use crate::layers::{Dense, Layer, format_shape};
 use crate::model::NeuronLayerSpec;
 use ndarray::{ArrayD, ArrayView, ArrayViewD, Dimension};
 use ndarray_rand::rand::SeedableRng;
@@ -146,22 +146,8 @@ impl NeuralNetwork {
     /// Returns a summary of the network's architecture as a string, showing the per-sample
     /// input shape and each layer's output shape (with its activation, when it has one).
     pub fn summary(&self) -> String {
-        fn shape(dims: &[usize]) -> String {
-            let dims = dims.iter().map(usize::to_string).collect::<Vec<_>>();
-            format!("[{}]", dims.join(", "))
-        }
-
-        once(shape(&self.layers[0].input_shape()))
-            .chain(
-                self.layers
-                    .iter()
-                    .map(|layer| match layer.activation_name() {
-                        Some(activation) => {
-                            format!("{}-{}", shape(&layer.output_shape()), activation)
-                        }
-                        None => shape(&layer.output_shape()),
-                    }),
-            )
+        once(format_shape(&self.layers[0].input_shape()))
+            .chain(self.layers.iter().map(|layer| layer.summary()))
             .collect::<Vec<String>>()
             .join(" -> ")
     }

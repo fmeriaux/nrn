@@ -81,9 +81,8 @@ impl Predictor {
     ) -> Result<ArrayD<f32>, PredictionError> {
         let logits = match &self.scaler {
             Some(scaler) => {
-                let mut owned = inputs.to_owned().into_dyn();
-                scaler.apply_inplace(owned.view_mut())?;
-                self.network.output(owned.view())?
+                let scaled = scaler.apply(inputs.into_dyn())?;
+                self.network.output(scaled.view())?
             }
             None => self.network.output(inputs)?,
         };
