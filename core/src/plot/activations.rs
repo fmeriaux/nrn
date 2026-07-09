@@ -508,8 +508,48 @@ mod tests {
         assert_eq!(layer.units[7].index, 49);
         // Edges only connect the shown neurons: 8 targets x 2 sources.
         assert_eq!(layer.edges.len(), 16);
+        // The compact heading (image renderer) marks the sampled layer as shown/total; the
+        // full input layer drops the marker.
+        assert_eq!(layer.short_heading(), "relu (8/50 active)");
+        assert_eq!(diagram.layers[0].short_heading(), "Input (2)");
         // The input layer is small enough to show in full.
         assert!(!diagram.layers[0].is_sampled());
+    }
+
+    #[test]
+    fn an_all_zero_weight_layer_yields_finite_zero_magnitude_edges() {
+        // Regression: with every weight zero, both the contribution and the weight peak are
+        // zero. The peak guards must keep the normalized magnitudes at 0.0 rather than dividing
+        // by zero into NaN, so the diagram stays finite.
+        let net = relu_network(array![[0.0, 0.0], [0.0, 0.0]], array![0.0, 0.0]);
+        let diagram = net
+            .activation_diagram(array![1.0, 1.0].view(), &DiagramOptions::default())
+            .unwrap();
+
+        let edges = &diagram.layers[1].edges;
+        assert!(!edges.is_empty());
+        assert!(edges.iter().all(|e| e.magnitude == 0.0));
+    }
+
+    #[test]
+    fn a_layer_without_a_weight_matrix_contributes_a_node_column_with_no_edges() {
+        use crate::layers::Flatten;
+
+        // A parameterless Flatten exposes no weight_matrix, so its diagram layer is a bare
+        // node column: units but no incoming edges. The Dense head still wires its edges.
+        let net = NeuralNetwork::new(vec![
+            Box::new(Flatten::new(vec![2])),
+            Box::new(Dense::new(array![[1.0, -1.0]], array![0.0], RELU.clone())),
+        ]);
+        let diagram = net
+            .activation_diagram(array![1.0, 1.0].view(), &DiagramOptions::default())
+            .unwrap();
+
+        // Stage 1 is the Flatten: it has units but contributes no edges.
+        assert!(!diagram.layers[1].units.is_empty());
+        assert!(diagram.layers[1].edges.is_empty());
+        // The Dense head still connects its inputs.
+        assert!(!diagram.layers[2].edges.is_empty());
     }
 
     #[test]
@@ -634,6 +674,42 @@ mod tests {
 
         // Without a scaler the predictor feeds the raw input straight through.
         assert_eq!(from_predictor.layers[0].units, from_network.layers[0].units);
+    }
+
+    #[test]
+    fn a_predictor_diagram_scales_the_instance_before_the_forward_pass() {
+        use crate::data::scalers::ScalerKind;
+        use ndarray::Axis;
+
+        let net = relu_network(array![[1.0, 0.0], [3.0, 0.0]], array![0.0, 0.0]);
+        // MinMax fitted (features on rows) on ranges [0, 4] and [0, 2], so the raw instance
+        // below maps to a different scaled point rather than passing through unchanged.
+        let scaler = ScalerKind::MinMax.fit(array![[0.0, 4.0], [0.0, 2.0]].view());
+        let predictor = Predictor::new(net.clone(), Some(scaler.clone()));
+        let options = DiagramOptions::default();
+
+        let instance = array![1.0, 0.5];
+        let from_predictor = predictor
+            .activation_diagram(instance.view(), &options)
+            .unwrap();
+
+        // The predictor scales the lone instance first, so its input layer matches the bare
+        // network run on the manually scaled instance — and differs from the raw one, proving
+        // the scaling was applied rather than skipped.
+        let mut scaled = instance.clone();
+        let mut expanded = scaled.view_mut().insert_axis(Axis(1)).into_dyn();
+        scaler.apply_inplace(expanded.view_mut()).unwrap();
+        let from_scaled_network = net.activation_diagram(scaled.view(), &options).unwrap();
+        let from_raw_network = net.activation_diagram(instance.view(), &options).unwrap();
+
+        assert_eq!(
+            from_predictor.layers[0].units,
+            from_scaled_network.layers[0].units
+        );
+        assert_ne!(
+            from_predictor.layers[0].units,
+            from_raw_network.layers[0].units
+        );
     }
 
     #[test]
