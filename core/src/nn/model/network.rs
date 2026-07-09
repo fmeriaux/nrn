@@ -215,14 +215,8 @@ impl NeuralNetwork {
     /// - For a dense 2D input `(features, samples)`, the output is a 2D array of shape `(n_classes, samples)`.
     /// - For a spatial 4D input `(channels, H, W, samples)`, the output is a 4D array of shape `(n_classes, H, W, samples)`.
     ///
-    /// # Training & Evaluation Contract
-    /// For standard loss functions (like Cross-Entropy) and accuracy metrics to operate correctly,
-    /// the final layer of the network is expected to output raw logits (i.e., configured with a
-    /// non-saturating or identity activation).
-    ///
-    /// If the final layer is explicitly configured with a saturating activation like `Sigmoid`
-    /// or `Softmax`, this function will still return those values, but it may cause numerical
-    /// instability or incorrect gradients in downstream training and evaluation steps.
+    /// The final layer emits raw logits (an identity or otherwise non-saturating output
+    /// activation); the softmax/sigmoid is folded into the loss and accuracy metrics.
     ///
     /// # Errors
     /// [`InputShapeMismatch`] when the leading (feature) axes differ from the network's input shape.

@@ -69,11 +69,10 @@ impl NeuronLayerSpec {
 
     /// Creates an output layer specification based on the number of classes.
     ///
-    /// The output layer is **linear** (it emits logits): softmax/sigmoid is not applied in the
-    /// forward pass but folded into the cross-entropy loss during training and reapplied at
-    /// inference by [`ClassifierActivations`](crate::classification::ClassifierActivations).
-    /// The width still encodes the task — 1 logit for
-    /// binary, `n_classes` logits for multi-class — so the inference activation stays inferable.
+    /// The output layer is **linear** (it emits logits): softmax/sigmoid is folded into the
+    /// cross-entropy loss during training and reapplied at inference by
+    /// [`ClassifierActivations`](crate::classification::ClassifierActivations). The width encodes
+    /// the task — 1 logit for binary, `n_classes` logits for multi-class.
     ///
     /// # Panics
     /// When `n_classes` is less than or equal to 1. This is a precondition the caller

@@ -1,11 +1,9 @@
 //! Identity activation function implementation.
 //!
 //! This module provides the `Identity` struct, the identity activation `f(x) = x`. It is the
-//! output activation of a network trained on **logits**: softmax/sigmoid is not applied in the
-//! forward pass but folded into the cross-entropy loss (training) and reapplied as a
-//! post-processing step at inference. An identity output keeps the backward pass uniform — its
-//! Jacobian is the identity, so its VJP passes the upstream gradient straight through — which
-//! is exactly what lets the fused loss gradient `p − y` reach the affine map unchanged.
+//! output activation of a logit network: softmax/sigmoid is folded into the cross-entropy loss
+//! during training and reapplied at inference. Its Jacobian is the identity, so its VJP passes
+//! the upstream gradient through unchanged.
 
 use crate::activations::{Activation, ActivationProvider};
 use crate::initializations::{Initialization, XAVIER_UNIFORM};
