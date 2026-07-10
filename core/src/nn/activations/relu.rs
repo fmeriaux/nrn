@@ -20,8 +20,8 @@ impl Activation for ReLU {
     }
 
     /// Applies the ReLU function element-wise, in place.
-    fn apply_inplace(&self, values: &mut ArrayD<f32>) {
-        values.mapv_inplace(|x| x.max(0.0));
+    fn apply_inplace(&self, input: &mut ArrayD<f32>) {
+        input.mapv_inplace(|x| x.max(0.0));
     }
 
     /// Computes ∂L/∂z = upstream ⊙ 1[a > 0].

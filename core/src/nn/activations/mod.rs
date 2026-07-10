@@ -45,13 +45,12 @@ pub trait Activation: Send + Sync + Debug {
     }
 
     /// Transforms a layer's pre-activation values in place.
-    fn apply_inplace(&self, values: &mut ArrayD<f32>);
+    fn apply_inplace(&self, input: &mut ArrayD<f32>);
 
     /// Computes the vector-Jacobian product (VJP) for backpropagation.
     ///
     /// Given the upstream gradient ∂L/∂a (with respect to post-activation values),
-    /// returns ∂L/∂z (with respect to pre-activation values), correctly handling
-    /// both diagonal (ReLU, Sigmoid) and full (Softmax) Jacobians.
+    /// returns ∂L/∂z (with respect to pre-activation values).
     ///
     /// # Arguments
     /// * `upstream` - Incoming gradient ∂L/∂a, N-Dimensional and samples-last

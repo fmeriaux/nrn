@@ -21,7 +21,7 @@ impl Activation for Identity {
     }
 
     /// Leaves the values unchanged: the identity `f(x) = x`.
-    fn apply_inplace(&self, _values: &mut ArrayD<f32>) {}
+    fn apply_inplace(&self, _input: &mut ArrayD<f32>) {}
 
     /// Computes ∂L/∂z = upstream: the identity Jacobian passes the upstream gradient through.
     fn vjp(&self, upstream: ArrayViewD<f32>, _activations: ArrayViewD<f32>) -> ArrayD<f32> {
