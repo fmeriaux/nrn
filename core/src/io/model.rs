@@ -124,13 +124,13 @@ mod tests {
         let model = NeuralNetwork::initialization(3, &specs, 0);
 
         let inputs = Array2::from_shape_fn((3, 5), |(i, j)| (i * 5 + j) as f32 * 0.1);
-        let predictions_before = model.predict(inputs.view());
+        let predictions_before = model.output(inputs.view());
 
         let path = temp_path("model");
         model.save(&path).unwrap();
 
         let loaded = NeuralNetwork::load(&path).unwrap();
-        let predictions_after = loaded.predict(inputs.view());
+        let predictions_after = loaded.output(inputs.view());
 
         cleanup(&path);
 
@@ -164,13 +164,13 @@ mod tests {
         let inputs = Array::from_shape_fn(IxDyn(&[1, 4, 4, 5]), |d| {
             (d[1] * 4 + d[2]) as f32 * 0.1 + d[3] as f32
         });
-        let predictions_before = model.predict(inputs.view());
+        let predictions_before = model.output(inputs.view());
 
         let path = temp_path("cnn_model");
         model.save(&path).unwrap();
 
         let loaded = NeuralNetwork::load(&path).unwrap();
-        let predictions_after = loaded.predict(inputs.view());
+        let predictions_after = loaded.output(inputs.view());
 
         cleanup(&path);
 

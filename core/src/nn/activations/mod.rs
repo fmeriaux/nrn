@@ -7,47 +7,59 @@
 //!
 //! All built-in activations are registered using the `inventory` crate, allowing for easy discovery and use.
 //!
+mod identity;
 mod relu;
 mod sigmoid;
 mod softmax;
 
+pub use identity::IDENTITY;
 pub use relu::RELU;
 pub use sigmoid::SIGMOID;
 pub use softmax::SOFTMAX;
 use std::sync::Arc;
 
 use crate::initializations::Initialization;
-use ndarray::{Array2, ArrayView2};
+use ndarray::{ArrayD, ArrayViewD};
 use std::fmt::Debug;
 
 pub trait Activation: Send + Sync + Debug {
     /// Returns the canonical name of the activation function.
     fn name(&self) -> &'static str;
 
-    /// Applies the activation function element-wise to the input matrix.
+    /// Applies the activation function to a layer's pre-activation values.
     ///
     /// # Arguments
-    /// * `input` - A 2D array of pre-activation values (logits) from the linear layer.
+    /// * `input` - An N-Dimensional array of pre-activation values, samples-last
+    ///   (features on the leading axis).
     ///
     /// # Returns
-    /// A 2D array of the same dimensions containing activated outputs.
-    ///
-    /// This non-linear transformation enables the network to model complex patterns.
-    fn apply(&self, input: ArrayView2<f32>) -> Array2<f32>;
+    /// An N-Dimensional array of the same shape containing the activated outputs.
+    fn apply(&self, input: ArrayViewD<f32>) -> ArrayD<f32> {
+        self.apply_owned(input.to_owned())
+    }
+
+    /// Applies the activation to an owned buffer, reused in place.
+    fn apply_owned(&self, mut input: ArrayD<f32>) -> ArrayD<f32> {
+        self.apply_inplace(&mut input);
+        input
+    }
+
+    /// Transforms a layer's pre-activation values in place.
+    fn apply_inplace(&self, input: &mut ArrayD<f32>);
 
     /// Computes the vector-Jacobian product (VJP) for backpropagation.
     ///
     /// Given the upstream gradient ∂L/∂a (with respect to post-activation values),
-    /// returns ∂L/∂z (with respect to pre-activation values), correctly handling
-    /// both diagonal (ReLU, Sigmoid) and full (Softmax) Jacobians.
+    /// returns ∂L/∂z (with respect to pre-activation values).
     ///
     /// # Arguments
-    /// * `upstream` - Incoming gradient ∂L/∂a, shape `(neurons, samples)`.
+    /// * `upstream` - Incoming gradient ∂L/∂a, N-Dimensional and samples-last
+    ///   (features on the leading axis).
     /// * `activations` - Post-activation values from the forward pass, same shape.
     ///
     /// # Returns
-    /// ∂L/∂z — gradient with respect to the pre-activation input.
-    fn vjp(&self, upstream: ArrayView2<f32>, activations: ArrayView2<f32>) -> Array2<f32>;
+    /// ∂L/∂z — gradient with respect to the pre-activation input, same shape.
+    fn vjp(&self, upstream: ArrayViewD<f32>, activations: ArrayViewD<f32>) -> ArrayD<f32>;
 
     /// Provides an initialization method linked to this activation.
     ///
@@ -79,7 +91,7 @@ impl ActivationProvider {
     /// let relu = ActivationProvider::get_by_name("relu").expect("relu is registered");
     /// assert_eq!(relu.name(), "relu");
     /// let input = array![[1.0, -1.0]];
-    /// let output = relu.apply(input.view());
+    /// let output = relu.apply(input.view().into_dyn());
     /// assert_eq!(output[[0, 0]], 1.0); // positive value passes through
     /// assert_eq!(output[[0, 1]], 0.0); // negative value -> zero
     /// ```

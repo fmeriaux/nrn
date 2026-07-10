@@ -3,7 +3,7 @@ use super::callbacks::{CallbackError, CallbackResult, Callbacks, TrainerCallback
 use super::early_stopping::{EarlyStopping, EarlyStoppingConfig};
 use super::evaluator::Evaluator;
 use super::outcome::TrainingOutcome;
-use crate::accuracies::accuracy_for;
+use crate::accuracies::Accuracy;
 use crate::data::ModelSplit;
 use crate::evaluation::EvaluationSet;
 use crate::gradients::GradientClipping;
@@ -73,6 +73,7 @@ pub struct Trainer {
     pub(super) callbacks: Callbacks,
     pub(super) split: ModelSplit,
     pub(super) loss: Arc<dyn LossFunction>,
+    pub(super) accuracy: Arc<dyn Accuracy>,
     pub(super) optimizer: Box<dyn Optimizer>,
     pub(super) scheduler: Box<dyn Scheduler>,
     pub(super) clipping: GradientClipping,
@@ -116,9 +117,7 @@ impl Trainer {
     pub fn train(mut self) -> Result<TrainingReport, CallbackError> {
         self.callbacks.on_train_start(&self.split)?;
 
-        // Accuracy is strictly determined by the number of classes, itself encoded
-        // in the output layer — derive it from the model rather than taking it as config.
-        let evaluator = Evaluator::new(self.loss.clone(), accuracy_for(self.model.n_classes()));
+        let evaluator = Evaluator::new(self.loss.clone(), self.accuracy.clone());
 
         if self.epoch_start == 0 && self.checkpoint_interval != 0 {
             self.checkpoint(&evaluator, 0)?;
@@ -212,7 +211,7 @@ impl Trainer {
 
     /// Computes an evaluation for the current model and reports it via
     /// [`Callbacks::on_checkpoint`]. Returns `None` without evaluating if the model
-    /// has diverged (non-finite weights), since evaluating it would panic.
+    /// has diverged (non-finite weights), since its evaluation would be meaningless.
     fn checkpoint(
         &mut self,
         evaluator: &Evaluator,

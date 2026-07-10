@@ -12,7 +12,7 @@ use nrn::io::hyperparams::{
 };
 use nrn::io::run::{TrainingMeta, TrainingRun};
 use nrn::io::scalers::ScalerRecord;
-use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
+use nrn::loss_functions::{BinaryCrossEntropy, LossFunction, Reduction};
 use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec, Predictor};
 use nrn::optimizers::Adam;
 use nrn::schedulers::ConstantScheduler;
@@ -84,7 +84,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![4]), 2, &*RELU).unwrap();
     let mut model = NeuralNetwork::initialization(2, &specs, 0);
 
-    let loss_fn: Arc<dyn LossFunction> = CROSS_ENTROPY_LOSS.clone();
+    let loss_fn: Arc<dyn LossFunction> = Arc::new(BinaryCrossEntropy::new(Reduction::Mean));
     let mut optimizer = Adam::with_defaults(0.05.try_into().unwrap(), WeightDecay::ZERO);
     let mut scheduler = ConstantScheduler::new(0.05.try_into().unwrap());
     let clipping = GradientClipping::None;
@@ -118,7 +118,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
             )
             .unwrap();
         if epoch % 5 == 0 {
-            let predictions = model.predict(model_dataset.inputs().view()).unwrap();
+            let predictions = model.output(model_dataset.inputs().view()).unwrap();
             let loss = loss_fn.compute(predictions.view(), model_dataset.targets().view());
             let evaluation = EvaluationSet {
                 train: Evaluation {
@@ -145,8 +145,8 @@ fn full_pipeline_roundtrips_through_safetensors() {
     model.save(&model_path).unwrap();
     let reloaded_model = NeuralNetwork::load(&model_path).unwrap();
     assert_eq!(
-        model.predict(model_dataset.inputs().view()),
-        reloaded_model.predict(model_dataset.inputs().view())
+        model.output(model_dataset.inputs().view()),
+        reloaded_model.output(model_dataset.inputs().view())
     );
 
     let archive = run.archive().unwrap();
@@ -156,7 +156,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let last_model = archive.model_at(archive.len() - 1).unwrap();
     assert_eq!(
         last_recorded_predictions.unwrap(),
-        last_model.predict(model_dataset.inputs().view()).unwrap()
+        last_model.output(model_dataset.inputs().view()).unwrap()
     );
 
     // Adam has internal state, so each checkpoint also has an optimizer.safetensors.
@@ -186,13 +186,13 @@ fn predictor_with_scaler_roundtrips_through_directory() {
     let features = array![[0.0, 0.0], [1.0, 1.0]];
     let scaler = ScalerMethod::MinMax(MinMaxScaler::default().fit(features.view()));
     let predictor = Predictor::new(sample_network(), Some(scaler));
-    let expected = predictor.predict_single(input.view());
+    let expected = predictor.class_probabilities(input.view());
 
     predictor.save(&dir).unwrap();
     let reloaded = Predictor::load(&dir).unwrap();
 
     assert!(reloaded.scaler.is_some());
-    assert_eq!(expected, reloaded.predict_single(input.view()));
+    assert_eq!(expected, reloaded.class_probabilities(input.view()));
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -203,13 +203,13 @@ fn predictor_without_scaler_roundtrips_with_none() {
     let input = array![0.3, 0.7];
 
     let predictor = Predictor::new(sample_network(), None);
-    let expected = predictor.predict_single(input.view());
+    let expected = predictor.class_probabilities(input.view());
 
     predictor.save(&dir).unwrap();
     let reloaded = Predictor::load(&dir).unwrap();
 
     assert!(reloaded.scaler.is_none());
-    assert_eq!(expected, reloaded.predict_single(input.view()));
+    assert_eq!(expected, reloaded.class_probabilities(input.view()));
 
     let _ = std::fs::remove_dir_all(&dir);
 }

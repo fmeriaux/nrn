@@ -4,7 +4,7 @@ mod z_score;
 pub use min_max::MinMaxScaler;
 pub use z_score::ZScoreScaler;
 
-use ndarray::{ArrayView, ArrayViewMutD, RemoveAxis};
+use ndarray::{ArrayD, ArrayView, ArrayViewD, ArrayViewMutD, RemoveAxis};
 
 /// An input's feature count did not match the scaler's fitted feature count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +54,17 @@ pub trait Scaler: Send + Sync {
     /// [`ScalerFeatureMismatch`] when the leading axis does not match the scaler's
     /// fitted feature count.
     fn apply_inplace(&self, inputs: ArrayViewMutD<f32>) -> Result<(), ScalerFeatureMismatch>;
+
+    /// Scales samples-last inputs and returns them owned, features on the leading axis.
+    ///
+    /// # Errors
+    /// [`ScalerFeatureMismatch`] when the leading axis does not match the scaler's
+    /// fitted feature count.
+    fn apply(&self, inputs: ArrayViewD<f32>) -> Result<ArrayD<f32>, ScalerFeatureMismatch> {
+        let mut owned = inputs.to_owned();
+        self.apply_inplace(owned.view_mut())?;
+        Ok(owned)
+    }
 }
 
 /// Defines the available built-in scaling methods.

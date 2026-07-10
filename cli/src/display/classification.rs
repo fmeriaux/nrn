@@ -41,7 +41,7 @@ mod tests {
 
     #[test]
     fn describe_marks_only_the_winning_class_with_an_arrow() {
-        let text = Classification::from_outputs(array![0.1, 0.7, 0.2].view()).describe();
+        let text = Classification::from_probabilities(array![0.1, 0.7, 0.2].view()).describe();
 
         // Class 1 wins, so the arrow sits on its row and nowhere else.
         let winner = text.lines().find(|line| line.contains("Class 1")).unwrap();

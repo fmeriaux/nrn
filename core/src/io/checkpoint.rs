@@ -493,7 +493,7 @@ mod tests {
         let loaded = archive.model_at(0).unwrap();
         cleanup(&dir);
 
-        assert_eq!(model.predict(inputs.view()), loaded.predict(inputs.view()));
+        assert_eq!(model.output(inputs.view()), loaded.output(inputs.view()));
     }
 
     #[test]

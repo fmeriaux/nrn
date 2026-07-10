@@ -2,11 +2,12 @@ use super::callbacks::Callbacks;
 use super::early_stopping::{EarlyStoppingConfig, EarlyStoppingConfigError};
 use super::preprocessing::TrainingData;
 use super::trainer::Trainer;
+use crate::accuracies::accuracy_for;
 use crate::data::Dataset;
 use crate::data::scalers::{ScalerFeatureMismatch, ScalerKind, ScalerMethod};
 use crate::gradients::{GradientClipping, GradientClippingError};
 use crate::learning_rate::{LearningRate, LearningRateError};
-use crate::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
+use crate::loss_functions::{BinaryCrossEntropy, CategoricalCrossEntropy, LossFunction, Reduction};
 use crate::model::{InputShapeMismatch, NeuralNetwork};
 use crate::optimizers::{Adam, Optimizer, StochasticGradientDescent};
 use crate::schedulers::{
@@ -89,10 +90,15 @@ impl SchedulerConfig {
 }
 
 impl LossConfig {
-    /// Instantiates the concrete loss function.
-    fn instantiate(&self) -> Arc<dyn LossFunction> {
+    /// Instantiates the concrete loss function for a classifier with `n_classes` classes.
+    fn instantiate(&self, n_classes: usize) -> Arc<dyn LossFunction> {
+        // Keyed on the class count, a stand-in for the output activation (a two-class output is
+        // a single sigmoid logit); revisit to key on the output activation once it is explicit.
         match self {
-            LossConfig::CrossEntropy => CROSS_ENTROPY_LOSS.clone(),
+            LossConfig::CrossEntropy if n_classes == 2 => {
+                Arc::new(BinaryCrossEntropy::new(Reduction::Mean))
+            }
+            LossConfig::CrossEntropy => Arc::new(CategoricalCrossEntropy::new(Reduction::Mean)),
         }
     }
 }
@@ -458,13 +464,17 @@ impl HyperParameters {
             .scheduler
             .instantiate(self.lr)
             .expect("schedule parameters were validated in HyperParameters::new");
-        let loss = self.loss.instantiate();
+        // Loss and accuracy are both derived from the model's class count, not taken as config.
+        let n_classes = model.n_classes();
+        let loss = self.loss.instantiate(n_classes);
+        let accuracy = accuracy_for(n_classes);
 
         Ok(Trainer {
             model,
             callbacks,
             split: data.split,
             loss,
+            accuracy,
             optimizer,
             scheduler,
             clipping: self.clipping,
@@ -512,6 +522,22 @@ mod tests {
 
     fn message(result: Result<HyperParameters, HyperParametersError>) -> String {
         result.unwrap_err().to_string()
+    }
+
+    #[test]
+    fn cross_entropy_resolves_to_binary_loss_for_two_classes() {
+        // A two-class output is a single sigmoid logit: cross-entropy resolves to the
+        // binary form. Mirrors accuracy_for's two-class selection.
+        let loss = LossConfig::CrossEntropy.instantiate(2);
+        assert_eq!(loss.name(), "Binary-Cross-Entropy");
+    }
+
+    #[test]
+    fn cross_entropy_resolves_to_categorical_loss_for_more_than_two_classes() {
+        // Three or more classes are softmax logits: cross-entropy resolves to the
+        // categorical form.
+        let loss = LossConfig::CrossEntropy.instantiate(3);
+        assert_eq!(loss.name(), "Categorical-Cross-Entropy");
     }
 
     #[test]

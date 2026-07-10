@@ -26,14 +26,13 @@ impl PredictArgs {
 
         let instance = acquire_instance(self.instance, predictor.network.input_size())?;
 
-        let classification = if self.activations {
+        if self.activations {
             let diagram =
                 predictor.activation_diagram(instance.view(), &DiagramOptions::default())?;
             println!("{}", diagram.to_console());
-            diagram.classification
-        } else {
-            predictor.classify_single(instance.view())?
-        };
+        }
+
+        let classification = predictor.classify_instance(instance.view())?;
         evaluated(&classification);
 
         Ok(())

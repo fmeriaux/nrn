@@ -39,8 +39,7 @@ impl Affine {
     /// # Returns
     /// - An `(outputs, samples)` array.
     pub fn forward(&self, input: ArrayView2<f32>) -> Array2<f32> {
-        let biases = self.biases.view().insert_axis(Axis(1)).to_owned();
-        self.weights.dot(&input) + &biases
+        self.weights.dot(&input) + self.biases.view().insert_axis(Axis(1))
     }
 
     /// The backward pass of the affine map for one batch.
@@ -65,6 +64,16 @@ impl Affine {
         let db = dz.sum_axis(Axis(1)) / m;
         let dinput = compute_input_gradient.then(|| self.weights.t().dot(&dz));
         (dw, db, dinput)
+    }
+
+    /// The number of inputs this map takes — the width of each weight row.
+    pub fn inputs(&self) -> usize {
+        self.weights.ncols()
+    }
+
+    /// The number of outputs this map produces — one weight row and one bias per output.
+    pub fn outputs(&self) -> usize {
+        self.weights.nrows()
     }
 
     /// This map's weight matrix `(outputs, inputs)`.

@@ -3,7 +3,7 @@ use crate::data::{ModelDataset, ModelSplit};
 use crate::evaluation::{Evaluation, EvaluationSet};
 use crate::loss_functions::LossFunction;
 use crate::model::{InputShapeMismatch, NeuralNetwork};
-use ndarray::ArrayView2;
+use ndarray::ArrayViewD;
 use std::sync::Arc;
 
 /// Computes [`Evaluation`]s and [`EvaluationSet`]s for a model, given a fixed
@@ -47,19 +47,19 @@ impl Evaluator {
         model: &NeuralNetwork,
         dataset: &ModelDataset,
     ) -> Result<Evaluation, InputShapeMismatch> {
-        let predictions = model.predict(dataset.inputs().view())?;
+        let predictions = model.output(dataset.inputs().view())?;
         Ok(self.eval_predictions(predictions.view(), dataset.targets().view()))
     }
 
-    /// Evaluates precomputed predictions against the true targets.
+    /// Evaluates precomputed network outputs against the true targets.
     pub fn eval_predictions(
         &self,
-        predictions: ArrayView2<f32>,
-        targets: ArrayView2<f32>,
+        outputs: ArrayViewD<f32>,
+        targets: ArrayViewD<f32>,
     ) -> Evaluation {
         Evaluation {
-            loss: self.loss_fn.compute(predictions, targets),
-            accuracy: self.accuracy.compute(predictions, targets),
+            loss: self.loss_fn.compute(outputs.view(), targets.view()),
+            accuracy: self.accuracy.compute(outputs.view(), targets.view()),
         }
     }
 }
@@ -68,15 +68,19 @@ impl Evaluator {
 mod tests {
     use super::*;
     use crate::accuracies::BINARY_ACCURACY;
-    use crate::activations::SIGMOID;
+    use crate::activations::IDENTITY;
     use crate::layers::Dense;
-    use crate::loss_functions::CROSS_ENTROPY_LOSS;
+    use crate::loss_functions::{BinaryCrossEntropy, Reduction};
     use ndarray::array;
 
-    /// A 2-input → 1-output sigmoid network whose weights/bias are zeroed,
-    /// so every prediction is exactly 0.5 regardless of the input.
-    fn constant_half_model() -> NeuralNetwork {
-        NeuralNetwork::single(Dense::new(array![[0.0, 0.0]], array![0.0], SIGMOID.clone()))
+    /// A 2-input → 1-output linear network whose weights/bias are zeroed, so every prediction
+    /// is the logit 0 regardless of the input (a sigmoid probability of 0.5).
+    fn constant_zero_logit_model() -> NeuralNetwork {
+        NeuralNetwork::single(Dense::new(
+            array![[0.0, 0.0]],
+            array![0.0],
+            IDENTITY.clone(),
+        ))
     }
 
     fn dataset(inputs: ndarray::Array2<f32>, targets: ndarray::Array2<f32>) -> ModelDataset {
@@ -84,13 +88,17 @@ mod tests {
     }
 
     fn evaluator() -> Evaluator {
-        Evaluator::new(CROSS_ENTROPY_LOSS.clone(), BINARY_ACCURACY.clone())
+        Evaluator::new(
+            Arc::new(BinaryCrossEntropy::new(Reduction::Mean)),
+            BINARY_ACCURACY.clone(),
+        )
     }
 
     #[test]
     fn eval_predictions_scores_perfect_classification() {
-        let predictions = array![[0.99, 0.01]];
-        let targets = array![[1.0, 0.0]];
+        // Confident logits: +5 → class 1, −5 → class 0, both correct with near-zero loss.
+        let predictions = array![[5.0, -5.0]].into_dyn();
+        let targets = array![[1.0, 0.0]].into_dyn();
 
         let eval = evaluator().eval_predictions(predictions.view(), targets.view());
 
@@ -104,12 +112,12 @@ mod tests {
 
     #[test]
     fn eval_dataset_matches_eval_predictions() {
-        let model = constant_half_model();
+        let model = constant_zero_logit_model();
         let data = dataset(array![[0.2, 0.8], [0.3, 0.7]], array![[1.0, 0.0]]);
 
         let from_dataset = evaluator().eval_dataset(&model, &data).unwrap();
         let from_preds = evaluator().eval_predictions(
-            model.predict(data.inputs().view()).unwrap().view(),
+            model.output(data.inputs().view()).unwrap().view(),
             data.targets().view(),
         );
 
@@ -119,7 +127,7 @@ mod tests {
 
     #[test]
     fn eval_set_without_validation() {
-        let model = constant_half_model();
+        let model = constant_zero_logit_model();
         let split = ModelSplit {
             train: dataset(array![[0.1, 0.9], [0.2, 0.8]], array![[1.0, 0.0]]),
             validation: None,
@@ -135,7 +143,7 @@ mod tests {
 
     #[test]
     fn eval_set_with_validation() {
-        let model = constant_half_model();
+        let model = constant_zero_logit_model();
         let split = ModelSplit {
             train: dataset(array![[0.1, 0.9], [0.2, 0.8]], array![[1.0, 0.0]]),
             validation: Some(dataset(array![[0.3, 0.7], [0.6, 0.4]], array![[1.0, 0.0]])),

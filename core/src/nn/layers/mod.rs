@@ -112,6 +112,16 @@ pub trait Layer: DynClone + Debug {
     /// The name of the activation this layer applies, or `None` for a layer without one.
     fn activation_name(&self) -> Option<&str>;
 
+    /// This layer's per-sample output shape, suffixed with the activation name when it has
+    /// one (e.g. `[4]-relu`, or `[8]` for a layer without an activation).
+    fn summary(&self) -> String {
+        let shape = format_shape(&self.output_shape());
+        match self.activation_name() {
+            Some(activation) => format!("{shape}-{activation}"),
+            None => shape,
+        }
+    }
+
     /// The layer's weight matrix `(output_size, input_size)`, or `None` for a layer
     /// that is not an affine map and carries no weights.
     fn weight_matrix(&self) -> Option<ArrayView2<'_, f32>>;
@@ -124,6 +134,12 @@ pub trait Layer: DynClone + Debug {
 }
 
 dyn_clone::clone_trait_object!(Layer);
+
+/// Formats a per-sample shape as a bracketed, comma-separated dimension list (e.g. `[2, 2, 2]`).
+pub(crate) fn format_shape(dims: &[usize]) -> String {
+    let dims = dims.iter().map(usize::to_string).collect::<Vec<_>>();
+    format!("[{}]", dims.join(", "))
+}
 
 /// The concrete kind of a [`Layer`], used to build one from its
 /// [`config`](Layer::config) and [`named_tensors`](Layer::named_tensors).

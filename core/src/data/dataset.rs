@@ -1,6 +1,6 @@
 use crate::data::origin::DatasetOrigin;
 use crate::data::scalers::{Scaler, ScalerFeatureMismatch, ScalerKind, ScalerMethod};
-use ndarray::{Array, Array1, Array2, ArrayD, Axis, Dimension, Ix2};
+use ndarray::{Array, Array1, Array2, ArrayD, ArrayViewD, Axis, Dimension, Ix2};
 use ndarray_rand::rand::Rng;
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::prelude::{SliceRandom, StdRng};
@@ -30,8 +30,9 @@ pub struct ModelDataset {
     /// trailing axis indexes samples. Rank-2 `(features, samples)` for tabular data,
     /// higher rank for spatial data.
     inputs: ArrayD<f32>,
-    /// A 2D array where each column is a sample and each row is a target (one-hot encoded for multi-class)
-    targets: Array2<f32>,
+    /// A samples-last array: the leading axes are the per-sample targets and the
+    /// trailing axis indexes samples.
+    targets: ArrayD<f32>,
 }
 
 /// A structure representing a split dataset for training, validation, and testing.
@@ -335,48 +336,55 @@ impl Dataset {
         );
 
         let model = self.to_model_dataset();
-        let n_samples = model.targets.ncols();
+        let n_samples = model.n_samples();
 
         let mut indices: Vec<usize> = (0..n_samples).collect();
         indices.shuffle(&mut StdRng::seed_from_u64(seed));
 
         let size = |ratio: f32| (n_samples as f32 * ratio).round() as usize;
-        let select = |idx: &[usize]| {
-            ModelDataset::new(
-                model.select_samples(idx),
-                model.targets.select(Axis(1), idx),
-            )
-        };
 
         let test_size = size(test_ratio);
         let val_size = size(val_ratio);
         let train_size = n_samples - test_size - val_size;
 
         ModelSplit {
-            train: select(&indices[..train_size]),
+            train: model.select(&indices[..train_size]),
             validation: if val_size > 0 {
-                Some(select(&indices[train_size..train_size + val_size]))
+                Some(model.select(&indices[train_size..train_size + val_size]))
             } else {
                 None
             },
-            test: select(&indices[train_size + val_size..]),
+            test: model.select(&indices[train_size + val_size..]),
         }
     }
 }
 
+/// Gathers the samples at `indices` along the trailing sample axis into a fresh owned array.
+/// A rank-2 `(features, samples)` array gathers on the static `Ix2` type, sidestepping the
+/// dynamic-rank indexing overhead of [`ArrayD::select`] on the common tabular path; higher-rank
+/// (spatial) arrays fall back to the dynamic gather.
+fn gather_samples(array: ArrayViewD<f32>, indices: &[usize]) -> ArrayD<f32> {
+    let sample_axis = Axis(array.ndim() - 1);
+    match array.view().into_dimensionality::<Ix2>() {
+        Ok(rank2) => rank2.select(Axis(1), indices).into_dyn(),
+        Err(_) => array.select(sample_axis, indices),
+    }
+}
+
 impl ModelDataset {
-    /// Pairs samples-last `inputs` (trailing axis indexes samples) with their
-    /// `targets` `(targets, samples)`. `inputs` may be any rank: rank-2
-    /// `(features, samples)` for tabular data, higher rank for spatial data.
+    /// Pairs samples-last `inputs` with samples-last `targets`: the trailing axis indexes
+    /// samples in both. The two need not share a rank — a spatial classifier has rank-4
+    /// `(channels, height, width, samples)` inputs but rank-2 `(classes, samples)` targets
+    /// (one label per sample) — only their sample count must agree.
     ///
     /// # Panics
-    /// - When `inputs` and `targets` disagree on the sample count (`inputs`'
-    ///   trailing axis versus `targets`' columns).
-    pub fn new<D: Dimension>(inputs: Array<f32, D>, targets: Array2<f32>) -> Self {
+    /// - When `inputs` and `targets` disagree on the sample count (their trailing axes).
+    pub fn new<D: Dimension, E: Dimension>(inputs: Array<f32, D>, targets: Array<f32, E>) -> Self {
         let inputs = inputs.into_dyn();
+        let targets = targets.into_dyn();
         assert_eq!(
             inputs.shape()[inputs.ndim() - 1],
-            targets.ncols(),
+            targets.shape()[targets.ndim() - 1],
             "Inputs and targets must have the same number of samples."
         );
         ModelDataset { inputs, targets }
@@ -387,23 +395,23 @@ impl ModelDataset {
         &self.inputs
     }
 
-    /// The sample axis, the trailing axis of the samples-last inputs.
-    fn sample_axis(&self) -> Axis {
-        Axis(self.inputs.ndim() - 1)
+    /// The number of samples, the length of the trailing sample axis (shared by inputs
+    /// and targets).
+    pub fn n_samples(&self) -> usize {
+        self.inputs.shape()[self.inputs.ndim() - 1]
     }
 
-    /// Gathers the samples at `indices` along the sample axis into a fresh owned array.
-    /// Rank-2 inputs gather on the static `Ix2` type, which avoids the dynamic-rank
-    /// indexing overhead of [`ArrayD::select`] on the tabular hot path.
-    fn select_samples(&self, indices: &[usize]) -> ArrayD<f32> {
-        match self.inputs.view().into_dimensionality::<Ix2>() {
-            Ok(inputs) => inputs.select(Axis(1), indices).into_dyn(),
-            Err(_) => self.inputs.select(self.sample_axis(), indices),
-        }
+    /// Gathers the samples at `indices` — along the trailing sample axis of both inputs
+    /// and targets — into a fresh owned dataset.
+    fn select(&self, indices: &[usize]) -> ModelDataset {
+        ModelDataset::new(
+            gather_samples(self.inputs.view(), indices),
+            gather_samples(self.targets.view(), indices),
+        )
     }
 
-    /// Returns the targets, `(targets, samples)`.
-    pub fn targets(&self) -> &Array2<f32> {
+    /// Returns the targets, samples-last (trailing axis indexes samples).
+    pub fn targets(&self) -> &ArrayD<f32> {
         &self.targets
     }
 
@@ -415,7 +423,7 @@ impl ModelDataset {
         size: usize,
         rng: &mut R,
     ) -> impl Iterator<Item = ModelDataset> + '_ {
-        let mut indices: Vec<usize> = (0..self.targets.ncols()).collect();
+        let mut indices: Vec<usize> = (0..self.n_samples()).collect();
         indices.shuffle(rng);
         let n = indices.len();
         let mut pos = 0;
@@ -426,10 +434,7 @@ impl ModelDataset {
             let end = (pos + size).min(n);
             let chunk = &indices[pos..end];
             pos = end;
-            Some(ModelDataset::new(
-                self.select_samples(chunk),
-                self.targets.select(Axis(1), chunk),
-            ))
+            Some(self.select(chunk))
         })
     }
 
@@ -453,19 +458,17 @@ impl ModelDataset {
 impl ModelSplit {
     /// Returns the number of training samples in the dataset.
     pub fn train_size(&self) -> usize {
-        self.train.targets.ncols()
+        self.train.n_samples()
     }
 
     /// Returns the number of validation samples in the dataset.
     pub fn validation_size(&self) -> usize {
-        self.validation
-            .as_ref()
-            .map_or(0, |val| val.targets.ncols())
+        self.validation.as_ref().map_or(0, ModelDataset::n_samples)
     }
 
     /// Returns the number of testing samples in the dataset.
     pub fn test_size(&self) -> usize {
-        self.test.targets.ncols()
+        self.test.n_samples()
     }
 
     /// Applies `scaler` in-place to every split. The scaler is fitted on the
@@ -538,7 +541,15 @@ mod tests {
             .to_model_dataset();
         // Binary labels stay as a single (1, n_samples) row, not one-hot encoded.
         assert_eq!(model_dataset.targets.shape(), &[1, 3]);
-        assert_eq!(model_dataset.targets.row(0).to_vec(), vec![0.0, 1.0, 0.0]);
+        assert_eq!(
+            model_dataset
+                .targets
+                .index_axis(Axis(0), 0)
+                .iter()
+                .copied()
+                .collect::<Vec<f32>>(),
+            vec![0.0, 1.0, 0.0]
+        );
     }
 
     #[test]

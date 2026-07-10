@@ -20,7 +20,7 @@ use nrn::data::ModelDataset;
 use nrn::gradients::GradientClipping;
 use nrn::layers::{Conv2d, Dense, Flatten};
 use nrn::learning_rate::LearningRate;
-use nrn::loss_functions::{CROSS_ENTROPY_LOSS, LossFunction};
+use nrn::loss_functions::{BinaryCrossEntropy, CategoricalCrossEntropy, LossFunction, Reduction};
 use nrn::model::{NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::{Adam, Optimizer};
 use nrn::schedulers::{ConstantScheduler, Scheduler};
@@ -29,10 +29,12 @@ use nrn::weight_decay::WeightDecay;
 use std::hint::black_box;
 use std::sync::Arc;
 
-/// A reproducible workload: a network paired with a column-major dataset.
+/// A reproducible workload: a network paired with a column-major dataset and the
+/// loss its task calls for (binary vs categorical cross-entropy).
 struct Workload {
     model: NeuralNetwork,
     dataset: ModelDataset,
+    loss: Arc<dyn LossFunction>,
     batch_size: usize,
 }
 
@@ -100,6 +102,7 @@ fn small_workload() -> Workload {
     Workload {
         model: NeuralNetwork::initialization(2, &specs, 42),
         dataset: make_dataset(2, 2, 1_000),
+        loss: Arc::new(BinaryCrossEntropy::new(Reduction::Mean)),
         batch_size: 64,
     }
 }
@@ -122,6 +125,7 @@ fn mnist_workload() -> Workload {
     Workload {
         model: NeuralNetwork::initialization(784, &specs, 42),
         dataset: make_dataset(784, 10, 2_000),
+        loss: Arc::new(CategoricalCrossEntropy::new(Reduction::Mean)),
         batch_size: 64,
     }
 }
@@ -148,12 +152,9 @@ fn cnn_workload() -> Workload {
     Workload {
         model,
         dataset: make_spatial_dataset(1, 28, 28, 10, 1_000),
+        loss: Arc::new(CategoricalCrossEntropy::new(Reduction::Mean)),
         batch_size: 64,
     }
-}
-
-fn loss() -> Arc<dyn LossFunction> {
-    CROSS_ENTROPY_LOSS.clone()
 }
 
 /// Runs one training epoch on `model` — the unit the epoch benchmarks measure.
@@ -163,7 +164,7 @@ fn run_epoch(model: &mut NeuralNetwork, w: &Workload, mini_batch: Option<MiniBat
     model
         .train(
             &w.dataset,
-            &loss(),
+            &w.loss,
             &mut optimizer as &mut dyn Optimizer,
             &mut scheduler as &mut dyn Scheduler,
             &GradientClipping::None,
@@ -180,7 +181,7 @@ fn bench_inference(c: &mut Criterion) {
         ("cnn", cnn_workload()),
     ] {
         group.bench_function(name, |b| {
-            b.iter(|| black_box(w.model.predict(w.dataset.inputs().view())));
+            b.iter(|| black_box(w.model.output(w.dataset.inputs().view())));
         });
     }
     group.finish();

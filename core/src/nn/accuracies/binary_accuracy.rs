@@ -1,56 +1,47 @@
-//! Binary accuracy metric implementation.
+//! Binary accuracy metric, for a single-logit output.
 //!
-//! This module provides the `BinaryAccuracy` struct, which implements the `Accuracy` trait for binary classification tasks.
-//! Binary accuracy measures the percentage of correct predictions for problems with two possible classes (0 or 1).
-//!
-//! The metric expects predictions and ground truth labels as tensors of shape (1, n_samples), where each value is a probability or binary label.
-//! Predictions are thresholded at 0.5 to determine the predicted class. The accuracy is computed as the ratio of correct predictions to the total number of samples.
+//! Predictions and targets share a shape whose leading axis (axis 0) is a single logit row;
+//! every trailing axis — the samples, plus any spatial axes — is a position scored
+//! independently. Each logit is thresholded at 0 (>= 0 → class 1) and matched against its
+//! `0.0`/`1.0` target. The metric is the ratio of correctly classified positions to the total.
 
 use crate::accuracies::Accuracy;
-use ndarray::ArrayView2;
+use ndarray::{ArrayViewD, Zip};
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 
 pub struct BinaryAccuracy;
 
 impl Accuracy for BinaryAccuracy {
-    /// Computes the binary accuracy for a batch of predictions and ground truth labels.
+    /// Computes the binary accuracy over every position of a batch.
     ///
     /// # Arguments
-    ///
-    /// * `predictions` - A 2D tensor of shape (1, n_samples), containing predicted probabilities or binary values for each sample.
-    /// * `targets` - A 2D tensor of shape (1, n_samples), containing ground truth binary labels (0 or 1) for each sample.
+    /// - `outputs`: the network's single-logit scores; every trailing axis — the samples, plus
+    ///   any spatial axes — is a position scored independently.
+    /// - `targets`: the ground-truth labels (`0.0`/`1.0`), the same shape as `outputs`.
     ///
     /// # Returns
-    ///
-    /// The accuracy as a percentage (between 0.0 and 100.0), representing the proportion of correct predictions.
+    /// The accuracy as a percentage (0.0 to 100.0): the fraction of positions whose thresholded
+    /// logit matches the target.
     ///
     /// # Panics
-    ///
-    /// Panics if the shapes of `predictions` and `targets` do not match, or if the number of rows is not 1.
-    fn compute(&self, predictions: ArrayView2<f32>, targets: ArrayView2<f32>) -> f32 {
+    /// When `outputs` and `targets` do not have the same shape.
+    fn compute(&self, outputs: ArrayViewD<f32>, targets: ArrayViewD<f32>) -> f32 {
         assert_eq!(
-            predictions.shape(),
+            outputs.shape(),
             targets.shape(),
-            "Predictions and targets must have the same shape."
-        );
-        assert_eq!(
-            predictions.nrows(),
-            1,
-            "Binary accuracy expects tensors of shape (1, n_samples). For one-hot or multi-class, use another accuracy."
+            "Outputs and targets must have the same shape."
         );
 
-        let n_samples = predictions.ncols();
-        let mut correct = 0;
-        for i in 0..n_samples {
-            let pred = predictions[[0, i]];
-            let exp = targets[[0, i]];
-            let pred_label = if pred >= 0.5 { 1.0_f32 } else { 0.0_f32 };
-            if pred_label == exp {
-                correct += 1;
-            }
-        }
-        (correct as f32) * 100.0 / (n_samples as f32)
+        let correct =
+            Zip::from(&outputs)
+                .and(&targets)
+                .fold(0usize, |correct, &output, &target| {
+                    let label = if output >= 0.0 { 1.0 } else { 0.0 };
+                    correct + usize::from(label == target)
+                });
+
+        correct as f32 * 100.0 / (outputs.len() as f32)
     }
 }
 
@@ -63,20 +54,29 @@ mod tests {
     use ndarray::array;
 
     #[test]
-    fn threshold_at_05_predicts_positive() {
-        // pred=0.5 → threshold to 1.0 (>= 0.5) → correct when target=1.0
-        // pred=0.4999 → threshold to 0.0 → correct when target=0.0
-        let predictions = array![[0.5_f32, 0.4999]];
-        let targets = array![[1.0_f32, 0.0]];
-        let acc = BINARY_ACCURACY.compute(predictions.view(), targets.view());
+    fn threshold_at_zero_predicts_positive() {
+        // output=0.0 → threshold to 1.0 (>= 0) → correct when target=1.0
+        // output=-0.0001 → threshold to 0.0 → correct when target=0.0
+        let outputs = array![[0.0_f32, -0.0001]].into_dyn();
+        let targets = array![[1.0_f32, 0.0]].into_dyn();
+        let acc = BINARY_ACCURACY.compute(outputs.view(), targets.view());
         assert!((acc - 100.0).abs() < 1e-5, "Expected 100%, got {acc}");
     }
 
     #[test]
     fn all_wrong_predictions_give_zero_accuracy() {
-        let predictions = array![[0.9_f32, 0.9, 0.1]];
-        let targets = array![[0.0_f32, 0.0, 1.0]];
-        let acc = BINARY_ACCURACY.compute(predictions.view(), targets.view());
+        let outputs = array![[3.0_f32, 3.0, -3.0]].into_dyn();
+        let targets = array![[0.0_f32, 0.0, 1.0]].into_dyn();
+        let acc = BINARY_ACCURACY.compute(outputs.view(), targets.view());
         assert!((acc - 0.0).abs() < 1e-5, "Expected 0%, got {acc}");
+    }
+
+    #[test]
+    fn scores_every_spatial_position() {
+        // (class=1, height=2, samples=2): 4 positions, each thresholded at 0. Two match.
+        let outputs = array![[[0.5_f32, -0.5], [-1.0, 2.0]]].into_dyn();
+        let targets = array![[[1.0_f32, 0.0], [1.0, 0.0]]].into_dyn();
+        let acc = BINARY_ACCURACY.compute(outputs.view(), targets.view());
+        assert!((acc - 50.0).abs() < 1e-5, "Expected 50%, got {acc}");
     }
 }
