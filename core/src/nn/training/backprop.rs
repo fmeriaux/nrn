@@ -56,7 +56,6 @@ impl NeuralNetwork {
         clipping: &GradientClipping,
         mini_batch: Option<MiniBatch>,
     ) -> Result<(), InputShapeMismatch> {
-        // Scheduler steps once per epoch regardless of batch size
         let lr = scheduler.step();
         optimizer.set_learning_rate(lr);
 
@@ -147,9 +146,7 @@ impl NeuralNetwork {
             }
         }
 
-        // Collected from the output layer back to the input; restore input-to-output order.
         gradients.reverse();
-
         gradients
     }
 }

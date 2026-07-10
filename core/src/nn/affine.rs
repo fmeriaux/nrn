@@ -39,8 +39,7 @@ impl Affine {
     /// # Returns
     /// - An `(outputs, samples)` array.
     pub fn forward(&self, input: ArrayView2<f32>) -> Array2<f32> {
-        let biases = self.biases.view().insert_axis(Axis(1)).to_owned();
-        self.weights.dot(&input) + &biases
+        self.weights.dot(&input) + self.biases.view().insert_axis(Axis(1))
     }
 
     /// The backward pass of the affine map for one batch.
