@@ -122,7 +122,7 @@ impl Layer for Dense {
             .to_shape((in_features, columns))
             .expect("a (features, ..) batch folds to (features, columns)");
         let pre_activation = self.affine.forward(flat.view());
-        let activated = self.activation.apply(pre_activation.view().into_dyn());
+        let activated = self.activation.apply_owned(pre_activation.into_dyn());
 
         let mut output_shape = input.shape().to_vec();
         output_shape[0] = out_neurons;

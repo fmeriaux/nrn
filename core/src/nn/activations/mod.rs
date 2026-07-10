@@ -34,7 +34,18 @@ pub trait Activation: Send + Sync + Debug {
     ///
     /// # Returns
     /// An N-Dimensional array of the same shape containing the activated outputs.
-    fn apply(&self, input: ArrayViewD<f32>) -> ArrayD<f32>;
+    fn apply(&self, input: ArrayViewD<f32>) -> ArrayD<f32> {
+        self.apply_owned(input.to_owned())
+    }
+
+    /// Applies the activation to an owned buffer, reused in place.
+    fn apply_owned(&self, mut input: ArrayD<f32>) -> ArrayD<f32> {
+        self.apply_inplace(&mut input);
+        input
+    }
+
+    /// Transforms a layer's pre-activation values in place.
+    fn apply_inplace(&self, values: &mut ArrayD<f32>);
 
     /// Computes the vector-Jacobian product (VJP) for backpropagation.
     ///

@@ -25,17 +25,13 @@ impl Activation for Softmax {
     ///
     /// For numerical stability, the max of each lane is subtracted before exponentiation.
     /// Each lane is then normalized to sum to 1, forming a probability distribution.
-    fn apply(&self, input: ArrayViewD<f32>) -> ArrayD<f32> {
-        let mut result = input.to_owned();
-
-        Zip::from(result.lanes_mut(Axis(0))).for_each(|mut lane| {
+    fn apply_inplace(&self, values: &mut ArrayD<f32>) {
+        Zip::from(values.lanes_mut(Axis(0))).for_each(|mut lane| {
             let max = lane.iter().copied().fold(f32::NEG_INFINITY, f32::max);
             lane.mapv_inplace(|x| (x - max).exp());
             let sum = lane.sum();
             lane /= sum;
         });
-
-        result
     }
 
     /// Computes ∂L/∂z = a ⊙ (upstream − ⟨a, upstream⟩) per lane.

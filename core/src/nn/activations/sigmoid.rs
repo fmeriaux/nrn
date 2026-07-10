@@ -19,9 +19,9 @@ impl Activation for Sigmoid {
         "sigmoid"
     }
 
-    /// Applies the sigmoid function element-wise to the input matrix.
-    fn apply(&self, input: ArrayViewD<f32>) -> ArrayD<f32> {
-        input.mapv(|x| 1.0 / (1.0 + (-x).exp()))
+    /// Applies the sigmoid function element-wise, in place.
+    fn apply_inplace(&self, values: &mut ArrayD<f32>) {
+        values.mapv_inplace(|x| 1.0 / (1.0 + (-x).exp()));
     }
 
     /// Computes ∂L/∂z = upstream ⊙ a(1 − a).
