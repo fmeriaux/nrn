@@ -43,7 +43,7 @@ impl LossFunction for CategoricalCrossEntropy {
         });
         // Categorical cross-entropy per position: logsumexp·Σy − Σ(y·z).
         let sum_y = targets.sum_axis(Axis(0));
-        let sum_yz = (&inputs.to_owned() * &targets).sum_axis(Axis(0));
+        let sum_yz = (&inputs * &targets).sum_axis(Axis(0));
         logsumexp * sum_y - sum_yz
     }
 

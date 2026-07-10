@@ -6,7 +6,7 @@
 
 use crate::activations::{Activation, ActivationProvider};
 use crate::initializations::{Initialization, XAVIER_UNIFORM};
-use ndarray::{ArrayD, ArrayViewD};
+use ndarray::{ArrayD, ArrayViewD, Zip};
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 
@@ -26,7 +26,9 @@ impl Activation for Sigmoid {
 
     /// Computes ∂L/∂z = upstream ⊙ a(1 − a).
     fn vjp(&self, upstream: ArrayViewD<f32>, activations: ArrayViewD<f32>) -> ArrayD<f32> {
-        upstream.to_owned() * activations.mapv(|s| s * (1.0 - s))
+        Zip::from(&upstream)
+            .and(&activations)
+            .map_collect(|&u, &s| u * s * (1.0 - s))
     }
 
     /// Provides the recommended initialization for layers using sigmoid.

@@ -6,7 +6,7 @@
 
 use crate::activations::{Activation, ActivationProvider};
 use crate::initializations::{HE_UNIFORM, Initialization};
-use ndarray::{ArrayD, ArrayViewD};
+use ndarray::{ArrayD, ArrayViewD, Zip};
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 
@@ -26,7 +26,9 @@ impl Activation for ReLU {
 
     /// Computes ∂L/∂z = upstream ⊙ 1[a > 0].
     fn vjp(&self, upstream: ArrayViewD<f32>, activations: ArrayViewD<f32>) -> ArrayD<f32> {
-        upstream.to_owned() * activations.mapv(|x| if x > 0.0 { 1.0 } else { 0.0 })
+        Zip::from(&upstream)
+            .and(&activations)
+            .map_collect(|&u, &a| if a > 0.0 { u } else { 0.0 })
     }
 
     /// Provides the recommended initialization for layers using ReLU.
