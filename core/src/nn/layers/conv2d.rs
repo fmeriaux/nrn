@@ -214,9 +214,8 @@ impl Layer for Conv2d {
         let out_w = conv_output_dim(width, kw, self.stride, self.padding);
         self.activation
             .apply(pre_activation.into_dyn().view())
-            .to_shape((out_channels, out_h, out_w, samples))
+            .into_shape_with_order((out_channels, out_h, out_w, samples))
             .expect("the matmul result folds back to (out_channels, out_h, out_w, samples)")
-            .into_owned()
             .into_dyn()
     }
 
