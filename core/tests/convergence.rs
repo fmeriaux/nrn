@@ -14,7 +14,7 @@ fn xor_converges_to_low_loss() {
     // `test_ratio = 0.5` the shuffled split trains on half of them, so every XOR
     // point is still represented in training.
     let xor_dataset = || {
-        Dataset::new(
+        Dataset::tabular(
             array![
                 [0.0, 0.0],
                 [0.0, 1.0],
@@ -73,7 +73,7 @@ fn xor_converges_with_mini_batch() {
     // lr decay, so we stop at 8 000 epochs where loss is reliably < 0.01.
     // See `xor_converges_to_low_loss` for the doubled-dataset / split rationale.
     let xor_dataset = || {
-        Dataset::new(
+        Dataset::tabular(
             array![
                 [0.0, 0.0],
                 [0.0, 1.0],
@@ -134,7 +134,7 @@ fn three_class_converges_to_low_loss() {
     // output path end-to-end. The dataset holds two copies of the 3 points (6
     // samples); with `test_ratio = 0.5` the shuffled split trains on half of them.
     let three_class_dataset = || {
-        Dataset::new(
+        Dataset::tabular(
             array![
                 [0.0, 0.0],
                 [1.0, 0.0],

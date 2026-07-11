@@ -11,8 +11,8 @@ fn invalid<E: std::fmt::Display>(error: E) -> Error {
 }
 
 // safetensors tensor names.
-const FEATURES: &str = "features";
-const LABELS: &str = "labels";
+const INPUTS: &str = "inputs";
+const TARGETS: &str = "targets";
 
 // `__metadata__` keys carrying the dataset's origin. The wire format is an I/O
 // concern, so the keys and discriminant live here; the `DatasetOrigin` type
@@ -58,25 +58,25 @@ impl Dataset {
     /// [`origin`]: Dataset::origin
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf> {
         let entries = vec![
-            (FEATURES.to_string(), tensors::tensor(self.features())),
-            (LABELS.to_string(), tensors::tensor(self.labels())),
+            (INPUTS.to_string(), tensors::tensor(self.inputs())),
+            (TARGETS.to_string(), tensors::tensor(self.targets())),
         ];
         let metadata = self.origin().map(origin_into_metadata).unwrap_or_default();
         tensors::save(path, entries, metadata)
     }
 
-    /// Loads a dataset from a `.safetensors` file, restoring its origin and
-    /// validating the tensors through [`Dataset::new`], so an ill-formed file is
+    /// Loads a tabular dataset from a `.safetensors` file, restoring its origin and
+    /// validating the tensors through [`Dataset::tabular`], so an ill-formed file is
     /// rejected at the I/O boundary.
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Dataset> {
         let bytes = tensors::load(path)?;
         let st = SafeTensors::deserialize(&bytes).map_err(invalid)?;
 
-        let features = tensors::read_array2(FEATURES, &st)?;
-        let labels = tensors::read_array1(LABELS, &st)?;
+        let inputs = tensors::read_array2(INPUTS, &st)?;
+        let targets = tensors::read_array1(TARGETS, &st)?;
         let origin = origin_from_metadata(&tensors::read_metadata(&bytes)?);
 
-        Dataset::new(features, labels, origin).map_err(invalid)
+        Dataset::tabular(inputs, targets, origin).map_err(invalid)
     }
 }
 
@@ -97,7 +97,7 @@ mod tests {
     }
 
     fn dataset_with(origin: Option<DatasetOrigin>) -> Dataset {
-        Dataset::new(
+        Dataset::tabular(
             Array2::from_shape_fn((5, 3), |(i, j)| (i * 3 + j) as f32 * 0.25),
             array![0.0, 1.0, 0.0, 2.0, 1.0],
             origin,
@@ -114,8 +114,8 @@ mod tests {
         let loaded = Dataset::load(&path).unwrap();
         cleanup(&path);
 
-        assert_eq!(dataset.features(), loaded.features());
-        assert_eq!(dataset.labels(), loaded.labels());
+        assert_eq!(dataset.inputs(), loaded.inputs());
+        assert_eq!(dataset.targets(), loaded.targets());
         assert_eq!(loaded.origin(), None);
     }
 
@@ -213,23 +213,23 @@ mod tests {
 
     #[test]
     fn load_rejects_tensors_that_violate_dataset_invariants() {
-        use super::{FEATURES, LABELS};
+        use super::{INPUTS, TARGETS};
         use crate::io::tensors;
         use std::collections::HashMap;
 
-        // The tensors are individually well-formed, but two feature rows against
-        // three labels is a shape mismatch that `Dataset::new` rejects — so the
+        // The tensors are individually well-formed, but two input rows against
+        // three targets is a shape mismatch that `Dataset::tabular` rejects — so the
         // load must fail at the I/O boundary rather than yield a bad dataset.
         let path = temp_path("data_invariant");
         tensors::save(
             &path,
             vec![
                 (
-                    FEATURES.to_string(),
+                    INPUTS.to_string(),
                     tensors::tensor(&array![[0.0_f32, 1.0, 2.0], [3.0, 4.0, 5.0]]),
                 ),
                 (
-                    LABELS.to_string(),
+                    TARGETS.to_string(),
                     tensors::tensor(&array![0.0_f32, 1.0, 0.0]),
                 ),
             ],

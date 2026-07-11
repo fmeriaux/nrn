@@ -35,6 +35,7 @@ impl ResumeArgs {
         // Re-inferred from the dataset in this increment; will be read from the persisted run
         // metadata once the objective is part of the run config.
         let objective = Objective::from_dataset(&dataset);
+        objective.validate_dataset(&dataset)?;
         show(&objective);
 
         let previous = HyperParameters::try_from(meta.hyperparams.clone())?;

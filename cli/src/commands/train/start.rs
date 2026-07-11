@@ -51,6 +51,7 @@ impl StartArgs {
         loaded(&dataset);
 
         let objective = Objective::from_dataset(&dataset);
+        objective.validate_dataset(&dataset)?;
         show(&objective);
 
         let hyperparameters = HyperParameters::try_from(&self.hp)?;

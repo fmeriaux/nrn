@@ -35,7 +35,7 @@ mod tests {
 
     fn dataset(origin: Option<DatasetOrigin>) -> Dataset {
         // 4 samples (rows), 2 features, 2 classes.
-        Dataset::new(Array2::zeros((4, 2)), array![0.0f32, 1.0, 0.0, 1.0], origin).unwrap()
+        Dataset::tabular(Array2::zeros((4, 2)), array![0.0f32, 1.0, 0.0, 1.0], origin).unwrap()
     }
 
     #[test]

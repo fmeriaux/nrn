@@ -51,7 +51,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let dir = temp_dir();
 
     // --- Dataset --------------------------------------------------------
-    let dataset = Dataset::new(
+    let dataset = Dataset::tabular(
         array![[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]],
         array![0.0, 1.0, 1.0, 0.0],
         None,
@@ -61,8 +61,8 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let dataset_path = dir.join("dataset");
     dataset.save(&dataset_path).unwrap();
     let loaded = Dataset::load(&dataset_path).unwrap();
-    assert_eq!(dataset.features(), loaded.features());
-    assert_eq!(dataset.labels(), loaded.labels());
+    assert_eq!(dataset.inputs(), loaded.inputs());
+    assert_eq!(dataset.targets(), loaded.targets());
 
     // --- Scaler (serialized as JSON, not safetensors) -------------------
     // Scalers work on the model dataset's samples-last inputs (features leading).

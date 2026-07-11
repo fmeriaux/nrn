@@ -262,7 +262,7 @@ mod tests {
     /// [`HyperParameters::build`] yields non-degenerate train/validation/test sets
     /// (e.g. `val_ratio = test_ratio = 0.1` gives 8/1/1).
     fn sample_dataset() -> Dataset {
-        Dataset::new(
+        Dataset::tabular(
             array![
                 [0.1, 0.2],
                 [0.9, 0.8],
