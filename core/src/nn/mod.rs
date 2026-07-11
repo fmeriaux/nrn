@@ -10,6 +10,7 @@ pub mod layers;
 pub mod learning_rate;
 pub mod loss_functions;
 pub mod model;
+pub mod objectives;
 pub mod optimizers;
 pub mod schedulers;
 pub mod training;

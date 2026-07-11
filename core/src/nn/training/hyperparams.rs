@@ -2,13 +2,14 @@ use super::callbacks::Callbacks;
 use super::early_stopping::{EarlyStoppingConfig, EarlyStoppingConfigError};
 use super::preprocessing::TrainingData;
 use super::trainer::Trainer;
-use crate::accuracies::accuracy_for;
+use crate::accuracies::{Accuracy, BINARY_ACCURACY, CATEGORICAL_ACCURACY};
 use crate::data::Dataset;
 use crate::data::scalers::{ScalerFeatureMismatch, ScalerKind, ScalerMethod};
 use crate::gradients::{GradientClipping, GradientClippingError};
 use crate::learning_rate::{LearningRate, LearningRateError};
 use crate::loss_functions::{BinaryCrossEntropy, CategoricalCrossEntropy, LossFunction, Reduction};
 use crate::model::{InputShapeMismatch, NeuralNetwork};
+use crate::objectives::Objective;
 use crate::optimizers::{Adam, Optimizer, StochasticGradientDescent};
 use crate::schedulers::{
     ConstantScheduler, CosineAnnealing, CosineAnnealingError, Scheduler, StepDecay, StepDecayError,
@@ -90,15 +91,33 @@ impl SchedulerConfig {
 }
 
 impl LossConfig {
-    /// Instantiates the concrete loss function for a classifier with `n_classes` classes.
-    fn instantiate(&self, n_classes: usize) -> Arc<dyn LossFunction> {
-        // Keyed on the class count, a stand-in for the output activation (a two-class output is
-        // a single sigmoid logit); revisit to key on the output activation once it is explicit.
-        match self {
-            LossConfig::CrossEntropy if n_classes == 2 => {
+    /// Instantiates the concrete loss function for `objective`: cross-entropy is the binary form
+    /// for a single-logit objective (binary or multi-label), the categorical form otherwise.
+    fn instantiate(&self, objective: &Objective) -> Arc<dyn LossFunction> {
+        match (self, objective) {
+            (LossConfig::CrossEntropy, Objective::Binary | Objective::MultiLabel { .. }) => {
                 Arc::new(BinaryCrossEntropy::new(Reduction::Mean))
             }
-            LossConfig::CrossEntropy => Arc::new(CategoricalCrossEntropy::new(Reduction::Mean)),
+            (LossConfig::CrossEntropy, Objective::MultiClass { .. }) => {
+                Arc::new(CategoricalCrossEntropy::new(Reduction::Mean))
+            }
+            (LossConfig::CrossEntropy, Objective::Regression { .. }) => {
+                panic!("Cross-entropy loss does not apply to a regression objective.")
+            }
+        }
+    }
+}
+
+/// Selects the accuracy metric for `objective`: binary accuracy for a single-logit objective
+/// (binary or multi-label), categorical (argmax) accuracy for multi-class.
+/// # Panics
+/// When `objective` is [`Regression`](Objective::Regression), which has no accuracy metric.
+fn accuracy_for(objective: &Objective) -> Arc<dyn Accuracy> {
+    match objective {
+        Objective::Binary | Objective::MultiLabel { .. } => BINARY_ACCURACY.clone(),
+        Objective::MultiClass { .. } => CATEGORICAL_ACCURACY.clone(),
+        Objective::Regression { .. } => {
+            panic!("Accuracy does not apply to a regression objective.")
         }
     }
 }
@@ -439,9 +458,9 @@ impl HyperParameters {
     }
 
     /// Instantiates the runtime [`Trainer`] from this specification, binding it to
-    /// the `model`, the prepared [`TrainingData`], and `callbacks`. This is the one
-    /// place declarative configs become concrete objects: the optimizer, scheduler,
-    /// and loss are instantiated.
+    /// the `model`, the `objective`, the prepared [`TrainingData`], and `callbacks`. This
+    /// is the one place declarative configs become concrete objects: the optimizer, scheduler,
+    /// and loss are instantiated, and the `objective` selects the loss and accuracy metric.
     ///
     /// The trainer starts from epoch 0; to resume a run, call
     /// [`Trainer::restore`](crate::training::Trainer::restore) on the result.
@@ -454,6 +473,7 @@ impl HyperParameters {
     pub fn build(
         self,
         model: NeuralNetwork,
+        objective: Objective,
         data: TrainingData,
         callbacks: Callbacks,
     ) -> Result<Trainer, InputShapeMismatch> {
@@ -464,10 +484,9 @@ impl HyperParameters {
             .scheduler
             .instantiate(self.lr)
             .expect("schedule parameters were validated in HyperParameters::new");
-        // Loss and accuracy are both derived from the model's class count, not taken as config.
-        let n_classes = model.n_classes();
-        let loss = self.loss.instantiate(n_classes);
-        let accuracy = accuracy_for(n_classes);
+        // Loss and accuracy are both derived from the objective, not taken as config.
+        let loss = self.loss.instantiate(&objective);
+        let accuracy = accuracy_for(&objective);
 
         Ok(Trainer {
             model,
@@ -525,19 +544,43 @@ mod tests {
     }
 
     #[test]
-    fn cross_entropy_resolves_to_binary_loss_for_two_classes() {
-        // A two-class output is a single sigmoid logit: cross-entropy resolves to the
-        // binary form. Mirrors accuracy_for's two-class selection.
-        let loss = LossConfig::CrossEntropy.instantiate(2);
+    fn cross_entropy_resolves_to_binary_loss_for_a_binary_objective() {
+        // A binary objective is a single logit: cross-entropy resolves to the binary form.
+        // Mirrors accuracy_for's binary selection.
+        let loss = LossConfig::CrossEntropy.instantiate(&Objective::Binary);
         assert_eq!(loss.name(), "Binary-Cross-Entropy");
     }
 
     #[test]
-    fn cross_entropy_resolves_to_categorical_loss_for_more_than_two_classes() {
-        // Three or more classes are softmax logits: cross-entropy resolves to the
-        // categorical form.
-        let loss = LossConfig::CrossEntropy.instantiate(3);
+    fn cross_entropy_resolves_to_categorical_loss_for_a_multi_class_objective() {
+        // A multi-class objective is softmax logits: cross-entropy resolves to the categorical form.
+        let loss = LossConfig::CrossEntropy.instantiate(&Objective::MultiClass { n_classes: 3 });
         assert_eq!(loss.name(), "Categorical-Cross-Entropy");
+    }
+
+    #[test]
+    fn accuracy_for_selects_binary_and_categorical_by_objective() {
+        // The two reachable classification objectives pick the matching metric; the selection
+        // mirrors the loss resolution above.
+        use ndarray::array;
+
+        let binary = accuracy_for(&Objective::Binary);
+        assert_eq!(
+            binary.compute(
+                array![[0.5_f32, -0.5]].into_dyn().view(),
+                array![[1.0_f32, 0.0]].into_dyn().view()
+            ),
+            100.0
+        );
+
+        let categorical = accuracy_for(&Objective::MultiClass { n_classes: 3 });
+        assert_eq!(
+            categorical.compute(
+                array![[2.0_f32], [1.0], [0.0]].into_dyn().view(),
+                array![[1.0_f32], [0.0], [0.0]].into_dyn().view()
+            ),
+            100.0
+        );
     }
 
     #[test]

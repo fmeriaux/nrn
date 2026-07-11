@@ -132,17 +132,6 @@ impl NeuralNetwork {
         self.layers[0].input_size()
     }
 
-    /// Number of classes discriminated, inferred from the output layer:
-    /// a single sigmoid output is binary (2 classes); k softmax outputs are k classes.
-    pub fn n_classes(&self) -> usize {
-        let out = self
-            .layers
-            .last()
-            .expect("network has at least one layer")
-            .output_size();
-        if out == 1 { 2 } else { out }
-    }
-
     /// Returns a summary of the network's architecture as a string, showing the per-sample
     /// input shape and each layer's output shape (with its activation, when it has one).
     pub fn summary(&self) -> String {
@@ -435,18 +424,5 @@ mod tests {
         let mut model = make_network(Array2::zeros((1, 2)), Array1::zeros(1), SIGMOID.clone());
         dense_mut(&mut model, 0).affine_mut().biases_mut()[0] = f32::INFINITY;
         assert!(!model.is_finite());
-    }
-
-    #[test]
-    fn n_classes_derives_from_output_layer_size() {
-        // 1 sigmoid output -> binary (2 classes)
-        let binary =
-            NeuralNetwork::initialization(3, &NeuronLayerSpec::network_for(vec![4], &*RELU, 2), 0);
-        assert_eq!(binary.n_classes(), 2);
-
-        // k softmax outputs -> k classes
-        let multi =
-            NeuralNetwork::initialization(3, &NeuronLayerSpec::network_for(vec![4], &*RELU, 5), 0);
-        assert_eq!(multi.n_classes(), 5);
     }
 }

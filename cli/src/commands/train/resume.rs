@@ -1,10 +1,11 @@
 use super::DivergedRun;
 use super::args::ResumeOverrides;
 use super::callbacks::{ConsoleMonitor, ModelSaver};
-use crate::display::{Spinner, loaded, recording, warning};
+use crate::display::{Spinner, loaded, recording, show, warning};
 use clap::Args;
 use nrn::data::Dataset;
 use nrn::io::run::TrainingRun;
+use nrn::objectives::Objective;
 use nrn::training::{Callbacks, HyperParameters};
 use std::error::Error;
 use std::path::Path;
@@ -30,6 +31,11 @@ impl ResumeArgs {
 
         let dataset = Dataset::load(&meta.dataset)?;
         loaded(&dataset);
+
+        // Re-inferred from the dataset in this increment; will be read from the persisted run
+        // metadata once the objective is part of the run config.
+        let objective = Objective::from_dataset(&dataset);
+        show(&objective);
 
         let previous = HyperParameters::try_from(meta.hyperparams.clone())?;
         let scaler = meta.scaler.clone().map(Into::into);
@@ -76,7 +82,7 @@ impl ResumeArgs {
             ))
             .with_opt(recorder);
 
-        let mut trainer = hyperparameters.build(model, data, callbacks)?;
+        let mut trainer = hyperparameters.build(model, objective, data, callbacks)?;
         trainer.restore(from_epoch, optimizer_state, scheduler_state)?;
         trainer.train()?.into_result().map_err(DivergedRun::from)?;
 

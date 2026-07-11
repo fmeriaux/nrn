@@ -1,7 +1,7 @@
 use super::DivergedRun;
 use super::args::TrainArgs;
 use super::callbacks::{ConsoleMonitor, ModelSaver};
-use crate::display::{Spinner, initialized, loaded, recording};
+use crate::display::{Spinner, initialized, loaded, recording, show};
 use crate::path::PathExt;
 use clap::Args;
 use nrn::activations::RELU;
@@ -9,6 +9,7 @@ use nrn::data::Dataset;
 use nrn::io::hyperparams::HyperParametersRecord;
 use nrn::io::run::{TrainingMeta, TrainingRun};
 use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec};
+use nrn::objectives::Objective;
 use nrn::training::{Callbacks, HyperParameters};
 use std::error::Error;
 use std::io::{Error as IoError, ErrorKind};
@@ -48,6 +49,9 @@ impl StartArgs {
 
         let dataset = Dataset::load(&self.dataset)?;
         loaded(&dataset);
+
+        let objective = Objective::from_dataset(&dataset);
+        show(&objective);
 
         let hyperparameters = HyperParameters::try_from(&self.hp)?;
 
@@ -107,7 +111,7 @@ impl StartArgs {
             .with_opt(recorder);
 
         hyperparameters
-            .build(model, data, callbacks)?
+            .build(model, objective, data, callbacks)?
             .train()?
             .into_result()
             .map_err(DivergedRun::from)?;

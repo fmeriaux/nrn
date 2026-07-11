@@ -18,6 +18,7 @@ mod hyperparameters;
 mod icons;
 mod instance;
 mod model;
+mod objective;
 mod predictor;
 mod progress;
 mod terminal;

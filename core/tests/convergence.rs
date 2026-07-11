@@ -2,6 +2,7 @@ use ndarray::array;
 use nrn::activations::SIGMOID;
 use nrn::data::Dataset;
 use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec};
+use nrn::objectives::Objective;
 use nrn::training::{
     Callbacks, GradientClipping, HyperParameters, LossConfig, OptimizerConfig, SchedulerConfig,
 };
@@ -53,6 +54,7 @@ fn xor_converges_to_low_loss() {
     let report = hyperparameters
         .build(
             NeuralNetwork::initialization(2, &specs, 42),
+            Objective::Binary,
             data,
             Callbacks::new(vec![]),
         )
@@ -111,6 +113,7 @@ fn xor_converges_with_mini_batch() {
     let report = hyperparameters
         .build(
             NeuralNetwork::initialization(2, &specs, 42),
+            Objective::Binary,
             data,
             Callbacks::new(vec![]),
         )
@@ -173,6 +176,7 @@ fn three_class_converges_to_low_loss() {
     let report = hyperparameters
         .build(
             NeuralNetwork::initialization(2, &specs, 42),
+            Objective::MultiClass { n_classes: 3 },
             data,
             Callbacks::new(vec![]),
         )
