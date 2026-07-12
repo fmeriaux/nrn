@@ -10,7 +10,7 @@ use nrn::io::hyperparams::HyperParametersRecord;
 use nrn::io::run::{TrainingMeta, TrainingRun};
 use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec};
 use nrn::task::Task;
-use nrn::training::{Callbacks, HyperParameters};
+use nrn::training::Callbacks;
 use std::error::Error;
 use std::io::{Error as IoError, ErrorKind};
 use std::path::Path;
@@ -54,7 +54,7 @@ impl StartArgs {
         task.validate_dataset(&dataset)?;
         show(&task);
 
-        let hyperparameters = HyperParameters::try_from(&self.hp)?;
+        let hyperparameters = self.hp.to_hyperparameters(&task)?;
 
         let model = match &self.model {
             Some(path) => {

@@ -1,8 +1,9 @@
 use crate::data::scalers::ScalerKind;
 use crate::gradients::{GradientClipping, GradientClippingError};
+use crate::loss_functions::Reduction;
 use crate::training::{
     EarlyStoppingConfig, EarlyStoppingConfigError, HyperParameters, HyperParametersError,
-    LossConfig, OptimizerConfig, SchedulerConfig,
+    LossConfig, LossKind, OptimizerConfig, SchedulerConfig,
 };
 use serde::{Deserialize, Serialize};
 
@@ -136,22 +137,76 @@ impl TryFrom<&ClippingRecord> for GradientClipping {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub enum LossRecord {
-    CrossEntropy,
+pub struct LossRecord {
+    pub kind: LossKindRecord,
+    pub reduction: ReductionRecord,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum LossKindRecord {
+    BinaryCrossEntropy,
+    CategoricalCrossEntropy,
+    MeanSquaredError,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum ReductionRecord {
+    Sum,
+    Mean,
 }
 
 impl From<&LossConfig> for LossRecord {
     fn from(config: &LossConfig) -> Self {
-        match config {
-            LossConfig::CrossEntropy => LossRecord::CrossEntropy,
+        LossRecord {
+            kind: (&config.kind).into(),
+            reduction: (&config.reduction).into(),
         }
     }
 }
 
 impl From<&LossRecord> for LossConfig {
     fn from(record: &LossRecord) -> Self {
+        LossConfig {
+            kind: (&record.kind).into(),
+            reduction: (&record.reduction).into(),
+        }
+    }
+}
+
+impl From<&LossKind> for LossKindRecord {
+    fn from(kind: &LossKind) -> Self {
+        match kind {
+            LossKind::BinaryCrossEntropy => LossKindRecord::BinaryCrossEntropy,
+            LossKind::CategoricalCrossEntropy => LossKindRecord::CategoricalCrossEntropy,
+            LossKind::MeanSquaredError => LossKindRecord::MeanSquaredError,
+        }
+    }
+}
+
+impl From<&LossKindRecord> for LossKind {
+    fn from(record: &LossKindRecord) -> Self {
         match record {
-            LossRecord::CrossEntropy => LossConfig::CrossEntropy,
+            LossKindRecord::BinaryCrossEntropy => LossKind::BinaryCrossEntropy,
+            LossKindRecord::CategoricalCrossEntropy => LossKind::CategoricalCrossEntropy,
+            LossKindRecord::MeanSquaredError => LossKind::MeanSquaredError,
+        }
+    }
+}
+
+impl From<&Reduction> for ReductionRecord {
+    fn from(reduction: &Reduction) -> Self {
+        match reduction {
+            Reduction::Sum => ReductionRecord::Sum,
+            Reduction::Mean => ReductionRecord::Mean,
+        }
+    }
+}
+
+impl From<&ReductionRecord> for Reduction {
+    fn from(record: &ReductionRecord) -> Self {
+        match record {
+            ReductionRecord::Sum => Reduction::Sum,
+            ReductionRecord::Mean => Reduction::Mean,
         }
     }
 }
@@ -313,7 +368,10 @@ impl HyperParametersRecord {
             }),
             val_ratio: 0.1,
             test_ratio: 0.1,
-            loss: LossRecord::CrossEntropy,
+            loss: LossRecord {
+                kind: LossKindRecord::BinaryCrossEntropy,
+                reduction: ReductionRecord::Mean,
+            },
             seed: 42,
             scaler: Some(ScalerKindRecord::MinMax),
         }

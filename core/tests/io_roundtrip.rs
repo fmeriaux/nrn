@@ -8,7 +8,8 @@ use nrn::data::scalers::{MinMaxScaler, Scaler, ScalerMethod};
 use nrn::data::{Dataset, Instance};
 use nrn::evaluation::{Evaluation, EvaluationSet};
 use nrn::io::hyperparams::{
-    ClippingRecord, HyperParametersRecord, LossRecord, OptimizerRecord, SchedulerRecord,
+    ClippingRecord, HyperParametersRecord, LossKindRecord, LossRecord, OptimizerRecord,
+    ReductionRecord, SchedulerRecord,
 };
 use nrn::io::run::{TrainingMeta, TrainingRun};
 use nrn::io::scalers::ScalerRecord;
@@ -41,7 +42,10 @@ fn sample_hyperparams() -> HyperParametersRecord {
         early_stopping: None,
         val_ratio: 0.1,
         test_ratio: 0.1,
-        loss: LossRecord::CrossEntropy,
+        loss: LossRecord {
+            kind: LossKindRecord::BinaryCrossEntropy,
+            reduction: ReductionRecord::Mean,
+        },
         seed: 0,
         scaler: None,
     }

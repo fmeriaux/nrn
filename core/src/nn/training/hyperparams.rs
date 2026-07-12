@@ -7,7 +7,9 @@ use crate::data::Dataset;
 use crate::data::scalers::{ScalerFeatureMismatch, ScalerKind, ScalerMethod};
 use crate::gradients::{GradientClipping, GradientClippingError};
 use crate::learning_rate::{LearningRate, LearningRateError};
-use crate::loss_functions::{BinaryCrossEntropy, CategoricalCrossEntropy, LossFunction, Reduction};
+use crate::loss_functions::{
+    BinaryCrossEntropy, CategoricalCrossEntropy, LossFunction, MeanSquaredError, Reduction,
+};
 use crate::model::{InputShapeMismatch, NeuralNetwork};
 use crate::optimizers::{Adam, Optimizer, StochasticGradientDescent};
 use crate::schedulers::{
@@ -44,11 +46,25 @@ pub enum SchedulerConfig {
     Step { decay_factor: f32, steps: usize },
 }
 
-/// Declarative choice of loss function. Turned into a concrete [`LossFunction`]
-/// by [`HyperParameters::build`].
-#[derive(Debug, Clone, PartialEq)]
-pub enum LossConfig {
-    CrossEntropy,
+/// Declarative choice of loss function: its [`kind`](LossKind) and its [`Reduction`].
+/// Turned into a concrete [`LossFunction`] by [`HyperParameters::build`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LossConfig {
+    /// Which loss function to minimize.
+    pub kind: LossKind,
+    /// How the loss reduces its per-term values into the reported scalar.
+    pub reduction: Reduction,
+}
+
+/// The concrete loss function of a [`LossConfig`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LossKind {
+    /// Binary cross-entropy from logits, for a single-logit task (binary or multi-label).
+    BinaryCrossEntropy,
+    /// Categorical cross-entropy from softmax logits, for a multi-class task.
+    CategoricalCrossEntropy,
+    /// Mean squared error, for a regression task.
+    MeanSquaredError,
 }
 
 impl OptimizerConfig {
@@ -91,19 +107,29 @@ impl SchedulerConfig {
 }
 
 impl LossConfig {
-    /// Instantiates the concrete loss function for `task`: cross-entropy is the binary form
-    /// for a single-logit task (binary or multi-label), the categorical form otherwise.
-    fn instantiate(&self, task: &Task) -> Arc<dyn LossFunction> {
-        match (self, task) {
-            (LossConfig::CrossEntropy, Task::Binary | Task::MultiLabel { .. }) => {
-                Arc::new(BinaryCrossEntropy::new(Reduction::Mean))
+    /// The loss that fits `task`, with the default [`Mean`](Reduction::Mean) reduction: binary
+    /// cross-entropy for a single-logit task (binary or multi-label), categorical cross-entropy
+    /// for multi-class, mean squared error for regression.
+    pub fn for_task(task: &Task) -> Self {
+        let kind = match task {
+            Task::Binary | Task::MultiLabel { .. } => LossKind::BinaryCrossEntropy,
+            Task::MultiClass { .. } => LossKind::CategoricalCrossEntropy,
+            Task::Regression { .. } => LossKind::MeanSquaredError,
+        };
+        LossConfig {
+            kind,
+            reduction: Reduction::Mean,
+        }
+    }
+
+    /// Instantiates the concrete loss function.
+    fn instantiate(&self) -> Arc<dyn LossFunction> {
+        match self.kind {
+            LossKind::BinaryCrossEntropy => Arc::new(BinaryCrossEntropy::new(self.reduction)),
+            LossKind::CategoricalCrossEntropy => {
+                Arc::new(CategoricalCrossEntropy::new(self.reduction))
             }
-            (LossConfig::CrossEntropy, Task::MultiClass { .. }) => {
-                Arc::new(CategoricalCrossEntropy::new(Reduction::Mean))
-            }
-            (LossConfig::CrossEntropy, Task::Regression { .. }) => {
-                panic!("Cross-entropy loss does not apply to a regression task.")
-            }
+            LossKind::MeanSquaredError => Arc::new(MeanSquaredError::new(self.reduction)),
         }
     }
 }
@@ -460,7 +486,7 @@ impl HyperParameters {
     /// Instantiates the runtime [`Trainer`] from this specification, binding it to
     /// the `model`, the `task`, the prepared [`TrainingData`], and `callbacks`. This
     /// is the one place declarative configs become concrete objects: the optimizer, scheduler,
-    /// and loss are instantiated, and the `task` selects the loss and accuracy metric.
+    /// and loss are instantiated, and the `task` selects the accuracy metric.
     ///
     /// The trainer starts from epoch 0; to resume a run, call
     /// [`Trainer::restore`](crate::training::Trainer::restore) on the result.
@@ -484,8 +510,7 @@ impl HyperParameters {
             .scheduler
             .instantiate(self.lr)
             .expect("schedule parameters were validated in HyperParameters::new");
-        // Loss and accuracy are both derived from the task, not taken as config.
-        let loss = self.loss.instantiate(&task);
+        let loss = self.loss.instantiate();
         let accuracy = accuracy_for(&task);
 
         Ok(Trainer {
@@ -530,7 +555,7 @@ mod tests {
             OptimizerConfig::Adam,
             scheduler,
             GradientClipping::None,
-            LossConfig::CrossEntropy,
+            LossConfig::for_task(&Task::Binary),
             None,
             val_ratio,
             test_ratio,
@@ -544,18 +569,25 @@ mod tests {
     }
 
     #[test]
-    fn cross_entropy_resolves_to_binary_loss_for_a_binary_task() {
-        // A binary task is a single logit: cross-entropy resolves to the binary form.
-        // Mirrors accuracy_for's binary selection.
-        let loss = LossConfig::CrossEntropy.instantiate(&Task::Binary);
-        assert_eq!(loss.name(), "Binary-Cross-Entropy");
+    fn for_task_picks_binary_cross_entropy_for_a_binary_task() {
+        // A binary task is a single logit: binary cross-entropy, mirroring accuracy_for.
+        let loss = LossConfig::for_task(&Task::Binary);
+        assert_eq!(loss.kind, LossKind::BinaryCrossEntropy);
+        assert_eq!(loss.instantiate().name(), "Binary-Cross-Entropy");
     }
 
     #[test]
-    fn cross_entropy_resolves_to_categorical_loss_for_a_multi_class_task() {
-        // A multi-class task is softmax logits: cross-entropy resolves to the categorical form.
-        let loss = LossConfig::CrossEntropy.instantiate(&Task::MultiClass { n_classes: 3 });
-        assert_eq!(loss.name(), "Categorical-Cross-Entropy");
+    fn for_task_picks_categorical_cross_entropy_for_a_multi_class_task() {
+        let loss = LossConfig::for_task(&Task::MultiClass { n_classes: 3 });
+        assert_eq!(loss.kind, LossKind::CategoricalCrossEntropy);
+        assert_eq!(loss.instantiate().name(), "Categorical-Cross-Entropy");
+    }
+
+    #[test]
+    fn for_task_picks_mean_squared_error_for_a_regression_task() {
+        let loss = LossConfig::for_task(&Task::Regression { n_outputs: 1 });
+        assert_eq!(loss.kind, LossKind::MeanSquaredError);
+        assert_eq!(loss.instantiate().name(), "Mean-Squared-Error");
     }
 
     #[test]
@@ -669,7 +701,7 @@ mod tests {
             OptimizerConfig::Adam,
             SchedulerConfig::Constant,
             GradientClipping::None,
-            LossConfig::CrossEntropy,
+            LossConfig::for_task(&Task::Binary),
             None,
             0.1,
             0.1,
@@ -819,7 +851,7 @@ mod tests {
             OptimizerConfig::Adam,
             SchedulerConfig::Constant,
             GradientClipping::None,
-            LossConfig::CrossEntropy,
+            LossConfig::for_task(&Task::Binary),
             None,
             0.2,
             0.2,

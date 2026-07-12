@@ -84,7 +84,8 @@ of the scikit-learn convention). `Dataset` (row-major, `(samples, features)`) co
 - **`optimizers/`** — `Optimizer` trait: SGD and Adam. Passed to `train()` as `&mut dyn Optimizer`.
 - **`schedulers/`** — `Scheduler` trait (steps once per epoch): `ConstantScheduler`, `StepDecay`,
   `CosineAnnealing` (optional warm restarts).
-- **`loss_functions/`** — `LossFunction` trait; cross-entropy (used for binary and multi-class).
+- **`loss_functions/`** — `LossFunction` trait; cross-entropy (binary and categorical) and
+  mean squared error (regression).
 - **`accuracies/`** — `Accuracy` trait; `accuracy_for(n_classes)` picks binary vs argmax-match.
 - **`evaluation.rs`** — `Evaluation` (loss + accuracy for one split) and `EvaluationSet`
   (train / optional validation / test).

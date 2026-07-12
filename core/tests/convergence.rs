@@ -1,10 +1,12 @@
 use ndarray::array;
 use nrn::activations::SIGMOID;
 use nrn::data::Dataset;
+use nrn::loss_functions::Reduction;
 use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec};
 use nrn::task::Task;
 use nrn::training::{
-    Callbacks, GradientClipping, HyperParameters, LossConfig, OptimizerConfig, SchedulerConfig,
+    Callbacks, GradientClipping, HyperParameters, LossConfig, LossKind, OptimizerConfig,
+    SchedulerConfig,
 };
 
 #[test]
@@ -42,7 +44,10 @@ fn xor_converges_to_low_loss() {
         OptimizerConfig::Adam,
         SchedulerConfig::Constant,
         GradientClipping::None,
-        LossConfig::CrossEntropy,
+        LossConfig {
+            kind: LossKind::BinaryCrossEntropy,
+            reduction: Reduction::Mean,
+        },
         None,
         0.0,
         0.5,
@@ -101,7 +106,10 @@ fn xor_converges_with_mini_batch() {
         OptimizerConfig::Adam,
         SchedulerConfig::Constant,
         GradientClipping::None,
-        LossConfig::CrossEntropy,
+        LossConfig {
+            kind: LossKind::BinaryCrossEntropy,
+            reduction: Reduction::Mean,
+        },
         None,
         0.0,
         0.5,
@@ -162,7 +170,10 @@ fn three_class_converges_to_low_loss() {
         OptimizerConfig::Adam,
         SchedulerConfig::Constant,
         GradientClipping::None,
-        LossConfig::CrossEntropy,
+        LossConfig {
+            kind: LossKind::CategoricalCrossEntropy,
+            reduction: Reduction::Mean,
+        },
         None,
         0.0,
         0.5,
