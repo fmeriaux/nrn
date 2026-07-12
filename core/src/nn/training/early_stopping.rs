@@ -119,23 +119,29 @@ impl EarlyStopping {
 mod tests {
     use super::*;
     use crate::activations::SIGMOID;
-    use crate::layers::Dense;
     use crate::model::NeuronLayerSpec;
-    use ndarray::Array1;
+    use crate::tensors::Tensors;
+    use ndarray::{Array1, Ix1};
 
-    /// Downcasts a network's layer to the concrete [`Dense`] for reading or perturbing it.
-    fn dense(model: &NeuralNetwork, index: usize) -> &Dense {
+    /// A layer's biases, read through the [`Layer`] trait's named tensors.
+    fn biases(model: &NeuralNetwork, index: usize) -> Array1<f32> {
         model.layers()[index]
-            .as_any()
-            .downcast_ref::<Dense>()
-            .unwrap()
+            .named_tensors()
+            .into_iter()
+            .find(|(name, _)| name.as_str() == Tensors::BIAS)
+            .map(|(_, tensor)| {
+                tensor
+                    .into_dimensionality::<Ix1>()
+                    .expect("biases are rank-1")
+            })
+            .expect("a dense layer carries biases")
     }
 
-    fn dense_mut(model: &mut NeuralNetwork, index: usize) -> &mut Dense {
-        model.layers_mut()[index]
-            .as_any_mut()
-            .downcast_mut::<Dense>()
-            .unwrap()
+    /// Overwrites a layer's biases (parameter 1) through the [`Layer`] trait.
+    fn set_biases(model: &mut NeuralNetwork, index: usize, biases: Array1<f32>) {
+        model.layers_mut()[index].parameters_mut()[1]
+            .value
+            .assign(&biases.into_dyn());
     }
 
     #[test]
@@ -149,8 +155,7 @@ mod tests {
 
         let mut model_at_best = model_initial.clone();
         // Give model_at_best a distinctive bias so we can tell it apart
-        *dense_mut(&mut model_at_best, 0).affine_mut().biases_mut() =
-            Array1::from_vec(vec![42.0, 42.0]);
+        set_biases(&mut model_at_best, 0, Array1::from_vec(vec![42.0, 42.0]));
 
         assert!(!es.observe(1.0, &model_initial)); // improvement: saved
         assert!(!es.observe(0.5, &model_at_best)); // new best: overwrites saved
@@ -161,8 +166,8 @@ mod tests {
             .best_model
             .expect("best_model should be Some after early stopping");
         assert_eq!(
-            dense(&best, 0).biases(),
-            dense(&model_at_best, 0).biases(),
+            biases(&best, 0),
+            biases(&model_at_best, 0),
             "best_model should be the epoch with loss=0.5, not the final state"
         );
     }

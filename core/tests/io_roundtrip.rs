@@ -150,8 +150,9 @@ fn full_pipeline_roundtrips_through_safetensors() {
     }
 
     let model_path = dir.join("model");
-    model.save(&model_path).unwrap();
-    let reloaded_model = NeuralNetwork::load(&model_path).unwrap();
+    let config = NetworkConfig::from(&model);
+    model.save_weights(&model_path).unwrap();
+    let reloaded_model = NeuralNetwork::load_weights(&model_path, &config).unwrap();
     assert_eq!(
         model.output(model_dataset.inputs().view()),
         reloaded_model.output(model_dataset.inputs().view())

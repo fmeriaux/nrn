@@ -1,13 +1,11 @@
 use crate::activations::Activation;
 use crate::affine::Affine;
 use crate::gradients::LayerGradients;
-use crate::layers::{BackwardPass, Layer, LayerConfigError, LayerKind, Parameter};
+use crate::layers::{BackwardPass, Layer, Parameter};
 use crate::model::{LayerSpec, NeuronLayerSpec};
 use crate::tensors::Tensors;
 use ndarray::{Array1, Array2, ArrayD, ArrayView1, ArrayView2, ArrayViewD, Ix2};
 use ndarray_rand::rand::RngCore;
-use std::any::Any;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// A fully connected layer: an affine map `weights · input + bias` followed by an
@@ -74,28 +72,6 @@ impl Dense {
     /// The activation applied to this layer's output.
     pub fn activation(&self) -> &Arc<dyn Activation> {
         &self.activation
-    }
-
-    /// Builds a `Dense` layer from its configuration and tensors.
-    /// # Arguments
-    /// - `config`: Carries the `"activation"` name.
-    /// - `tensors`: Carries the layer's weight and bias.
-    pub(super) fn from_config(
-        config: &HashMap<String, String>,
-        mut tensors: Tensors,
-    ) -> Result<Self, LayerConfigError> {
-        let weights = tensors
-            .take_weight::<Ix2>()
-            .map_err(LayerConfigError::Tensor)?;
-        let biases = tensors.take_bias().map_err(LayerConfigError::Tensor)?;
-        let activation = super::config_activation(config)?;
-        Ok(Dense::new(weights, biases, activation))
-    }
-
-    /// Mutable access to this layer's affine map.
-    #[cfg(test)]
-    pub(crate) fn affine_mut(&mut self) -> &mut Affine {
-        &mut self.affine
     }
 }
 
@@ -199,19 +175,11 @@ impl Layer for Dense {
         self.affine.is_finite()
     }
 
-    fn kind(&self) -> LayerKind {
-        LayerKind::Dense
-    }
-
     fn spec(&self) -> LayerSpec {
         LayerSpec::Dense {
             neurons: self.affine.outputs(),
             activation: self.activation.clone(),
         }
-    }
-
-    fn config(&self) -> Vec<(String, String)> {
-        vec![("activation".to_string(), self.activation.name().to_string())]
     }
 
     fn named_tensors(&self) -> Vec<(String, ArrayD<f32>)> {
@@ -234,14 +202,6 @@ impl Layer for Dense {
     fn weight_matrix(&self) -> Option<ArrayView2<'_, f32>> {
         Some(self.affine.weights())
     }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
 }
 
 #[cfg(test)]
@@ -256,7 +216,6 @@ mod tests {
         let layer = Dense::new(Array2::zeros((2, 3)), Array1::zeros(2), RELU.clone());
         assert_eq!(layer.output_size(), 2);
         assert_eq!(layer.input_size(), 3);
-        assert_eq!(layer.kind(), LayerKind::Dense);
         assert_eq!(layer.activation_name(), Some("relu"));
         assert_eq!(layer.weight_matrix().unwrap().dim(), (2, 3));
     }

@@ -1,13 +1,11 @@
 use crate::activations::Activation;
 use crate::affine::Affine;
 use crate::gradients::LayerGradients;
-use crate::layers::{BackwardPass, Layer, LayerConfigError, LayerKind, Parameter};
+use crate::layers::{BackwardPass, Layer, Parameter};
 use crate::model::LayerSpec;
 use crate::tensors::Tensors;
 use ndarray::{Array1, Array2, Array4, ArrayD, ArrayView2, ArrayView4, ArrayViewD, Ix2, Ix4};
 use ndarray_rand::rand::RngCore;
-use std::any::Any;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// A 2D convolution layer. It slides a set of small kernels across the height and width of
@@ -158,41 +156,6 @@ impl Conv2d {
     pub fn activation(&self) -> &Arc<dyn Activation> {
         &self.activation
     }
-
-    /// Builds a `Conv2d` layer from its configuration and tensors.
-    /// # Arguments
-    /// - `config`: Carries the `"activation"` name, the `"input_shape"` `(channels, height,
-    ///   width)`, the `"stride"`, and the `"padding"`.
-    /// - `tensors`: Carries the layer's weight (the kernels) and bias.
-    pub(super) fn from_config(
-        config: &HashMap<String, String>,
-        mut tensors: Tensors,
-    ) -> Result<Self, LayerConfigError> {
-        let kernels = tensors
-            .take_weight::<Ix4>()
-            .map_err(LayerConfigError::Tensor)?;
-        let biases = tensors.take_bias().map_err(LayerConfigError::Tensor)?;
-
-        let dims = super::config_dims(config, "input_shape")?;
-        let [channels, height, width] = dims[..] else {
-            return Err(LayerConfigError::InvalidConfig {
-                key: "input_shape".to_string(),
-                reason: format!("expected 3 dimensions, got {}", dims.len()),
-            });
-        };
-        let stride = super::config_usize(config, "stride")?;
-        let padding = super::config_usize(config, "padding")?;
-        let activation = super::config_activation(config)?;
-
-        Ok(Conv2d::new(
-            kernels,
-            biases,
-            (channels, height, width),
-            stride,
-            padding,
-            activation,
-        ))
-    }
 }
 
 impl Layer for Conv2d {
@@ -319,10 +282,6 @@ impl Layer for Conv2d {
         self.affine.is_finite()
     }
 
-    fn kind(&self) -> LayerKind {
-        LayerKind::Conv2d
-    }
-
     fn spec(&self) -> LayerSpec {
         let (out_channels, _, kh, kw) = self.kernels_shape;
         LayerSpec::Conv2d {
@@ -332,19 +291,6 @@ impl Layer for Conv2d {
             padding: self.padding,
             activation: self.activation.clone(),
         }
-    }
-
-    fn config(&self) -> Vec<(String, String)> {
-        let (channels, height, width) = self.input_shape;
-        vec![
-            ("activation".to_string(), self.activation.name().to_string()),
-            (
-                "input_shape".to_string(),
-                format!("{channels},{height},{width}"),
-            ),
-            ("stride".to_string(), self.stride.to_string()),
-            ("padding".to_string(), self.padding.to_string()),
-        ]
     }
 
     fn named_tensors(&self) -> Vec<(String, ArrayD<f32>)> {
@@ -364,14 +310,6 @@ impl Layer for Conv2d {
     fn weight_matrix(&self) -> Option<ArrayView2<'_, f32>> {
         // A convolution has no single (output_size, input_size) weight matrix.
         None
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
     }
 }
 
@@ -494,7 +432,6 @@ mod tests {
         assert_eq!(layer.output_shape(), vec![3, 3, 3]);
         assert_eq!(layer.input_size(), 2 * 5 * 5);
         assert_eq!(layer.output_size(), 3 * 3 * 3);
-        assert_eq!(layer.kind(), LayerKind::Conv2d);
         assert_eq!(layer.activation_name(), Some("relu"));
         assert!(layer.weight_matrix().is_none());
         assert!(layer.is_finite());
@@ -686,60 +623,6 @@ mod tests {
             1,
             0,
             RELU.clone(),
-        );
-    }
-
-    #[test]
-    fn config_and_tensors_round_trip_through_from_config() {
-        // 3 filters over a 2-channel 5×5 input, 3×3 kernel, stride 2, padding 1.
-        let mut rng = StdRng::seed_from_u64(7);
-        let layer = Conv2d::initialization((2, 5, 5), 3, (3, 3), 2, 1, RELU.clone(), &mut rng);
-
-        let config: HashMap<String, String> = layer.config().into_iter().collect();
-        let tensors: Tensors = layer.named_tensors().into_iter().collect();
-        let rebuilt = Conv2d::from_config(&config, tensors).unwrap();
-
-        // Same geometry and parameters: forward on an arbitrary batch matches bit-for-bit.
-        let input = Array::from_shape_fn(IxDyn(&[2, 5, 5, 4]), |d| {
-            (d[0] + d[1] + d[2] + d[3]) as f32 * 0.1
-        });
-        assert_eq!(layer.forward(input.view()), rebuilt.forward(input.view()));
-        assert_eq!(layer.config(), rebuilt.config());
-    }
-
-    #[test]
-    fn from_config_rejects_missing_input_shape() {
-        let mut rng = StdRng::seed_from_u64(1);
-        let layer = Conv2d::initialization((1, 4, 4), 2, (3, 3), 1, 0, RELU.clone(), &mut rng);
-        let tensors: Tensors = layer.named_tensors().into_iter().collect();
-        // Drop "input_shape" from an otherwise valid config.
-        let config: HashMap<String, String> = layer
-            .config()
-            .into_iter()
-            .filter(|(key, _)| key != "input_shape")
-            .collect();
-
-        assert_eq!(
-            Conv2d::from_config(&config, tensors).unwrap_err(),
-            LayerConfigError::MissingConfig("input_shape".to_string())
-        );
-    }
-
-    #[test]
-    fn from_config_rejects_input_shape_without_three_dimensions() {
-        let mut rng = StdRng::seed_from_u64(2);
-        let layer = Conv2d::initialization((1, 4, 4), 2, (3, 3), 1, 0, RELU.clone(), &mut rng);
-        let tensors: Tensors = layer.named_tensors().into_iter().collect();
-        // A 2-dimension input_shape where a convolution needs (channels, height, width).
-        let mut config: HashMap<String, String> = layer.config().into_iter().collect();
-        config.insert("input_shape".to_string(), "4,4".to_string());
-
-        assert_eq!(
-            Conv2d::from_config(&config, tensors).unwrap_err(),
-            LayerConfigError::InvalidConfig {
-                key: "input_shape".to_string(),
-                reason: "expected 3 dimensions, got 2".to_string(),
-            }
         );
     }
 }

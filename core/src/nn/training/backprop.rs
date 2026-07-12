@@ -161,8 +161,9 @@ mod tests {
     use crate::model::{NeuralNetwork, NeuronLayerSpec};
     use crate::optimizers::StochasticGradientDescent;
     use crate::schedulers::ConstantScheduler;
+    use crate::tensors::Tensors;
     use crate::weight_decay::WeightDecay;
-    use ndarray::{Array1, Array2, ArrayD, array};
+    use ndarray::{Array1, Array2, ArrayD, Ix1, array};
 
     /// Mean-reduced binary cross-entropy for the single-logit test networks.
     fn binary_loss() -> Arc<dyn LossFunction> {
@@ -174,21 +175,50 @@ mod tests {
         Arc::new(CategoricalCrossEntropy::new(Reduction::Mean))
     }
 
-    /// Downcasts a network's layer to the concrete [`Dense`] to read its weights and biases.
-    fn dense(model: &NeuralNetwork, index: usize) -> &Dense {
+    /// A layer's weight matrix, read through the [`Layer`] trait.
+    fn weights(model: &NeuralNetwork, index: usize) -> Array2<f32> {
         model.layers()[index]
-            .as_any()
-            .downcast_ref::<Dense>()
-            .unwrap()
+            .weight_matrix()
+            .expect("a dense layer exposes a weight matrix")
+            .to_owned()
     }
 
-    /// Downcasts a network's layer to the concrete [`Dense`] to set or perturb its
-    /// weights and biases.
-    fn dense_mut(model: &mut NeuralNetwork, index: usize) -> &mut Dense {
-        model.layers_mut()[index]
-            .as_any_mut()
-            .downcast_mut::<Dense>()
-            .unwrap()
+    /// A layer's biases, read through the [`Layer`] trait's named tensors.
+    fn biases(model: &NeuralNetwork, index: usize) -> Array1<f32> {
+        model.layers()[index]
+            .named_tensors()
+            .into_iter()
+            .find(|(name, _)| name.as_str() == Tensors::BIAS)
+            .map(|(_, tensor)| {
+                tensor
+                    .into_dimensionality::<Ix1>()
+                    .expect("biases are rank-1")
+            })
+            .expect("a dense layer carries biases")
+    }
+
+    /// Overwrites a layer's weights (parameter 0) through the [`Layer`] trait.
+    fn set_weights(model: &mut NeuralNetwork, index: usize, weights: Array2<f32>) {
+        model.layers_mut()[index].parameters_mut()[0]
+            .value
+            .assign(&weights.into_dyn());
+    }
+
+    /// Overwrites a layer's biases (parameter 1) through the [`Layer`] trait.
+    fn set_biases(model: &mut NeuralNetwork, index: usize, biases: Array1<f32>) {
+        model.layers_mut()[index].parameters_mut()[1]
+            .value
+            .assign(&biases.into_dyn());
+    }
+
+    /// Nudges one weight of a layer by `delta` through the [`Layer`] trait.
+    fn perturb_weight(model: &mut NeuralNetwork, index: usize, i: usize, j: usize, delta: f32) {
+        model.layers_mut()[index].parameters_mut()[0].value[[i, j]] += delta;
+    }
+
+    /// Nudges one bias of a layer by `delta` through the [`Layer`] trait.
+    fn perturb_bias(model: &mut NeuralNetwork, index: usize, i: usize, delta: f32) {
+        model.layers_mut()[index].parameters_mut()[1].value[[i]] += delta;
     }
 
     fn compute_loss(
@@ -209,10 +239,10 @@ mod tests {
         let mut model = NeuralNetwork::initialization(2, &specs, 0);
 
         // Fixed weights for reproducibility
-        *dense_mut(&mut model, 0).affine_mut().weights_mut() = array![[0.1, -0.2], [0.3, 0.1]];
-        *dense_mut(&mut model, 0).affine_mut().biases_mut() = Array1::from_vec(vec![0.05, -0.05]);
-        *dense_mut(&mut model, 1).affine_mut().weights_mut() = array![[0.4, -0.1]];
-        *dense_mut(&mut model, 1).affine_mut().biases_mut() = Array1::from_vec(vec![0.1]);
+        set_weights(&mut model, 0, array![[0.1, -0.2], [0.3, 0.1]]);
+        set_biases(&mut model, 0, Array1::from_vec(vec![0.05, -0.05]));
+        set_weights(&mut model, 1, array![[0.4, -0.1]]);
+        set_biases(&mut model, 1, Array1::from_vec(vec![0.1]));
 
         let inputs = array![[0.5, -0.3, 0.8], [0.2, 0.7, -0.5]].into_dyn(); // (2 features, 3 samples)
         let targets = array![[1.0, 0.0, 1.0]].into_dyn(); // (1 output, 3 samples)
@@ -238,15 +268,13 @@ mod tests {
         };
 
         for (layer_idx, layer_grads) in analytical_grads.iter().enumerate() {
-            let (rows, cols) = dense(&model, layer_idx).weights().dim();
+            let (rows, cols) = weights(&model, layer_idx).dim();
             for i in 0..rows {
                 for j in 0..cols {
                     let mut m_plus = model.clone();
-                    dense_mut(&mut m_plus, layer_idx).affine_mut().weights_mut()[[i, j]] += eps;
+                    perturb_weight(&mut m_plus, layer_idx, i, j, eps);
                     let mut m_minus = model.clone();
-                    dense_mut(&mut m_minus, layer_idx)
-                        .affine_mut()
-                        .weights_mut()[[i, j]] -= eps;
+                    perturb_weight(&mut m_minus, layer_idx, i, j, -eps);
                     let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
                         - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
                         / (2.0 * eps);
@@ -258,11 +286,11 @@ mod tests {
                 }
             }
 
-            for i in 0..dense(&model, layer_idx).biases().len() {
+            for i in 0..biases(&model, layer_idx).len() {
                 let mut m_plus = model.clone();
-                dense_mut(&mut m_plus, layer_idx).affine_mut().biases_mut()[i] += eps;
+                perturb_bias(&mut m_plus, layer_idx, i, eps);
                 let mut m_minus = model.clone();
-                dense_mut(&mut m_minus, layer_idx).affine_mut().biases_mut()[i] -= eps;
+                perturb_bias(&mut m_minus, layer_idx, i, -eps);
                 let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
                     - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
                     / (2.0 * eps);
@@ -283,10 +311,8 @@ mod tests {
         let specs = NeuronLayerSpec::network_for(vec![], &*SIGMOID, 3);
         let mut model = NeuralNetwork::initialization(2, &specs, 0);
 
-        *dense_mut(&mut model, 0).affine_mut().weights_mut() =
-            array![[0.5, -0.3], [0.2, 0.8], [-0.4, 0.1]];
-        *dense_mut(&mut model, 0).affine_mut().biases_mut() =
-            Array1::from_vec(vec![0.1, -0.2, 0.1]);
+        set_weights(&mut model, 0, array![[0.5, -0.3], [0.2, 0.8], [-0.4, 0.1]]);
+        set_biases(&mut model, 0, Array1::from_vec(vec![0.1, -0.2, 0.1]));
 
         // 4 samples across 3 classes
         let inputs = array![[1.0, -1.0, 0.5, -0.5], [0.5, 0.5, -0.5, -0.5]].into_dyn();
@@ -314,15 +340,13 @@ mod tests {
         };
 
         for (layer_idx, layer_grads) in analytical_grads.iter().enumerate() {
-            let (rows, cols) = dense(&model, layer_idx).weights().dim();
+            let (rows, cols) = weights(&model, layer_idx).dim();
             for i in 0..rows {
                 for j in 0..cols {
                     let mut m_plus = model.clone();
-                    dense_mut(&mut m_plus, layer_idx).affine_mut().weights_mut()[[i, j]] += eps;
+                    perturb_weight(&mut m_plus, layer_idx, i, j, eps);
                     let mut m_minus = model.clone();
-                    dense_mut(&mut m_minus, layer_idx)
-                        .affine_mut()
-                        .weights_mut()[[i, j]] -= eps;
+                    perturb_weight(&mut m_minus, layer_idx, i, j, -eps);
                     let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
                         - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
                         / (2.0 * eps);
@@ -333,11 +357,11 @@ mod tests {
                     );
                 }
             }
-            for i in 0..dense(&model, layer_idx).biases().len() {
+            for i in 0..biases(&model, layer_idx).len() {
                 let mut m_plus = model.clone();
-                dense_mut(&mut m_plus, layer_idx).affine_mut().biases_mut()[i] += eps;
+                perturb_bias(&mut m_plus, layer_idx, i, eps);
                 let mut m_minus = model.clone();
-                dense_mut(&mut m_minus, layer_idx).affine_mut().biases_mut()[i] -= eps;
+                perturb_bias(&mut m_minus, layer_idx, i, -eps);
                 let numerical = (compute_loss(&m_plus, &inputs, &targets, &loss_fn)
                     - compute_loss(&m_minus, &inputs, &targets, &loss_fn))
                     / (2.0 * eps);
@@ -357,8 +381,8 @@ mod tests {
         let mut model = NeuralNetwork::initialization(2, &specs, 0);
 
         // Large weights drive the single output logit to ±200.
-        *dense_mut(&mut model, 0).affine_mut().weights_mut() = array![[100.0, 100.0]];
-        *dense_mut(&mut model, 0).affine_mut().biases_mut() = Array1::from_vec(vec![0.0]);
+        set_weights(&mut model, 0, array![[100.0, 100.0]]);
+        set_biases(&mut model, 0, Array1::from_vec(vec![0.0]));
 
         let inputs = array![[1.0, -1.0], [1.0, -1.0]].into_dyn(); // logits +200 / -200
         let targets = array![[1.0, 0.0]].into_dyn();
@@ -415,8 +439,8 @@ mod tests {
 
         let specs = NeuronLayerSpec::network_for(vec![], &*SIGMOID, 2);
         let mut model = NeuralNetwork::initialization(2, &specs, 0);
-        *dense_mut(&mut model, 0).affine_mut().weights_mut() = array![[100.0, 100.0]];
-        *dense_mut(&mut model, 0).affine_mut().biases_mut() = Array1::from_vec(vec![0.0]);
+        set_weights(&mut model, 0, array![[100.0, 100.0]]);
+        set_biases(&mut model, 0, Array1::from_vec(vec![0.0]));
         let inputs = array![[1.0, -1.0], [1.0, -1.0]].into_dyn(); // logits +200 / -200
         let targets = array![[1.0, 0.0]].into_dyn();
 
@@ -456,7 +480,7 @@ mod tests {
         );
         let mut model = NeuralNetwork::new(vec![Box::new(Flatten::new(vec![4])), Box::new(head)]);
 
-        let before = dense(&model, 1).weights().to_owned();
+        let before = weights(&model, 1);
 
         let inputs = Array2::from_shape_fn((4, 12), |(r, c)| ((r + c) as f32).cos());
         let mut targets = Array2::zeros((1, 12));
@@ -481,7 +505,7 @@ mod tests {
             )
             .unwrap();
 
-        let after = dense(&model, 1).weights().to_owned();
+        let after = weights(&model, 1);
         assert_ne!(before, after, "the Dense head should have learned");
     }
 
@@ -581,13 +605,13 @@ mod tests {
         let b = run();
         for i in 0..a.layers().len() {
             assert_eq!(
-                dense(&a, i).weights(),
-                dense(&b, i).weights(),
+                weights(&a, i),
+                weights(&b, i),
                 "weights diverged between identical runs"
             );
             assert_eq!(
-                dense(&a, i).biases(),
-                dense(&b, i).biases(),
+                biases(&a, i),
+                biases(&b, i),
                 "biases diverged between identical runs"
             );
         }

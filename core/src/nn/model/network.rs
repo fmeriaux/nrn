@@ -301,15 +301,6 @@ mod tests {
         NeuralNetwork::single(Dense::new(weights, biases, activation))
     }
 
-    /// Downcasts a network's layer back to the concrete [`Dense`] to read or perturb its
-    /// weights and biases in tests.
-    fn dense_mut(model: &mut NeuralNetwork, index: usize) -> &mut Dense {
-        model.layers[index]
-            .as_any_mut()
-            .downcast_mut::<Dense>()
-            .unwrap()
-    }
-
     #[test]
     fn network_reports_input_size_and_summary() {
         // 3 inputs -> 4 relu -> 3 identity (logits)
@@ -448,7 +439,9 @@ mod tests {
         // predict is a pure forward pass and does not guard against divergence (the trainer
         // does, via weight finiteness), so a NaN weight surfaces as a NaN prediction.
         let mut model = make_network(Array2::zeros((1, 2)), Array1::zeros(1), SIGMOID.clone());
-        *dense_mut(&mut model, 0).affine_mut().weights_mut() = array![[f32::NAN, 0.0]];
+        model.layers[0].parameters_mut()[0]
+            .value
+            .assign(&array![[f32::NAN, 0.0]].into_dyn());
         let inputs = array![[1.0], [1.0]];
         let prediction = model.output(inputs.view()).unwrap();
         assert!(prediction.iter().any(|v| v.is_nan()));
@@ -463,14 +456,14 @@ mod tests {
     #[test]
     fn is_finite_detects_nan_in_weights() {
         let mut model = make_network(Array2::zeros((1, 2)), Array1::zeros(1), SIGMOID.clone());
-        dense_mut(&mut model, 0).affine_mut().weights_mut()[[0, 0]] = f32::NAN;
+        model.layers[0].parameters_mut()[0].value[[0, 0]] = f32::NAN;
         assert!(!model.is_finite());
     }
 
     #[test]
     fn is_finite_detects_inf_in_biases() {
         let mut model = make_network(Array2::zeros((1, 2)), Array1::zeros(1), SIGMOID.clone());
-        dense_mut(&mut model, 0).affine_mut().biases_mut()[0] = f32::INFINITY;
+        model.layers[0].parameters_mut()[1].value[[0]] = f32::INFINITY;
         assert!(!model.is_finite());
     }
 
