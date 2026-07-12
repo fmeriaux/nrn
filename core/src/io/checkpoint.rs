@@ -320,6 +320,7 @@ mod tests {
     use crate::gradients::LayerGradients;
     use crate::io::hyperparams::HyperParametersRecord;
     use crate::io::run::{TrainingMeta, TrainingRun};
+    use crate::io::task::TaskRecord;
     use crate::model::NeuronLayerSpec;
     use crate::optimizers::{Adam, StochasticGradientDescent};
     use crate::schedulers::{ConstantScheduler, Scheduler, StepDecay};
@@ -354,6 +355,7 @@ mod tests {
             &TrainingMeta {
                 dataset: dataset.to_string(),
                 model: format!("model-{dataset}"),
+                task: TaskRecord::Binary,
                 hyperparams: HyperParametersRecord::sample(),
                 scaler: None,
             },

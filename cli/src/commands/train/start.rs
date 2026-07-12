@@ -9,7 +9,7 @@ use nrn::data::Dataset;
 use nrn::io::hyperparams::HyperParametersRecord;
 use nrn::io::run::{TrainingMeta, TrainingRun};
 use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec};
-use nrn::objectives::Objective;
+use nrn::task::Task;
 use nrn::training::{Callbacks, HyperParameters};
 use std::error::Error;
 use std::io::{Error as IoError, ErrorKind};
@@ -50,9 +50,9 @@ impl StartArgs {
         let dataset = Dataset::load(&self.dataset)?;
         loaded(&dataset);
 
-        let objective = Objective::from_dataset(&dataset);
-        objective.validate_dataset(&dataset)?;
-        show(&objective);
+        let task = Task::from_dataset(&dataset);
+        task.validate_dataset(&dataset)?;
+        show(&task);
 
         let hyperparameters = HyperParameters::try_from(&self.hp)?;
 
@@ -90,6 +90,7 @@ impl StartArgs {
             let meta = TrainingMeta {
                 dataset: dataset_name,
                 model: model_name.clone(),
+                task: task.into(),
                 hyperparams: HyperParametersRecord::from(&hyperparameters),
                 scaler: data.scaler().cloned().map(Into::into),
             };
@@ -107,12 +108,13 @@ impl StartArgs {
             .with(ModelSaver::new(
                 &run_dir,
                 &model_name,
+                task,
                 data.scaler().cloned(),
             ))
             .with_opt(recorder);
 
         hyperparameters
-            .build(model, objective, data, callbacks)?
+            .build(model, task, data, callbacks)?
             .train()?
             .into_result()
             .map_err(DivergedRun::from)?;

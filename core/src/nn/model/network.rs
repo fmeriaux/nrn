@@ -1,6 +1,7 @@
 //! The [`NeuralNetwork`]: a stack of layers applied in order, plus the per-stage
 //! [`Activations`] a forward pass captures and the [`InputShapeMismatch`] it can raise.
 
+use crate::activations::Activation;
 use crate::layers::{Dense, Layer, format_shape};
 use crate::model::NeuronLayerSpec;
 use ndarray::{ArrayD, ArrayView, ArrayViewD, Dimension};
@@ -48,6 +49,21 @@ impl Activations {
     /// Consumes into the owned per-stage activations, in order and input first.
     pub fn into_stages(self) -> Vec<ArrayD<f32>> {
         self.0
+    }
+
+    /// Consumes into the owned output stage, discarding the earlier stages.
+    pub fn into_output(self) -> ArrayD<f32> {
+        self.0
+            .into_iter()
+            .next_back()
+            .expect("Activations is never empty")
+    }
+
+    /// Applies `activation` in place to the [`output`](Activations::output) stage, leaving the
+    /// earlier stages untouched.
+    pub fn finalize(&mut self, activation: &dyn Activation) {
+        let output = self.0.last_mut().expect("Activations is never empty");
+        activation.apply_inplace(output);
     }
 }
 

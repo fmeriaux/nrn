@@ -1,8 +1,10 @@
 use crate::actions::acquire_instance;
 use crate::display::{evaluated, loaded};
 use clap::Args;
+use ndarray::Axis;
+use nrn::classification::Classification;
 use nrn::model::Predictor;
-use nrn::plot::DiagramOptions;
+use nrn::plot::{ActivationDiagram, DiagramOptions};
 use std::error::Error;
 
 #[derive(Args, Debug)]
@@ -26,13 +28,18 @@ impl PredictArgs {
 
         let instance = acquire_instance(self.instance, predictor.network.input_size())?;
 
+        let activations = predictor.infer(instance.view().insert_axis(Axis(1)))?;
+
         if self.activations {
-            let diagram =
-                predictor.activation_diagram(instance.view(), &DiagramOptions::default())?;
+            let diagram = ActivationDiagram::from_activations(
+                &predictor.network,
+                &activations,
+                &DiagramOptions::default(),
+            );
             println!("{}", diagram.to_console());
         }
 
-        let classification = predictor.classify_instance(instance.view())?;
+        let classification = Classification::from_activations(&activations);
         evaluated(&classification);
 
         Ok(())

@@ -16,6 +16,7 @@ use nrn::loss_functions::{BinaryCrossEntropy, LossFunction, Reduction};
 use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec, Predictor};
 use nrn::optimizers::Adam;
 use nrn::schedulers::ConstantScheduler;
+use nrn::task::Task;
 use nrn::training::{GradientClipping, TrainerCallback};
 use nrn::weight_decay::WeightDecay;
 use std::path::PathBuf;
@@ -95,6 +96,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
         &TrainingMeta {
             dataset: "test_dataset".to_string(),
             model: "model-test_dataset".to_string(),
+            task: Task::Binary.into(),
             hyperparams: sample_hyperparams(),
             scaler: None,
         },
@@ -181,18 +183,19 @@ fn sample_network() -> NeuralNetwork {
 #[test]
 fn predictor_with_scaler_roundtrips_through_directory() {
     let dir = temp_dir().join("predictor_scaled");
-    let input = array![0.3, 0.7];
+    // Features on the leading axis, one sample trailing.
+    let input = array![[0.3], [0.7]];
 
     let features = array![[0.0, 0.0], [1.0, 1.0]];
     let scaler = ScalerMethod::MinMax(MinMaxScaler::default().fit(features.view()));
-    let predictor = Predictor::new(sample_network(), Some(scaler));
-    let expected = predictor.class_probabilities(input.view());
+    let predictor = Predictor::new(sample_network(), Task::Binary, Some(scaler));
+    let expected = predictor.output(input.view()).unwrap();
 
     predictor.save(&dir).unwrap();
     let reloaded = Predictor::load(&dir).unwrap();
 
     assert!(reloaded.scaler.is_some());
-    assert_eq!(expected, reloaded.class_probabilities(input.view()));
+    assert_eq!(expected, reloaded.output(input.view()).unwrap());
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -200,16 +203,17 @@ fn predictor_with_scaler_roundtrips_through_directory() {
 #[test]
 fn predictor_without_scaler_roundtrips_with_none() {
     let dir = temp_dir().join("predictor_unscaled");
-    let input = array![0.3, 0.7];
+    // Features on the leading axis, one sample trailing.
+    let input = array![[0.3], [0.7]];
 
-    let predictor = Predictor::new(sample_network(), None);
-    let expected = predictor.class_probabilities(input.view());
+    let predictor = Predictor::new(sample_network(), Task::Binary, None);
+    let expected = predictor.output(input.view()).unwrap();
 
     predictor.save(&dir).unwrap();
     let reloaded = Predictor::load(&dir).unwrap();
 
     assert!(reloaded.scaler.is_none());
-    assert_eq!(expected, reloaded.class_probabilities(input.view()));
+    assert_eq!(expected, reloaded.output(input.view()).unwrap());
 
     let _ = std::fs::remove_dir_all(&dir);
 }

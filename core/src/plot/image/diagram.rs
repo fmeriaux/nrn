@@ -359,7 +359,7 @@ mod tests {
     use crate::layers::Dense;
     use crate::model::NeuralNetwork;
     use crate::plot::activations::DiagramOptions;
-    use ndarray::array;
+    use ndarray::{Axis, array};
 
     fn pixel_count(buffer: &[u8]) -> usize {
         buffer.len() / 3
@@ -371,8 +371,9 @@ mod tests {
             array![0.0, 0.0, 0.0],
             RELU.clone(),
         ));
-        net.activation_diagram(array![1.0, 1.0].view(), &DiagramOptions::default())
-            .unwrap()
+        let input = array![1.0, 1.0];
+        let activations = net.forward(input.view().insert_axis(Axis(1))).unwrap();
+        ActivationDiagram::from_activations(&net, &activations, &DiagramOptions::default())
     }
 
     #[test]

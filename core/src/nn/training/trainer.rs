@@ -250,9 +250,9 @@ mod tests {
     use crate::activations::SIGMOID;
     use crate::data::Dataset;
     use crate::layers::Dense;
-    use crate::objectives::Objective;
     use crate::optimizers::Optimizer;
     use crate::schedulers::Scheduler;
+    use crate::task::Task;
     use crate::training::GradientClipping;
     use ndarray::array;
     use std::cell::RefCell;
@@ -463,7 +463,7 @@ mod tests {
         hyperparameters
             .build(
                 sample_model(),
-                Objective::Binary,
+                Task::Binary,
                 data,
                 Callbacks::new(vec![Box::new(CountingCallback(counts))]),
             )
@@ -482,7 +482,7 @@ mod tests {
         hyperparameters
             .build(
                 sample_model(),
-                Objective::Binary,
+                Task::Binary,
                 data,
                 Callbacks::new(vec![Box::new(callback)]),
             )
@@ -735,7 +735,7 @@ mod tests {
         let mut trainer = hyperparameters
             .build(
                 sample_model(),
-                Objective::Binary,
+                Task::Binary,
                 data,
                 Callbacks::new(vec![Box::new(CountingCallback(counts.clone()))]),
             )
@@ -783,7 +783,7 @@ mod tests {
 
         let data = hyperparameters.prepare(sample_dataset(), None).unwrap();
         let mut trainer = hyperparameters
-            .build(sample_model(), Objective::Binary, data, Callbacks::empty())
+            .build(sample_model(), Task::Binary, data, Callbacks::empty())
             .unwrap();
 
         // Stateless SGD / constant scheduler ignore the provided state (default no-ops).
@@ -827,7 +827,7 @@ mod tests {
 
         let data = hyperparameters.prepare(sample_dataset(), None).unwrap();
         let mut trainer = hyperparameters
-            .build(sample_model(), Objective::Binary, data, Callbacks::empty())
+            .build(sample_model(), Task::Binary, data, Callbacks::empty())
             .unwrap();
 
         trainer
@@ -846,7 +846,7 @@ mod tests {
         let hyperparameters = sample_hyperparameters(1, 0, 0.01, None, 0.0);
         let data = hyperparameters.prepare(sample_dataset(), None).unwrap();
         let mut trainer = hyperparameters
-            .build(sample_model(), Objective::Binary, data, Callbacks::empty())
+            .build(sample_model(), Task::Binary, data, Callbacks::empty())
             .unwrap();
 
         // Missing `time_step` metadata makes Adam's restore fail; the trainer

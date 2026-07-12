@@ -3,6 +3,7 @@ use crate::io::hyperparams::HyperParametersRecord;
 use crate::io::json;
 use crate::io::path::PathExt;
 use crate::io::scalers::ScalerRecord;
+use crate::io::task::TaskRecord;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::ErrorKind::AlreadyExists;
@@ -17,6 +18,8 @@ pub struct TrainingMeta {
     pub dataset: String,
     /// Bare file name (stem) of the run's final-model artifact.
     pub model: String,
+    /// The learning task the run trained for.
+    pub task: TaskRecord,
     /// Hyperparameters the run was configured with.
     pub hyperparams: HyperParametersRecord,
     /// Run-level scaler fitted on the train split, immutable across the run.
@@ -124,6 +127,7 @@ mod tests {
         TrainingMeta {
             dataset: dataset.to_string(),
             model: format!("model-{dataset}"),
+            task: TaskRecord::Binary,
             hyperparams: HyperParametersRecord::sample(),
             scaler: None,
         }

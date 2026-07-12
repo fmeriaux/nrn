@@ -74,7 +74,17 @@ mod tests {
     use crate::layers::Dense;
     use crate::model::NeuralNetwork;
     use crate::plot::activations::DiagramOptions;
-    use ndarray::{Array1, Array2, array};
+    use ndarray::{Array1, Array2, ArrayView1, Axis, array};
+
+    /// Builds a diagram from a bare network's forward pass on a single instance.
+    fn network_diagram(
+        net: &NeuralNetwork,
+        input: ArrayView1<f32>,
+        options: &DiagramOptions,
+    ) -> ActivationDiagram {
+        let activations = net.forward(input.insert_axis(Axis(1))).unwrap();
+        ActivationDiagram::from_activations(net, &activations, options)
+    }
 
     /// A hidden ReLU layer whose middle neuron dies, then a two-unit output layer
     /// with activations `[0.3, 0.4]`.
@@ -89,8 +99,7 @@ mod tests {
             array![0.0, 0.0],
             RELU.clone(),
         ));
-        net.activation_diagram(array![1.0, 1.0].view(), &DiagramOptions::default())
-            .unwrap()
+        network_diagram(&net, array![1.0, 1.0].view(), &DiagramOptions::default())
     }
 
     #[test]
@@ -134,10 +143,7 @@ mod tests {
             max_units: 8,
             ..DiagramOptions::default()
         };
-        let text = net
-            .activation_diagram(array![1.0, 1.0].view(), &options)
-            .unwrap()
-            .to_console();
+        let text = network_diagram(&net, array![1.0, 1.0].view(), &options).to_console();
         assert!(text.contains("showing the 8 most active of 50 units"));
     }
 }

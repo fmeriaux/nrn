@@ -13,6 +13,7 @@ use nrn::evaluation::EvaluationSet;
 use nrn::model::{NeuralNetwork, Predictor};
 use nrn::optimizers::Optimizer;
 use nrn::schedulers::Scheduler;
+use nrn::task::Task;
 use nrn::training::{CallbackResult, HyperParameters, TrainerCallback, TrainingOutcome};
 use std::path::{Path, PathBuf};
 
@@ -135,6 +136,7 @@ impl TrainerCallback for ConsoleMonitor {
 /// ends, unless the run diverged without recovery (in which case `model` is `None`).
 pub struct ModelSaver {
     path: PathBuf,
+    task: Task,
     scaler: Option<ScalerMethod>,
 }
 
@@ -142,9 +144,10 @@ impl ModelSaver {
     /// Saves the final predictor beside `run_dir`, in a directory named `model_name`.
     /// Start and resume both construct the saver here, so the model can't land
     /// in two different places.
-    pub fn new(run_dir: &Path, model_name: &str, scaler: Option<ScalerMethod>) -> Self {
+    pub fn new(run_dir: &Path, model_name: &str, task: Task, scaler: Option<ScalerMethod>) -> Self {
         Self {
             path: run_dir.parent().unwrap_or(Path::new(".")).join(model_name),
+            task,
             scaler,
         }
     }
@@ -159,7 +162,7 @@ impl TrainerCallback for ModelSaver {
         _epoch: usize,
     ) -> CallbackResult {
         if let Some(model) = model {
-            let predictor = Predictor::new(model.clone(), self.scaler.clone());
+            let predictor = Predictor::new(model.clone(), self.task, self.scaler.clone());
             saved(&Artifacts::single("Model", predictor.save(&self.path)?));
         }
         Ok(())

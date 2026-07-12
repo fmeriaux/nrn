@@ -12,6 +12,7 @@ use nrn::activations::RELU;
 use nrn::data::Instance;
 use nrn::data::scalers::{MinMaxScaler, ScalerMethod};
 use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec, Predictor};
+use nrn::task::Task;
 use predicates::str::contains;
 use std::path::Path;
 use tempfile::TempDir;
@@ -26,7 +27,7 @@ fn workspace() -> TempDir {
 fn write_predictor(dir: &Path, n_features: usize, scaler: Option<ScalerMethod>) {
     let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![4]), 2, &*RELU).unwrap();
     let network = NeuralNetwork::initialization(n_features, &specs, 7);
-    Predictor::new(network, scaler)
+    Predictor::new(network, Task::Binary, scaler)
         .save(dir.join("model"))
         .unwrap();
 }

@@ -215,6 +215,7 @@ mod tests {
     use crate::evaluation_history::{EpochEvaluation, EvaluationHistory};
     use crate::layers::Dense;
     use crate::model::NeuralNetwork;
+    use crate::task::Task;
     use ndarray::array;
 
     /// A two-feature, two-class dataset.
@@ -245,6 +246,7 @@ mod tests {
                 array![0.0],
                 IDENTITY.clone(),
             )),
+            Task::Binary,
             None,
         )
     }
