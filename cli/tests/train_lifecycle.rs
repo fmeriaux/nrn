@@ -110,7 +110,7 @@ fn continues_from_saved_model_without_checkpoints() {
             "start",
             &ds,
             "--model",
-            &format!("model-{ds}/model"),
+            &format!("model-{ds}"),
             "--epochs",
             "2",
             "--checkpoint-interval",

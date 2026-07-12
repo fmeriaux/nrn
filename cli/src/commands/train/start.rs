@@ -8,7 +8,7 @@ use nrn::activations::RELU;
 use nrn::data::Dataset;
 use nrn::io::hyperparams::HyperParametersRecord;
 use nrn::io::run::{TrainingMeta, TrainingRun};
-use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec};
+use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec, Predictor};
 use nrn::task::Task;
 use nrn::training::Callbacks;
 use std::error::Error;
@@ -58,7 +58,7 @@ impl StartArgs {
 
         let model = match &self.model {
             Some(path) => {
-                let model = NeuralNetwork::load(path)?;
+                let model = Predictor::load(path)?.network;
                 loaded(&model);
                 model
             }

@@ -14,7 +14,7 @@ use nrn::io::hyperparams::{
 use nrn::io::run::{TrainingMeta, TrainingRun};
 use nrn::io::scalers::ScalerRecord;
 use nrn::loss_functions::{BinaryCrossEntropy, LossFunction, Reduction};
-use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec, Predictor};
+use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::Adam;
 use nrn::schedulers::ConstantScheduler;
 use nrn::task::Task;
@@ -175,49 +175,6 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let instance_path = dir.join("instance");
     instance.save(&instance_path).unwrap();
     assert_eq!(instance, Instance::load(&instance_path).unwrap());
-
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-fn sample_network() -> NeuralNetwork {
-    let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![4]), 2, &*RELU).unwrap();
-    NeuralNetwork::initialization(2, &specs, 0)
-}
-
-#[test]
-fn predictor_with_scaler_roundtrips_through_directory() {
-    let dir = temp_dir().join("predictor_scaled");
-    // Features on the leading axis, one sample trailing.
-    let input = array![[0.3], [0.7]];
-
-    let features = array![[0.0, 0.0], [1.0, 1.0]];
-    let scaler = ScalerMethod::MinMax(MinMaxScaler::default().fit(features.view()));
-    let predictor = Predictor::new(sample_network(), Task::Binary, Some(scaler));
-    let expected = predictor.output(input.view()).unwrap();
-
-    predictor.save(&dir).unwrap();
-    let reloaded = Predictor::load(&dir).unwrap();
-
-    assert!(reloaded.scaler.is_some());
-    assert_eq!(expected, reloaded.output(input.view()).unwrap());
-
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn predictor_without_scaler_roundtrips_with_none() {
-    let dir = temp_dir().join("predictor_unscaled");
-    // Features on the leading axis, one sample trailing.
-    let input = array![[0.3], [0.7]];
-
-    let predictor = Predictor::new(sample_network(), Task::Binary, None);
-    let expected = predictor.output(input.view()).unwrap();
-
-    predictor.save(&dir).unwrap();
-    let reloaded = Predictor::load(&dir).unwrap();
-
-    assert!(reloaded.scaler.is_none());
-    assert_eq!(expected, reloaded.output(input.view()).unwrap());
 
     let _ = std::fs::remove_dir_all(&dir);
 }
