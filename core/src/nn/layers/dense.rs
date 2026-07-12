@@ -78,13 +78,13 @@ impl Dense {
     /// Builds a `Dense` layer from its configuration and tensors.
     /// # Arguments
     /// - `config`: Carries the `"activation"` name.
-    /// - `tensors`: Carries the `"weights"` (rank-2) and `"biases"` (rank-1) tensors.
+    /// - `tensors`: Carries the `"weight"` (rank-2) and `"bias"` (rank-1) tensors.
     pub(super) fn from_config(
         config: &HashMap<String, String>,
         mut tensors: HashMap<String, ArrayD<f32>>,
     ) -> Result<Self, LayerConfigError> {
-        let weights = take_tensor::<Ix2>(&mut tensors, "weights")?;
-        let biases = take_tensor::<Ix1>(&mut tensors, "biases")?;
+        let weights = take_tensor::<Ix2>(&mut tensors, "weight")?;
+        let biases = take_tensor::<Ix1>(&mut tensors, "bias")?;
         let activation = super::config_activation(config)?;
         Ok(Dense::new(weights, biases, activation))
     }
@@ -214,11 +214,11 @@ impl Layer for Dense {
     fn named_tensors(&self) -> Vec<(String, ArrayD<f32>)> {
         vec![
             (
-                "weights".to_string(),
+                "weight".to_string(),
                 self.affine.weights().to_owned().into_dyn(),
             ),
             (
-                "biases".to_string(),
+                "bias".to_string(),
                 self.affine.biases().to_owned().into_dyn(),
             ),
         ]
@@ -275,12 +275,12 @@ mod tests {
     }
 
     #[test]
-    fn named_tensors_are_weights_and_biases() {
+    fn named_tensors_are_weight_and_bias() {
         let layer = Dense::new(array![[1.0, 2.0]], array![3.0], RELU.clone());
         let tensors = layer.named_tensors();
-        assert_eq!(tensors[0].0, "weights");
+        assert_eq!(tensors[0].0, "weight");
         assert_eq!(tensors[0].1, array![[1.0, 2.0]].into_dyn());
-        assert_eq!(tensors[1].0, "biases");
+        assert_eq!(tensors[1].0, "bias");
         assert_eq!(tensors[1].1, array![3.0].into_dyn());
     }
 

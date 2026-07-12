@@ -273,9 +273,9 @@ impl LayerSpec {
             LayerSpec::Dense { activation, .. } => {
                 flat_input(input_shape)?;
                 let weights =
-                    take_tensor::<Ix2>(&mut tensors, "weights").map_err(LayerSpecError::Tensor)?;
+                    take_tensor::<Ix2>(&mut tensors, "weight").map_err(LayerSpecError::Tensor)?;
                 let biases =
-                    take_tensor::<Ix1>(&mut tensors, "biases").map_err(LayerSpecError::Tensor)?;
+                    take_tensor::<Ix1>(&mut tensors, "bias").map_err(LayerSpecError::Tensor)?;
                 Box::new(Dense::new(weights, biases, activation.clone()))
             }
             LayerSpec::Conv2d {
@@ -287,9 +287,9 @@ impl LayerSpec {
             } => {
                 let input = conv_input(input_shape, *kernel, *padding)?;
                 let kernels =
-                    take_tensor::<Ix4>(&mut tensors, "kernels").map_err(LayerSpecError::Tensor)?;
+                    take_tensor::<Ix4>(&mut tensors, "weight").map_err(LayerSpecError::Tensor)?;
                 let biases =
-                    take_tensor::<Ix1>(&mut tensors, "biases").map_err(LayerSpecError::Tensor)?;
+                    take_tensor::<Ix1>(&mut tensors, "bias").map_err(LayerSpecError::Tensor)?;
                 Box::new(Conv2d::new(
                     kernels,
                     biases,

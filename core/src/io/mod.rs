@@ -5,7 +5,7 @@ pub mod data;
 pub mod hyperparams;
 pub mod instance;
 pub mod json;
-pub mod model;
+pub mod network;
 pub mod optimizer;
 pub mod path;
 pub mod predictor;

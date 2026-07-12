@@ -162,13 +162,13 @@ impl Conv2d {
     /// # Arguments
     /// - `config`: Carries the `"activation"` name, the `"input_shape"` `(channels, height,
     ///   width)`, the `"stride"`, and the `"padding"`.
-    /// - `tensors`: Carries the `"kernels"` (rank-4) and `"biases"` (rank-1) tensors.
+    /// - `tensors`: Carries the `"weight"` (rank-4 kernels) and `"bias"` (rank-1) tensors.
     pub(super) fn from_config(
         config: &HashMap<String, String>,
         mut tensors: HashMap<String, ArrayD<f32>>,
     ) -> Result<Self, LayerConfigError> {
-        let kernels = take_tensor::<Ix4>(&mut tensors, "kernels")?;
-        let biases = take_tensor::<Ix1>(&mut tensors, "biases")?;
+        let kernels = take_tensor::<Ix4>(&mut tensors, "weight")?;
+        let biases = take_tensor::<Ix1>(&mut tensors, "bias")?;
 
         let dims = super::config_dims(config, "input_shape")?;
         let [channels, height, width] = dims[..] else {
@@ -346,9 +346,9 @@ impl Layer for Conv2d {
 
     fn named_tensors(&self) -> Vec<(String, ArrayD<f32>)> {
         vec![
-            ("kernels".to_string(), self.kernels().into_dyn()),
+            ("weight".to_string(), self.kernels().into_dyn()),
             (
-                "biases".to_string(),
+                "bias".to_string(),
                 self.affine.biases().to_owned().into_dyn(),
             ),
         ]
@@ -497,9 +497,9 @@ mod tests {
         assert!(layer.is_finite());
 
         let tensors = layer.named_tensors();
-        assert_eq!(tensors[0].0, "kernels");
+        assert_eq!(tensors[0].0, "weight");
         assert_eq!(tensors[0].1.shape(), &[3, 2, 3, 3]);
-        assert_eq!(tensors[1].0, "biases");
+        assert_eq!(tensors[1].0, "bias");
         assert_eq!(tensors[1].1.shape(), &[3]);
 
         let params = layer.parameters_mut();
