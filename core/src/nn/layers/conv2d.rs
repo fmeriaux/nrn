@@ -2,6 +2,7 @@ use crate::activations::Activation;
 use crate::affine::Affine;
 use crate::gradients::LayerGradients;
 use crate::layers::{BackwardPass, Layer, LayerConfigError, LayerKind, Parameter};
+use crate::model::{LayerSpec, take_tensor};
 use ndarray::{Array1, Array2, Array4, ArrayD, ArrayView2, ArrayView4, ArrayViewD, Ix1, Ix2, Ix4};
 use ndarray_rand::rand::RngCore;
 use std::any::Any;
@@ -166,8 +167,8 @@ impl Conv2d {
         config: &HashMap<String, String>,
         mut tensors: HashMap<String, ArrayD<f32>>,
     ) -> Result<Self, LayerConfigError> {
-        let kernels = super::take_tensor::<Ix4>(&mut tensors, "kernels")?;
-        let biases = super::take_tensor::<Ix1>(&mut tensors, "biases")?;
+        let kernels = take_tensor::<Ix4>(&mut tensors, "kernels")?;
+        let biases = take_tensor::<Ix1>(&mut tensors, "biases")?;
 
         let dims = super::config_dims(config, "input_shape")?;
         let [channels, height, width] = dims[..] else {
@@ -317,6 +318,17 @@ impl Layer for Conv2d {
 
     fn kind(&self) -> LayerKind {
         LayerKind::Conv2d
+    }
+
+    fn spec(&self) -> LayerSpec {
+        let (out_channels, _, kh, kw) = self.kernels_shape;
+        LayerSpec::Conv2d {
+            out_channels,
+            kernel: (kh, kw),
+            stride: self.stride,
+            padding: self.padding,
+            activation: self.activation.clone(),
+        }
     }
 
     fn config(&self) -> Vec<(String, String)> {

@@ -1,5 +1,6 @@
 use crate::gradients::LayerGradients;
 use crate::layers::{BackwardPass, Layer, LayerConfigError, LayerKind, Parameter};
+use crate::model::LayerSpec;
 use ndarray::{ArrayD, ArrayView2, ArrayViewD};
 use std::any::Any;
 use std::collections::HashMap;
@@ -119,6 +120,10 @@ impl Layer for Flatten {
 
     fn kind(&self) -> LayerKind {
         LayerKind::Flatten
+    }
+
+    fn spec(&self) -> LayerSpec {
+        LayerSpec::Flatten
     }
 
     fn config(&self) -> Vec<(String, String)> {

@@ -2,7 +2,7 @@ use crate::activations::Activation;
 use crate::affine::Affine;
 use crate::gradients::LayerGradients;
 use crate::layers::{BackwardPass, Layer, LayerConfigError, LayerKind, Parameter};
-use crate::model::NeuronLayerSpec;
+use crate::model::{LayerSpec, NeuronLayerSpec, take_tensor};
 use ndarray::{Array1, Array2, ArrayD, ArrayView1, ArrayView2, ArrayViewD, Ix1, Ix2};
 use ndarray_rand::rand::RngCore;
 use std::any::Any;
@@ -60,14 +60,6 @@ impl Dense {
         Self::new(weights, biases, spec.activation.clone())
     }
 
-    /// Returns the specifications of this layer.
-    pub fn spec(&self) -> NeuronLayerSpec {
-        NeuronLayerSpec {
-            neurons: self.affine.outputs(),
-            activation: self.activation.clone(),
-        }
-    }
-
     /// This layer's weight matrix `(neurons, inputs)`.
     pub fn weights(&self) -> ArrayView2<'_, f32> {
         self.affine.weights()
@@ -91,8 +83,8 @@ impl Dense {
         config: &HashMap<String, String>,
         mut tensors: HashMap<String, ArrayD<f32>>,
     ) -> Result<Self, LayerConfigError> {
-        let weights = super::take_tensor::<Ix2>(&mut tensors, "weights")?;
-        let biases = super::take_tensor::<Ix1>(&mut tensors, "biases")?;
+        let weights = take_tensor::<Ix2>(&mut tensors, "weights")?;
+        let biases = take_tensor::<Ix1>(&mut tensors, "biases")?;
         let activation = super::config_activation(config)?;
         Ok(Dense::new(weights, biases, activation))
     }
@@ -208,6 +200,13 @@ impl Layer for Dense {
         LayerKind::Dense
     }
 
+    fn spec(&self) -> LayerSpec {
+        LayerSpec::Dense {
+            neurons: self.affine.outputs(),
+            activation: self.activation.clone(),
+        }
+    }
+
     fn config(&self) -> Vec<(String, String)> {
         vec![("activation".to_string(), self.activation.name().to_string())]
     }
@@ -257,10 +256,6 @@ mod tests {
         assert_eq!(layer.kind(), LayerKind::Dense);
         assert_eq!(layer.activation_name(), Some("relu"));
         assert_eq!(layer.weight_matrix().unwrap().dim(), (2, 3));
-
-        let spec = layer.spec();
-        assert_eq!(spec.neurons, 2);
-        assert_eq!(spec.activation.name(), "relu");
     }
 
     #[test]

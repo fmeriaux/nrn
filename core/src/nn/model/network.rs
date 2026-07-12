@@ -3,10 +3,11 @@
 
 use crate::activations::Activation;
 use crate::layers::{Dense, Layer, format_shape};
-use crate::model::NeuronLayerSpec;
+use crate::model::{LayerSpec, LayerSpecError, NeuronLayerSpec};
 use ndarray::{ArrayD, ArrayView, ArrayViewD, Dimension};
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::rngs::StdRng;
+use std::collections::HashMap;
 use std::fmt;
 use std::iter::once;
 
@@ -143,9 +144,40 @@ impl NeuralNetwork {
         Self::new(layers)
     }
 
+    /// Rebuilds a network from its `input_shape` and each layer's [`LayerSpec`] paired with its
+    /// named tensors, in layer order. The input shape is threaded through the stack, so every
+    /// layer is built at the shape the previous one produces.
+    pub fn from_specs_and_weights(
+        input_shape: Vec<usize>,
+        layers: Vec<(LayerSpec, HashMap<String, ArrayD<f32>>)>,
+    ) -> Result<Self, LayerSpecError> {
+        let mut shape = input_shape;
+        let layers = layers
+            .into_iter()
+            .map(|(spec, tensors)| {
+                let layer = spec.from_tensors(&shape, tensors)?;
+                shape = layer.output_shape();
+                Ok(layer)
+            })
+            .collect::<Result<Vec<_>, LayerSpecError>>()?;
+        Ok(Self::new(layers))
+    }
+
     /// Returns the input size of the network, which is the number of inputs to the first layer.
     pub fn input_size(&self) -> usize {
         self.layers[0].input_size()
+    }
+
+    /// The network's per-sample input shape: the first layer's
+    /// [`input_shape`](crate::layers::Layer::input_shape), sample axis excluded.
+    pub fn input_shape(&self) -> Vec<usize> {
+        self.layers[0].input_shape()
+    }
+
+    /// This network's architecture as a stack of weight-free [`LayerSpec`]s, in order — the
+    /// declarative counterpart to its tensors.
+    pub fn specs(&self) -> Vec<LayerSpec> {
+        self.layers.iter().map(|layer| layer.spec()).collect()
     }
 
     /// Returns a summary of the network's architecture as a string, showing the per-sample
@@ -440,5 +472,71 @@ mod tests {
         let mut model = make_network(Array2::zeros((1, 2)), Array1::zeros(1), SIGMOID.clone());
         dense_mut(&mut model, 0).affine_mut().biases_mut()[0] = f32::INFINITY;
         assert!(!model.is_finite());
+    }
+
+    /// Extracts a model's architecture and weights the way `io` will at the persistence
+    /// boundary — pairing each [`LayerSpec`] with its named tensors — and reconstructs it via
+    /// [`NeuralNetwork::from_specs_and_weights`].
+    fn round_trip(model: &NeuralNetwork) -> NeuralNetwork {
+        let layers = model
+            .specs()
+            .into_iter()
+            .zip(model.layers())
+            .map(|(spec, layer)| (spec, layer.named_tensors().into_iter().collect()))
+            .collect();
+        NeuralNetwork::from_specs_and_weights(model.input_shape(), layers).unwrap()
+    }
+
+    #[test]
+    fn dense_network_round_trips_through_specs_and_weights() {
+        // 3 inputs -> 4 relu -> 3 identity (logits).
+        let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 3);
+        let model = NeuralNetwork::initialization(3, &specs, 0);
+
+        let rebuilt = round_trip(&model);
+
+        assert_eq!(rebuilt.input_shape(), vec![3]);
+        let inputs = Array2::from_shape_fn((3, 5), |(f, s)| (f + s) as f32);
+        assert_eq!(
+            rebuilt.output(inputs.view()).unwrap(),
+            model.output(inputs.view()).unwrap(),
+            "reconstructed network must predict identically"
+        );
+    }
+
+    #[test]
+    fn convolutional_network_round_trips_through_specs_and_weights() {
+        use crate::layers::{Conv2d, Flatten};
+
+        // Conv2d (1,4,4) -> (2,2,2) -> Flatten (8) -> Dense head (3 logits).
+        let conv = Conv2d::initialization(
+            (1, 4, 4),
+            2,
+            (3, 3),
+            1,
+            0,
+            RELU.clone(),
+            &mut StdRng::seed_from_u64(0),
+        );
+        let head = Dense::initialization(
+            8,
+            &NeuronLayerSpec::output_for(3),
+            &mut StdRng::seed_from_u64(1),
+        );
+        let model = NeuralNetwork::single(conv)
+            .with_layer(Flatten::new(vec![2, 2, 2]))
+            .with_layer(head);
+
+        let rebuilt = round_trip(&model);
+
+        assert_eq!(rebuilt.input_shape(), vec![1, 4, 4]);
+        let inputs = ArrayD::from_shape_fn(IxDyn(&[1, 4, 4, 5]), |idx| {
+            (idx[1] + idx[2] + idx[3]) as f32
+        });
+        assert_eq!(
+            rebuilt.output(inputs.view()).unwrap(),
+            model.output(inputs.view()).unwrap(),
+            "reconstructed network must predict identically"
+        );
     }
 }

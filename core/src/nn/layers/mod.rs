@@ -16,8 +16,9 @@ pub use flatten::Flatten;
 
 use crate::activations::{Activation, ActivationProvider};
 use crate::gradients::LayerGradients;
+use crate::model::LayerSpec;
 use dyn_clone::DynClone;
-use ndarray::{Array, ArrayD, ArrayView2, ArrayViewD, ArrayViewMutD, Dimension};
+use ndarray::{ArrayD, ArrayView2, ArrayViewD, ArrayViewMutD};
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
@@ -97,6 +98,10 @@ pub trait Layer: DynClone + Debug {
 
     /// The concrete kind of this layer.
     fn kind(&self) -> LayerKind;
+
+    /// This layer as a weight-free [`LayerSpec`]: its kind and hyperparameters, the tensors
+    /// [`named_tensors`](Layer::named_tensors) carries excepted.
+    fn spec(&self) -> LayerSpec;
 
     /// The layer's non-tensor hyperparameters, as name/value pairs: the configuration that
     /// describes this layer beyond its [`named_tensors`](Layer::named_tensors), such as a
@@ -293,24 +298,6 @@ fn config_activation(
     let name = config_str(config, "activation")?;
     ActivationProvider::get_by_name(name)
         .ok_or_else(|| LayerConfigError::UnknownActivation(name.to_string()))
-}
-
-/// Removes a required tensor and casts it to the rank `D` the layer expects.
-fn take_tensor<D: Dimension>(
-    tensors: &mut HashMap<String, ArrayD<f32>>,
-    name: &str,
-) -> Result<Array<f32, D>, LayerConfigError> {
-    let tensor = tensors
-        .remove(name)
-        .ok_or_else(|| LayerConfigError::MissingTensor(name.to_string()))?;
-    let got = tensor.ndim();
-    tensor
-        .into_dimensionality::<D>()
-        .map_err(|_| LayerConfigError::WrongTensorRank {
-            name: name.to_string(),
-            expected: D::NDIM.unwrap_or(got),
-            got,
-        })
 }
 
 #[cfg(test)]
