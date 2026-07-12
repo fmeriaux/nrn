@@ -1,7 +1,6 @@
 use crate::actions::acquire_instance;
 use crate::display::{evaluated, loaded};
 use clap::Args;
-use ndarray::Axis;
 use nrn::classification::Classification;
 use nrn::model::Predictor;
 use nrn::plot::{ActivationDiagram, DiagramOptions};
@@ -28,7 +27,7 @@ impl PredictArgs {
 
         let instance = acquire_instance(self.instance, predictor.network.input_size())?;
 
-        let activations = predictor.infer(instance.view().insert_axis(Axis(1)))?;
+        let activations = predictor.infer_instance(instance.view())?;
 
         if self.activations {
             let diagram = ActivationDiagram::from_activations(

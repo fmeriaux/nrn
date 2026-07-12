@@ -3,7 +3,6 @@ use crate::actions::acquire_instance;
 use crate::display::{Artifacts, loaded, saved};
 use crate::path::PathExt;
 use clap::Args;
-use ndarray::Axis;
 use nrn::model::Predictor;
 use nrn::plot::ActivationDiagram;
 use std::error::Error;
@@ -43,7 +42,7 @@ impl ActivationsArgs {
         let image_path = self.image_path();
         let instance = acquire_instance(self.instance, predictor.network.input_size())?;
 
-        let activations = predictor.infer(instance.view().insert_axis(Axis(1)))?;
+        let activations = predictor.infer_instance(instance.view())?;
         let diagram =
             ActivationDiagram::from_activations(&predictor.network, &activations, &options);
 

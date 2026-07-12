@@ -1,7 +1,7 @@
 //! The ranked [`Classification`] decision read from a trained classifier's final outputs.
 
-use crate::model::{Activations, PredictionError, Predictor};
-use ndarray::{ArrayView, ArrayView1, Axis, Dimension, Ix2};
+use crate::model::Activations;
+use ndarray::{ArrayView1, Ix2};
 use std::cmp::Ordering::Equal;
 
 /// Class probabilities for one instance, ordered by descending probability.
@@ -50,40 +50,20 @@ impl Classification {
     }
 }
 
-impl Predictor {
-    /// Classifies a single raw instance of a flat classifier, returning its class
-    /// probabilities ranked most likely first. The scaler is applied first when present.
-    ///
-    /// A [`Classification`] is a single ranking, so it applies to a flat class vector:
-    /// a spatial per-position output has no single ranking.
-    ///
-    /// # Errors
-    /// [`PredictionError`](crate::model::PredictionError) when the instance does not match
-    /// the scaler's fitted feature count or the network's input shape.
-    pub fn classify_instance<D: Dimension>(
-        &self,
-        input: ArrayView<f32, D>,
-    ) -> Result<Classification, PredictionError> {
-        let sample_axis = input.ndim();
-        let activations = self.infer(input.insert_axis(Axis(sample_axis)))?;
-        Ok(Classification::from_activations(&activations))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::activations::{RELU, SIGMOID};
     use crate::data::scalers::{Scaler, ScalerKind};
     use crate::layers::{Conv2d, Dense, Flatten};
-    use crate::model::{InputShapeMismatch, LayerPlan, NeuralNetwork, NeuronLayerSpec};
+    use crate::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec, PredictionError, Predictor};
     use crate::task::Task;
     use ndarray::{Array, Array4, ArrayD, IxDyn, array, s};
     use ndarray_rand::rand::SeedableRng;
     use ndarray_rand::rand::rngs::StdRng;
 
     #[test]
-    fn classify_single_ranks_the_networks_outputs() {
+    fn from_activations_ranks_a_binary_networks_outputs() {
         let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![4]), 2, &*RELU).unwrap();
         let predictor = Predictor::new(
             NeuralNetwork::initialization(2, &specs, 0),
@@ -91,9 +71,8 @@ mod tests {
             None,
         );
 
-        let classification = predictor
-            .classify_instance(array![0.3, 0.7].view())
-            .unwrap();
+        let activations = predictor.infer_instance(array![0.3, 0.7].view()).unwrap();
+        let classification = Classification::from_activations(&activations);
 
         // A binary network yields the two complementary class probabilities,
         // ranked by descending probability and summing to one.
@@ -102,29 +81,6 @@ mod tests {
         assert!(ranking[0].1 >= ranking[1].1);
         let sum: f32 = ranking.iter().map(|(_, p)| p).sum();
         assert!((sum - 1.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn classify_single_rejects_an_instance_of_the_wrong_size() {
-        let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![4]), 2, &*RELU).unwrap();
-        let predictor = Predictor::new(
-            NeuralNetwork::initialization(2, &specs, 0),
-            Task::Binary,
-            None,
-        );
-
-        // The network expects two features; a three-feature instance is rejected.
-        // Without a scaler the mismatch surfaces from the network.
-        let error = predictor
-            .classify_instance(array![0.1, 0.2, 0.3].view())
-            .unwrap_err();
-        assert_eq!(
-            error,
-            PredictionError::Network(InputShapeMismatch {
-                expected: vec![2],
-                found: vec![3]
-            })
-        );
     }
 
     #[test]
@@ -227,7 +183,8 @@ mod tests {
         // A single rank-3 instance is scaled with the same parameters, so its classification
         // matches the first column of the batch probabilities.
         let instance = inputs.slice(s![.., .., .., 0]).to_owned();
-        let single = predictor.classify_instance(instance.view()).unwrap();
+        let activations = predictor.infer_instance(instance.view()).unwrap();
+        let single = Classification::from_activations(&activations);
         let batch = via_predictor.into_dimensionality::<Ix2>().unwrap();
         let expected = Classification::from_probabilities(batch.column(0));
         assert_eq!(single, expected);

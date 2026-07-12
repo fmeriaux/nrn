@@ -5,7 +5,7 @@ use crate::activations::{Activation, IDENTITY, SIGMOID, SOFTMAX};
 use crate::data::scalers::{Scaler, ScalerFeatureMismatch, ScalerMethod};
 use crate::model::{Activations, InputShapeMismatch, NeuralNetwork};
 use crate::task::Task;
-use ndarray::{ArrayD, ArrayView, Dimension};
+use ndarray::{ArrayD, ArrayView, Axis, Dimension};
 use std::fmt;
 
 /// A trained [`NeuralNetwork`] paired with the [`Task`] it was trained for and the
@@ -51,6 +51,19 @@ impl Predictor {
 
         activations.finalize(output_activation(&self.task));
         Ok(activations)
+    }
+
+    /// Runs a single raw `instance` (any rank, with no sample axis) through the model, inserting
+    /// the trailing sample axis it lacks before delegating to [`infer`](Predictor::infer).
+    ///
+    /// # Errors
+    /// As [`infer`](Predictor::infer).
+    pub fn infer_instance<D: Dimension>(
+        &self,
+        instance: ArrayView<f32, D>,
+    ) -> Result<Activations, PredictionError> {
+        let sample_axis = instance.ndim();
+        self.infer(instance.insert_axis(Axis(sample_axis)))
     }
 
     /// The model's final outputs for raw `inputs`: [`infer`](Predictor::infer) keeping only the
@@ -108,5 +121,57 @@ impl From<ScalerFeatureMismatch> for PredictionError {
 impl From<InputShapeMismatch> for PredictionError {
     fn from(error: InputShapeMismatch) -> Self {
         PredictionError::Network(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::activations::RELU;
+    use crate::model::{LayerPlan, NeuronLayerSpec};
+    use ndarray::array;
+
+    #[test]
+    fn infer_instance_matches_infer_with_a_manual_sample_axis() {
+        let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![4]), 2, &*RELU).unwrap();
+        let predictor = Predictor::new(
+            NeuralNetwork::initialization(2, &specs, 0),
+            Task::Binary,
+            None,
+        );
+
+        let instance = array![0.3_f32, 0.7];
+        let from_instance = predictor
+            .infer_instance(instance.view())
+            .unwrap()
+            .into_output();
+        let from_batch = predictor
+            .infer(instance.view().insert_axis(Axis(1)))
+            .unwrap()
+            .into_output();
+
+        assert_eq!(from_instance, from_batch);
+    }
+
+    #[test]
+    fn infer_instance_rejects_an_instance_of_the_wrong_size() {
+        let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![4]), 2, &*RELU).unwrap();
+        let predictor = Predictor::new(
+            NeuralNetwork::initialization(2, &specs, 0),
+            Task::Binary,
+            None,
+        );
+
+        // The network expects two features; a three-feature instance is rejected by the network.
+        let error = predictor
+            .infer_instance(array![0.1_f32, 0.2, 0.3].view())
+            .unwrap_err();
+        assert_eq!(
+            error,
+            PredictionError::Network(InputShapeMismatch {
+                expected: vec![2],
+                found: vec![3]
+            })
+        );
     }
 }

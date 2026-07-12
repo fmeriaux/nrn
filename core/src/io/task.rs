@@ -1,6 +1,3 @@
-//! Serializable mirror of [`Task`]: the learning task recorded in a predictor's `config.json`
-//! and a run's `meta.json`.
-
 use crate::task::Task;
 use serde::{Deserialize, Serialize};
 
