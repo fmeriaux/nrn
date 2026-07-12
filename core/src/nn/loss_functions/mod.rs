@@ -34,6 +34,14 @@ impl Reduction {
             Reduction::Mean => terms.sum() / terms.len() as f32,
         }
     }
+
+    /// Scales a raw sum-of-terms `gradient` to match this reduction over `n_terms` terms.
+    fn scale_gradient(self, gradient: ArrayD<f32>, n_terms: usize) -> ArrayD<f32> {
+        match self {
+            Reduction::Sum => gradient,
+            Reduction::Mean => gradient / n_terms as f32,
+        }
+    }
 }
 
 /// Defines the contract for a loss function.
@@ -72,8 +80,9 @@ pub trait LossFunction: Send + Sync {
         self.reduction().reduce(self.terms(inputs, targets))
     }
 
-    /// Computes `∂L/∂inputs` — the gradient of the loss with respect to the
-    /// incoming network outputs.
+    /// Computes `∂L/∂inputs` — the gradient of the reduced loss
+    /// ([`compute`](Self::compute)) with respect to the incoming network outputs,
+    /// carrying the same [`reduction`](Self::reduction) as the reported value.
     ///
     /// This array serves as the entry point for the backward pass, which propagates
     /// these derivatives back through the network layers.

@@ -42,10 +42,12 @@ impl LossFunction for BinaryCrossEntropy {
             .map_collect(|&z, &y| z.max(0.0) - z * y + (1.0 + (-z.abs()).exp()).ln())
     }
 
-    /// Computes ∂L/∂z — the gradient of the loss with respect to the logits: `σ(z) − y`.
-    /// Works out-of-the-box for N-Dimensional tensors.
+    /// Computes ∂L/∂z — the gradient of the loss with respect to the logits: the per-element
+    /// residual `σ(z) − y`, scaled by the [`Reduction`]. Works out-of-the-box for N-D tensors.
     fn gradient(&self, inputs: ArrayViewD<f32>, targets: ArrayViewD<f32>) -> ArrayD<f32> {
-        SIGMOID.apply(inputs) - targets
+        let n_terms = inputs.len();
+        let residual = SIGMOID.apply(inputs) - targets;
+        self.reduction.scale_gradient(residual, n_terms)
     }
 }
 
@@ -106,14 +108,25 @@ mod tests {
     }
 
     #[test]
-    fn gradient_is_sigmoid_minus_target() {
+    fn summed_gradient_is_the_sigmoid_minus_target_residual() {
         let inputs = array![[0.0_f32, 2.0]].into_dyn();
         let targets = array![[1.0_f32, 0.0]].into_dyn();
-        let grad = bce().gradient(inputs.view(), targets.view());
+        let grad = BinaryCrossEntropy::new(Reduction::Sum).gradient(inputs.view(), targets.view());
         // σ(0)=0.5 → 0.5-1=-0.5 ; σ(2)=0.8808 → 0.8808-0=0.8808
         let (g0, g1) = (grad[[0, 0]], grad[[0, 1]]);
         assert!((g0 - (-0.5)).abs() < 1e-6, "grad was {g0}");
         assert!((g1 - 0.880797).abs() < 1e-5, "grad was {g1}");
+    }
+
+    #[test]
+    fn mean_gradient_divides_the_residual_by_the_term_count() {
+        let inputs = array![[0.0_f32, 2.0]].into_dyn();
+        let targets = array![[1.0_f32, 0.0]].into_dyn();
+        let grad = bce().gradient(inputs.view(), targets.view());
+        // The summed residual (-0.5, 0.8808) halved over the two terms.
+        let (g0, g1) = (grad[[0, 0]], grad[[0, 1]]);
+        assert!((g0 - (-0.25)).abs() < 1e-6, "grad was {g0}");
+        assert!((g1 - 0.440398).abs() < 1e-5, "grad was {g1}");
     }
 
     #[test]

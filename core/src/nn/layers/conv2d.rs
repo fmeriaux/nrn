@@ -251,8 +251,8 @@ impl Layer for Conv2d {
             .to_shape((out_channels, positions))
             .expect("output folds to (out_channels, positions)");
 
-        // The columns span spatial positions as well as samples, so the affine backward is told
-        // to average over the sample count alone; col2im then folds the input gradient back.
+        // The affine backward sums each kernel's gradient over every column — spatial positions
+        // and samples alike; col2im then folds the input gradient back.
         let dz = self
             .activation
             .vjp(da.view().into_dyn(), output.view().into_dyn())
@@ -260,12 +260,9 @@ impl Layer for Conv2d {
             .expect("the VJP preserves the rank-2 (outputs, columns) shape");
 
         let cols = im2col(input, kh, kw, self.stride, self.padding);
-        let (dw, db, dcols) = self.affine.backward(
-            dz.view(),
-            cols.view(),
-            samples as f32,
-            compute_input_gradient,
-        );
+        let (dw, db, dcols) = self
+            .affine
+            .backward(dz.view(), cols.view(), compute_input_gradient);
 
         let input_gradient = dcols.map(|dcols| {
             col2im(
@@ -538,8 +535,7 @@ mod tests {
         // input — the configuration that stresses the im2col/col2im index arithmetic
         // (out_h = out_w = (4 + 2 - 3) / 2 + 1 = 2). With an upstream gradient of all ones,
         // the loss is L = sum(output); finite differences of that sum recover the analytical
-        // gradients. backward divides the parameter gradients by the sample count, so the
-        // numerical estimate (which does not) is compared against `grad * m`.
+        // gradients directly — backward is a pure VJP that applies no reduction.
         let mut rng = StdRng::seed_from_u64(7);
         let layer = Conv2d::initialization((2, 4, 4), 3, (3, 3), 2, 1, SIGMOID.clone(), &mut rng);
         let input = Array::from_shape_fn(IxDyn(&[2, 4, 4, 2]), |idx| {
@@ -547,7 +543,6 @@ mod tests {
             let flat = idx[0] * 100 + idx[1] * 10 + idx[2] + idx[3];
             ((flat % 13) as f32 - 6.0) * 0.1
         });
-        let m = input.shape()[3] as f32;
 
         let output = layer.forward(input.view());
         let da = ArrayD::<f32>::ones(output.raw_dim());
@@ -570,7 +565,7 @@ mod tests {
         };
 
         // Weight gradients: perturb each entry of the flat affine matrix (out_channels, in·kh·kw),
-        // central-difference the loss, compare to `grad * m`.
+        // central-difference the loss, compare to the analytical gradient directly.
         let (out_c, fan_in) = layer.affine.weights().dim();
         for o in 0..out_c {
             for j in 0..fan_in {
@@ -579,14 +574,14 @@ mod tests {
                 let mut minus = layer.clone();
                 minus.affine.weights_mut()[[o, j]] -= eps;
                 let numerical = (loss(&plus) - loss(&minus)) / (2.0 * eps);
-                check(grads[0][[o, j]] * m, numerical, format!("dw[{o},{j}]"));
+                check(grads[0][[o, j]], numerical, format!("dw[{o},{j}]"));
             }
             let mut plus = layer.clone();
             plus.affine.biases_mut()[o] += eps;
             let mut minus = layer.clone();
             minus.affine.biases_mut()[o] -= eps;
             let numerical = (loss(&plus) - loss(&minus)) / (2.0 * eps);
-            check(grads[1][o] * m, numerical, format!("db[{o}]"));
+            check(grads[1][o], numerical, format!("db[{o}]"));
         }
 
         // Input gradient: perturb each input entry (no `* m` — it chains straight upstream).

@@ -42,13 +42,11 @@ impl Affine {
         self.weights.dot(&input) + self.biases.view().insert_axis(Axis(1))
     }
 
-    /// The backward pass of the affine map for one batch.
+    /// The backward pass of the affine map for one batch: a pure vector-Jacobian product that
+    /// sums each parameter's contribution over every column, applying no reduction of its own.
     /// # Arguments
     /// - `dz`: The gradient of the loss with respect to the pre-activation, `(outputs, samples)`.
     /// - `input`: The batch fed to [`forward`](Affine::forward), `(inputs, samples)`.
-    /// - `m`: The number of samples the parameter gradients average over. For a convolution
-    ///   this differs from `input.ncols()`, whose columns span spatial positions as well as
-    ///   samples.
     /// - `compute_input_gradient`: Whether to also compute the gradient with respect to `input`.
     /// # Returns
     /// - `(dw, db, dinput)`: the weight gradient `(outputs, inputs)`, the bias gradient
@@ -57,11 +55,10 @@ impl Affine {
         &self,
         dz: ArrayView2<f32>,
         input: ArrayView2<f32>,
-        m: f32,
         compute_input_gradient: bool,
     ) -> (Array2<f32>, Array1<f32>, Option<Array2<f32>>) {
-        let dw = dz.dot(&input.t()) / m;
-        let db = dz.sum_axis(Axis(1)) / m;
+        let dw = dz.dot(&input.t());
+        let db = dz.sum_axis(Axis(1));
         let dinput = compute_input_gradient.then(|| self.weights.t().dot(&dz));
         (dw, db, dinput)
     }
