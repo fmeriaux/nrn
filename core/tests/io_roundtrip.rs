@@ -11,6 +11,7 @@ use nrn::io::hyperparams::{
     ClippingRecord, HyperParametersRecord, LossKindRecord, LossRecord, OptimizerRecord,
     ReductionRecord, SchedulerRecord,
 };
+use nrn::io::network::NetworkConfig;
 use nrn::io::run::{TrainingMeta, TrainingRun};
 use nrn::io::scalers::ScalerRecord;
 use nrn::loss_functions::{BinaryCrossEntropy, LossFunction, Reduction};
@@ -101,6 +102,7 @@ fn full_pipeline_roundtrips_through_safetensors() {
             dataset: "test_dataset".to_string(),
             model: "model-test_dataset".to_string(),
             task: Task::Binary.into(),
+            network: NetworkConfig::from(&model),
             hyperparams: sample_hyperparams(),
             scaler: None,
         },

@@ -1,6 +1,7 @@
 use crate::evaluation::{Evaluation, EvaluationSet};
 use crate::evaluation_history::{EpochEvaluation, EvaluationHistory};
 use crate::io::json;
+use crate::io::network::NetworkConfig;
 use crate::io::optimizer as optimizer_io;
 use crate::io::path::PathExt;
 use crate::io::scheduler as scheduler_io;
@@ -76,9 +77,10 @@ pub(super) struct CheckpointRef {
 /// Writes model checkpoints to a directory.
 ///
 /// Each call to [`write`](CheckpointRecorder::write) creates a subdirectory
-/// `checkpoint-{epoch:06}/` containing `model.safetensors`, `evaluations.json`,
+/// `checkpoint-{epoch:06}/` containing a weights-only `model.safetensors`, `evaluations.json`,
 /// and — when the optimizer or scheduler carry internal state — `optimizer.safetensors`
-/// and/or `scheduler.json` respectively.
+/// and/or `scheduler.json` respectively. The architecture the weights belong to lives in the
+/// run's `meta.json`.
 /// Implements [`TrainerCallback`]: [`on_checkpoint`](TrainerCallback::on_checkpoint)
 /// writes a checkpoint. Obtained via [`TrainingRun::recorder`](crate::io::run::TrainingRun::recorder).
 #[derive(Debug)]
@@ -98,7 +100,7 @@ impl CheckpointRecorder {
         &self.dir
     }
 
-    /// Writes `checkpoint-{epoch:06}/` containing the model weights, evaluations,
+    /// Writes `checkpoint-{epoch:06}/` containing the weights-only model, evaluations,
     /// and any optimizer/scheduler state.
     pub fn write(
         &self,
@@ -111,7 +113,7 @@ impl CheckpointRecorder {
         let checkpoint_dir = self.dir.join(format!("checkpoint-{epoch:06}"));
         fs::create_dir_all(&checkpoint_dir)?;
 
-        model.save(checkpoint_dir.join("model"))?;
+        model.save_weights(checkpoint_dir.join("model"))?;
 
         json::save(
             &CheckpointEvaluationSet::from(evaluation),
@@ -151,13 +153,15 @@ impl TrainerCallback for CheckpointRecorder {
 pub struct CheckpointArchive {
     dir: PathBuf,
     entries: Vec<CheckpointRef>,
+    network: NetworkConfig,
 }
 
 impl CheckpointArchive {
     /// Opens the archive at `dir`, scanning its `checkpoint-*` subdirectories
     /// (sorted by numeric epoch, not lexically, so 10+ checkpoints sort
-    /// correctly). Reads no other files.
-    pub fn load<P: AsRef<Path>>(dir: P) -> Result<Self> {
+    /// correctly). `network` is the architecture [`model_at`](CheckpointArchive::model_at)
+    /// reconstructs each checkpoint's weights against. Reads no other files.
+    pub fn load<P: AsRef<Path>>(dir: P, network: NetworkConfig) -> Result<Self> {
         let dir = Path::combine_safe_with_cwd(dir)?;
 
         let mut entries: Vec<CheckpointRef> = fs::read_dir(&dir)?
@@ -175,7 +179,11 @@ impl CheckpointArchive {
             .collect();
         entries.sort_by_key(|s| s.epoch);
 
-        Ok(CheckpointArchive { dir, entries })
+        Ok(CheckpointArchive {
+            dir,
+            entries,
+            network,
+        })
     }
 
     /// The scanned checkpoint references, ordered by epoch.
@@ -250,9 +258,10 @@ impl CheckpointArchive {
         Ok(base.with_extension(ext).exists().then_some(base))
     }
 
-    /// Loads the model at position `index` from its checkpoint directory.
+    /// Loads the model at position `index`, reconstructing its weights-only
+    /// `model.safetensors` against the archive's [`NetworkConfig`].
     pub fn model_at(&self, index: usize) -> Result<NeuralNetwork> {
-        NeuralNetwork::load(self.entry_at(index)?.dir.join("model"))
+        NeuralNetwork::load_weights(self.entry_at(index)?.dir.join("model"), &self.network)
     }
 
     /// Loads the optimizer state at position `index`, or `Ok(None)` if the
@@ -356,6 +365,7 @@ mod tests {
                 dataset: dataset.to_string(),
                 model: format!("model-{dataset}"),
                 task: TaskRecord::Binary,
+                network: sample_config(),
                 hyperparams: HyperParametersRecord::sample(),
                 scaler: None,
             },
@@ -368,6 +378,10 @@ mod tests {
     fn sample_model() -> NeuralNetwork {
         let specs = NeuronLayerSpec::network_for(vec![3], &*RELU, 2);
         NeuralNetwork::initialization(2, &specs, 0)
+    }
+
+    fn sample_config() -> NetworkConfig {
+        NetworkConfig::from(&sample_model())
     }
 
     fn write_checkpoint(recorder: &CheckpointRecorder, epoch: usize) {
@@ -435,7 +449,7 @@ mod tests {
                 .unwrap();
         }
 
-        let history = CheckpointArchive::load(&dir)
+        let history = CheckpointArchive::load(&dir, sample_config())
             .unwrap()
             .evaluation_history()
             .unwrap();
@@ -464,7 +478,7 @@ mod tests {
                 .unwrap();
         }
 
-        let history = CheckpointArchive::load(&dir)
+        let history = CheckpointArchive::load(&dir, sample_config())
             .unwrap()
             .evaluation_history()
             .unwrap();
@@ -491,7 +505,7 @@ mod tests {
             )
             .unwrap();
 
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_config()).unwrap();
         let loaded = archive.model_at(0).unwrap();
         cleanup(&dir);
 
@@ -515,7 +529,7 @@ mod tests {
                 .unwrap();
         }
 
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_config()).unwrap();
         cleanup(&dir);
 
         assert_eq!(archive.len(), 12);
@@ -527,7 +541,7 @@ mod tests {
     #[test]
     fn empty_dir_archive_is_empty() {
         let dir = temp_dir("empty");
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_config()).unwrap();
         cleanup(&dir);
 
         assert!(archive.is_empty());
@@ -541,14 +555,14 @@ mod tests {
         for epoch in 0..n {
             write_checkpoint(&recorder, epoch);
         }
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_config()).unwrap();
         (dir, archive)
     }
 
     #[test]
     fn sample_of_empty_archive_is_empty() {
         let dir = temp_dir("sample_empty");
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_config()).unwrap();
         cleanup(&dir);
 
         assert!(archive.sample(5).is_empty());
@@ -604,7 +618,7 @@ mod tests {
     #[test]
     fn resolve_epoch_on_empty_archive_errors() {
         let dir = temp_dir("resolve_empty");
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_config()).unwrap();
         let err = archive.resolve_epoch(None).unwrap_err().to_string();
         cleanup(&dir);
 
@@ -619,7 +633,7 @@ mod tests {
             write_checkpoint(&recorder, epoch);
         }
 
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_config()).unwrap();
         let idx = archive.resolve_epoch(None).unwrap();
         cleanup(&dir);
 
@@ -634,7 +648,7 @@ mod tests {
             write_checkpoint(&recorder, epoch);
         }
 
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_config()).unwrap();
         // Epoch 5 is the second checkpoint (index 1), not at index 5.
         let idx = archive.resolve_epoch(Some(5)).unwrap();
         cleanup(&dir);
@@ -650,7 +664,7 @@ mod tests {
             write_checkpoint(&recorder, epoch);
         }
 
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_config()).unwrap();
         // Epoch 3 falls between checkpoints, so no checkpoint matches it.
         let err = archive.resolve_epoch(Some(3)).unwrap_err().to_string();
         cleanup(&dir);
@@ -666,7 +680,7 @@ mod tests {
     fn load_ignores_non_directory_checkpoint_file() {
         let dir = temp_dir("non_dir_snap");
         fs::write(dir.join("checkpoint-000000"), b"not a dir").unwrap();
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_config()).unwrap();
         cleanup(&dir);
 
         assert!(archive.is_empty());
@@ -676,7 +690,7 @@ mod tests {
     fn load_ignores_checkpoint_dir_with_non_numeric_suffix() {
         let dir = temp_dir("non_numeric_snap");
         fs::create_dir_all(dir.join("checkpoint-abc")).unwrap();
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_config()).unwrap();
         cleanup(&dir);
 
         assert!(archive.is_empty());
@@ -687,7 +701,7 @@ mod tests {
         // A directory whose name lacks the `checkpoint-` prefix is skipped.
         let dir = temp_dir("unrelated_dir");
         fs::create_dir_all(dir.join("scratch")).unwrap();
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_config()).unwrap();
         cleanup(&dir);
 
         assert!(archive.is_empty());
@@ -707,7 +721,7 @@ mod tests {
             )
             .unwrap();
 
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_config()).unwrap();
         let msg = archive.model_at(99).unwrap_err().to_string();
         cleanup(&dir);
 
@@ -730,7 +744,7 @@ mod tests {
             )
             .unwrap();
 
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_config()).unwrap();
         let opt_err = archive.optimizer_at(99).unwrap_err().to_string();
         let sched_err = archive.scheduler_at(99).unwrap_err().to_string();
         cleanup(&dir);
@@ -754,7 +768,7 @@ mod tests {
             .unwrap();
         fs::remove_file(dir.join("checkpoint-000000").join("model.safetensors")).unwrap();
 
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_config()).unwrap();
         let result = archive.model_at(0);
         cleanup(&dir);
 
@@ -780,7 +794,7 @@ mod tests {
         )
         .unwrap();
 
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_config()).unwrap();
         let result = archive.model_at(0);
         cleanup(&dir);
 
@@ -806,7 +820,7 @@ mod tests {
         )
         .unwrap();
 
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_config()).unwrap();
         let result = archive.evaluation_history();
         cleanup(&dir);
 
@@ -828,7 +842,7 @@ mod tests {
             )
             .unwrap();
 
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_config()).unwrap();
         cleanup(&dir);
 
         assert_eq!(archive.len(), 1);
@@ -862,7 +876,7 @@ mod tests {
             .unwrap();
 
         let exists = dir.join("checkpoint-000000/optimizer.safetensors").exists();
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_config()).unwrap();
         let state = archive.optimizer_at(0).unwrap();
         cleanup(&dir);
 
@@ -892,7 +906,7 @@ mod tests {
             .unwrap();
 
         let exists = dir.join("checkpoint-000000/optimizer.safetensors").exists();
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_config()).unwrap();
         let state = archive.optimizer_at(0).unwrap();
         cleanup(&dir);
 
@@ -921,7 +935,7 @@ mod tests {
             .unwrap();
 
         let exists = dir.join("checkpoint-000000/scheduler.json").exists();
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_config()).unwrap();
         let state = archive.scheduler_at(0).unwrap();
         cleanup(&dir);
 
@@ -945,7 +959,7 @@ mod tests {
             .unwrap();
 
         let exists = dir.join("checkpoint-000000/scheduler.json").exists();
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_config()).unwrap();
         let state = archive.scheduler_at(0).unwrap();
         cleanup(&dir);
 
@@ -975,7 +989,7 @@ mod tests {
 
     #[test]
     fn load_rejects_path_traversal() {
-        let result = CheckpointArchive::load("../../nrn_traversal_test");
+        let result = CheckpointArchive::load("../../nrn_traversal_test", sample_config());
         assert!(result.is_err());
     }
 }

@@ -1,6 +1,7 @@
 use crate::io::checkpoint::{CheckpointArchive, CheckpointRecorder};
 use crate::io::hyperparams::HyperParametersRecord;
 use crate::io::json;
+use crate::io::network::NetworkConfig;
 use crate::io::path::PathExt;
 use crate::io::scalers::ScalerRecord;
 use crate::io::task::TaskRecord;
@@ -20,6 +21,9 @@ pub struct TrainingMeta {
     pub model: String,
     /// The learning task the run trained for.
     pub task: TaskRecord,
+    /// The architecture the run's checkpoint weights belong to, used to reconstruct each
+    /// checkpoint's model from its weights-only `model.safetensors`.
+    pub network: NetworkConfig,
     /// Hyperparameters the run was configured with.
     pub hyperparams: HyperParametersRecord,
     /// Run-level scaler fitted on the train split, immutable across the run.
@@ -44,7 +48,7 @@ impl TrainingRun {
         let dir = Path::combine_safe_with_cwd(path)?;
         fs::create_dir_all(&dir)?;
 
-        let existing = CheckpointArchive::load(&dir)?;
+        let existing = CheckpointArchive::load(&dir, meta.network.clone())?;
         if !existing.is_empty() {
             if !overwrite {
                 return Err(Error::new(
@@ -87,7 +91,7 @@ impl TrainingRun {
     /// Removes checkpoints whose epoch is greater than `from_epoch`, rewinding
     /// the trajectory. Returns the number of checkpoints removed.
     pub fn trim_after(&self, from_epoch: usize) -> Result<usize> {
-        let archive = CheckpointArchive::load(&self.dir)?;
+        let archive = CheckpointArchive::load(&self.dir, self.meta.network.clone())?;
         let to_remove: Vec<&Path> = archive
             .entries()
             .iter()
@@ -105,7 +109,7 @@ impl TrainingRun {
 
     /// Returns a read-only archive over this run's checkpoints.
     pub fn archive(&self) -> Result<CheckpointArchive> {
-        CheckpointArchive::load(&self.dir)
+        CheckpointArchive::load(&self.dir, self.meta.network.clone())
     }
 }
 
@@ -123,11 +127,20 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+    fn sample_network() -> NetworkConfig {
+        use crate::activations::RELU;
+        use crate::model::{NeuralNetwork, NeuronLayerSpec};
+
+        let specs = NeuronLayerSpec::network_for(vec![3], &*RELU, 2);
+        NetworkConfig::from(&NeuralNetwork::initialization(2, &specs, 0))
+    }
+
     fn meta(dataset: &str) -> TrainingMeta {
         TrainingMeta {
             dataset: dataset.to_string(),
             model: format!("model-{dataset}"),
             task: TaskRecord::Binary,
+            network: sample_network(),
             hyperparams: HyperParametersRecord::sample(),
             scaler: None,
         }
@@ -197,7 +210,7 @@ mod tests {
         TrainingRun::create(&dir, &meta("ds"), true).unwrap();
         make_checkpoint(&dir, 0);
 
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_network()).unwrap();
         cleanup(&dir);
 
         assert_eq!(archive.len(), 1, "stale checkpoints were not purged");
@@ -213,7 +226,7 @@ mod tests {
 
         let trimmed = TrainingRun::open(&dir).unwrap().trim_after(20).unwrap();
 
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_network()).unwrap();
         cleanup(&dir);
 
         assert_eq!(archive.len(), 3); // epochs 0, 10, 20 kept; 30, 40 removed
@@ -230,7 +243,7 @@ mod tests {
 
         let trimmed = TrainingRun::open(&dir).unwrap().trim_after(20).unwrap();
 
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_network()).unwrap();
         cleanup(&dir);
 
         assert_eq!(archive.len(), 3);
@@ -249,7 +262,7 @@ mod tests {
         run.trim_after(10).unwrap(); // drops 20
         make_checkpoint(&dir, 20); // rewritten
 
-        let archive = CheckpointArchive::load(&dir).unwrap();
+        let archive = CheckpointArchive::load(&dir, sample_network()).unwrap();
         cleanup(&dir);
 
         assert_eq!(archive.len(), 3); // 0, 10, 20
