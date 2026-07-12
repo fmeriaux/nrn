@@ -2,10 +2,10 @@
 //! layers by [`NeuralNetwork::initialization`](crate::model::NeuralNetwork::initialization).
 
 use crate::activations::{Activation, IDENTITY};
-use crate::layers::{Conv2d, Dense, Flatten, Layer, LayerConfigError};
-use ndarray::{Array, ArrayD, Dimension, Ix1, Ix2, Ix4};
+use crate::layers::{Conv2d, Dense, Flatten, Layer};
+use crate::tensors::{TensorError, Tensors};
+use ndarray::{Ix2, Ix4};
 use ndarray_rand::rand::RngCore;
-use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -267,15 +267,15 @@ impl LayerSpec {
     pub fn from_tensors(
         &self,
         input_shape: &[usize],
-        mut tensors: HashMap<String, ArrayD<f32>>,
+        mut tensors: Tensors,
     ) -> Result<Box<dyn Layer>, LayerSpecError> {
         Ok(match self {
             LayerSpec::Dense { activation, .. } => {
                 flat_input(input_shape)?;
-                let weights =
-                    take_tensor::<Ix2>(&mut tensors, "weight").map_err(LayerSpecError::Tensor)?;
-                let biases =
-                    take_tensor::<Ix1>(&mut tensors, "bias").map_err(LayerSpecError::Tensor)?;
+                let weights = tensors
+                    .take_weight::<Ix2>()
+                    .map_err(LayerSpecError::Tensor)?;
+                let biases = tensors.take_bias().map_err(LayerSpecError::Tensor)?;
                 Box::new(Dense::new(weights, biases, activation.clone()))
             }
             LayerSpec::Conv2d {
@@ -286,10 +286,10 @@ impl LayerSpec {
                 ..
             } => {
                 let input = conv_input(input_shape, *kernel, *padding)?;
-                let kernels =
-                    take_tensor::<Ix4>(&mut tensors, "weight").map_err(LayerSpecError::Tensor)?;
-                let biases =
-                    take_tensor::<Ix1>(&mut tensors, "bias").map_err(LayerSpecError::Tensor)?;
+                let kernels = tensors
+                    .take_weight::<Ix4>()
+                    .map_err(LayerSpecError::Tensor)?;
+                let biases = tensors.take_bias().map_err(LayerSpecError::Tensor)?;
                 Box::new(Conv2d::new(
                     kernels,
                     biases,
@@ -339,25 +339,6 @@ fn conv_input(
     Ok((channels, height, width))
 }
 
-/// Removes a required tensor from a layer's named tensors and casts it to the rank `D` the
-/// layer expects.
-pub(crate) fn take_tensor<D: Dimension>(
-    tensors: &mut HashMap<String, ArrayD<f32>>,
-    name: &str,
-) -> Result<Array<f32, D>, LayerConfigError> {
-    let tensor = tensors
-        .remove(name)
-        .ok_or_else(|| LayerConfigError::MissingTensor(name.to_string()))?;
-    let got = tensor.ndim();
-    tensor
-        .into_dimensionality::<D>()
-        .map_err(|_| LayerConfigError::WrongTensorRank {
-            name: name.to_string(),
-            expected: D::NDIM.unwrap_or(got),
-            got,
-        })
-}
-
 /// Error returned when a [`LayerSpec`] cannot be resolved into a layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LayerSpecError {
@@ -380,8 +361,8 @@ pub enum LayerSpecError {
         /// The zero-padding added on both spatial axes.
         padding: usize,
     },
-    /// A tensor required to load a layer's weights was absent or had the wrong rank.
-    Tensor(LayerConfigError),
+    /// A tensor required to build a layer's weights was absent or had the wrong rank.
+    Tensor(TensorError),
 }
 
 impl fmt::Display for LayerSpecError {

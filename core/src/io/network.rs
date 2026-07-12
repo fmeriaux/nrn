@@ -10,7 +10,7 @@ use crate::io::json;
 use crate::io::tensors::{self, F32Tensor};
 use crate::layers::{Layer, LayerConfigError, LayerKind};
 use crate::model::{LayerSpec, NeuralNetwork};
-use ndarray::ArrayD;
+use crate::tensors::Tensors;
 use safetensors::SafeTensors;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -278,8 +278,8 @@ fn layer_config(metadata: &HashMap<String, String>, prefix: &str) -> HashMap<Str
         .collect()
 }
 
-/// Reads one layer's tensors from the buffer, stripping the `layer{i}.` prefix from each name.
-fn read_layer_tensors(st: &SafeTensors, prefix: &str) -> Result<HashMap<String, ArrayD<f32>>> {
+/// Reads one layer's tensors from the buffer, stripping the `{prefix}` from each name.
+fn read_layer_tensors(st: &SafeTensors, prefix: &str) -> Result<Tensors> {
     let mut tensors = HashMap::new();
     for name in st.names() {
         if let Some(key) = name.strip_prefix(prefix) {
@@ -289,7 +289,7 @@ fn read_layer_tensors(st: &SafeTensors, prefix: &str) -> Result<HashMap<String, 
             tensors.insert(key.to_string(), tensors::read_arrayd(&view)?);
         }
     }
-    Ok(tensors)
+    Ok(tensors.into())
 }
 
 #[cfg(test)]

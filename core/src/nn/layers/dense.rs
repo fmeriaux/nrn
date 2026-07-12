@@ -2,8 +2,9 @@ use crate::activations::Activation;
 use crate::affine::Affine;
 use crate::gradients::LayerGradients;
 use crate::layers::{BackwardPass, Layer, LayerConfigError, LayerKind, Parameter};
-use crate::model::{LayerSpec, NeuronLayerSpec, take_tensor};
-use ndarray::{Array1, Array2, ArrayD, ArrayView1, ArrayView2, ArrayViewD, Ix1, Ix2};
+use crate::model::{LayerSpec, NeuronLayerSpec};
+use crate::tensors::Tensors;
+use ndarray::{Array1, Array2, ArrayD, ArrayView1, ArrayView2, ArrayViewD, Ix2};
 use ndarray_rand::rand::RngCore;
 use std::any::Any;
 use std::collections::HashMap;
@@ -78,13 +79,15 @@ impl Dense {
     /// Builds a `Dense` layer from its configuration and tensors.
     /// # Arguments
     /// - `config`: Carries the `"activation"` name.
-    /// - `tensors`: Carries the `"weight"` (rank-2) and `"bias"` (rank-1) tensors.
+    /// - `tensors`: Carries the layer's weight and bias.
     pub(super) fn from_config(
         config: &HashMap<String, String>,
-        mut tensors: HashMap<String, ArrayD<f32>>,
+        mut tensors: Tensors,
     ) -> Result<Self, LayerConfigError> {
-        let weights = take_tensor::<Ix2>(&mut tensors, "weight")?;
-        let biases = take_tensor::<Ix1>(&mut tensors, "bias")?;
+        let weights = tensors
+            .take_weight::<Ix2>()
+            .map_err(LayerConfigError::Tensor)?;
+        let biases = tensors.take_bias().map_err(LayerConfigError::Tensor)?;
         let activation = super::config_activation(config)?;
         Ok(Dense::new(weights, biases, activation))
     }
@@ -214,11 +217,11 @@ impl Layer for Dense {
     fn named_tensors(&self) -> Vec<(String, ArrayD<f32>)> {
         vec![
             (
-                "weight".to_string(),
+                Tensors::WEIGHT.to_string(),
                 self.affine.weights().to_owned().into_dyn(),
             ),
             (
-                "bias".to_string(),
+                Tensors::BIAS.to_string(),
                 self.affine.biases().to_owned().into_dyn(),
             ),
         ]

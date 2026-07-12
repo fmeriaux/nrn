@@ -17,6 +17,7 @@ pub use flatten::Flatten;
 use crate::activations::{Activation, ActivationProvider};
 use crate::gradients::LayerGradients;
 use crate::model::LayerSpec;
+use crate::tensors::{TensorError, Tensors};
 use dyn_clone::DynClone;
 use ndarray::{ArrayD, ArrayView2, ArrayViewD, ArrayViewMutD};
 use std::any::Any;
@@ -175,7 +176,7 @@ impl LayerKind {
     pub fn instantiate(
         &self,
         config: &HashMap<String, String>,
-        tensors: HashMap<String, ArrayD<f32>>,
+        tensors: Tensors,
     ) -> Result<Box<dyn Layer>, LayerConfigError> {
         Ok(match self {
             LayerKind::Dense => Box::new(Dense::from_config(config, tensors)?),
@@ -210,17 +211,8 @@ pub enum LayerConfigError {
         /// Why the value was rejected.
         reason: String,
     },
-    /// A required tensor was absent.
-    MissingTensor(String),
-    /// A tensor did not have the rank the layer requires.
-    WrongTensorRank {
-        /// The tensor's name.
-        name: String,
-        /// The rank the layer requires.
-        expected: usize,
-        /// The rank the tensor actually had.
-        got: usize,
-    },
+    /// A required tensor was absent or had the wrong rank.
+    Tensor(TensorError),
     /// The named activation is not registered.
     UnknownActivation(String),
     /// The kind tag does not name a known layer.
@@ -234,12 +226,7 @@ impl fmt::Display for LayerConfigError {
             LayerConfigError::InvalidConfig { key, reason } => {
                 write!(f, "config key `{key}` is invalid: {reason}")
             }
-            LayerConfigError::MissingTensor(name) => write!(f, "missing tensor `{name}`"),
-            LayerConfigError::WrongTensorRank {
-                name,
-                expected,
-                got,
-            } => write!(f, "tensor `{name}` has rank {got}, expected {expected}"),
+            LayerConfigError::Tensor(error) => write!(f, "{error}"),
             LayerConfigError::UnknownActivation(name) => {
                 write!(f, "unknown activation function: {name}")
             }

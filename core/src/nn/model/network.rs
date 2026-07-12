@@ -4,10 +4,10 @@
 use crate::activations::Activation;
 use crate::layers::{Dense, Layer, format_shape};
 use crate::model::{LayerSpec, LayerSpecError, NeuronLayerSpec};
+use crate::tensors::Tensors;
 use ndarray::{ArrayD, ArrayView, ArrayViewD, Dimension};
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::rngs::StdRng;
-use std::collections::HashMap;
 use std::fmt;
 use std::iter::once;
 
@@ -149,7 +149,7 @@ impl NeuralNetwork {
     /// layer is built at the shape the previous one produces.
     pub fn from_specs_and_weights(
         input_shape: Vec<usize>,
-        layers: Vec<(LayerSpec, HashMap<String, ArrayD<f32>>)>,
+        layers: Vec<(LayerSpec, Tensors)>,
     ) -> Result<Self, LayerSpecError> {
         let mut shape = input_shape;
         let layers = layers

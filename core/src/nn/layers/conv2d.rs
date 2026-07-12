@@ -2,8 +2,9 @@ use crate::activations::Activation;
 use crate::affine::Affine;
 use crate::gradients::LayerGradients;
 use crate::layers::{BackwardPass, Layer, LayerConfigError, LayerKind, Parameter};
-use crate::model::{LayerSpec, take_tensor};
-use ndarray::{Array1, Array2, Array4, ArrayD, ArrayView2, ArrayView4, ArrayViewD, Ix1, Ix2, Ix4};
+use crate::model::LayerSpec;
+use crate::tensors::Tensors;
+use ndarray::{Array1, Array2, Array4, ArrayD, ArrayView2, ArrayView4, ArrayViewD, Ix2, Ix4};
 use ndarray_rand::rand::RngCore;
 use std::any::Any;
 use std::collections::HashMap;
@@ -162,13 +163,15 @@ impl Conv2d {
     /// # Arguments
     /// - `config`: Carries the `"activation"` name, the `"input_shape"` `(channels, height,
     ///   width)`, the `"stride"`, and the `"padding"`.
-    /// - `tensors`: Carries the `"weight"` (rank-4 kernels) and `"bias"` (rank-1) tensors.
+    /// - `tensors`: Carries the layer's weight (the kernels) and bias.
     pub(super) fn from_config(
         config: &HashMap<String, String>,
-        mut tensors: HashMap<String, ArrayD<f32>>,
+        mut tensors: Tensors,
     ) -> Result<Self, LayerConfigError> {
-        let kernels = take_tensor::<Ix4>(&mut tensors, "weight")?;
-        let biases = take_tensor::<Ix1>(&mut tensors, "bias")?;
+        let kernels = tensors
+            .take_weight::<Ix4>()
+            .map_err(LayerConfigError::Tensor)?;
+        let biases = tensors.take_bias().map_err(LayerConfigError::Tensor)?;
 
         let dims = super::config_dims(config, "input_shape")?;
         let [channels, height, width] = dims[..] else {
@@ -346,9 +349,9 @@ impl Layer for Conv2d {
 
     fn named_tensors(&self) -> Vec<(String, ArrayD<f32>)> {
         vec![
-            ("weight".to_string(), self.kernels().into_dyn()),
+            (Tensors::WEIGHT.to_string(), self.kernels().into_dyn()),
             (
-                "bias".to_string(),
+                Tensors::BIAS.to_string(),
                 self.affine.biases().to_owned().into_dyn(),
             ),
         ]
@@ -693,7 +696,7 @@ mod tests {
         let layer = Conv2d::initialization((2, 5, 5), 3, (3, 3), 2, 1, RELU.clone(), &mut rng);
 
         let config: HashMap<String, String> = layer.config().into_iter().collect();
-        let tensors: HashMap<String, ArrayD<f32>> = layer.named_tensors().into_iter().collect();
+        let tensors: Tensors = layer.named_tensors().into_iter().collect();
         let rebuilt = Conv2d::from_config(&config, tensors).unwrap();
 
         // Same geometry and parameters: forward on an arbitrary batch matches bit-for-bit.
@@ -708,7 +711,7 @@ mod tests {
     fn from_config_rejects_missing_input_shape() {
         let mut rng = StdRng::seed_from_u64(1);
         let layer = Conv2d::initialization((1, 4, 4), 2, (3, 3), 1, 0, RELU.clone(), &mut rng);
-        let tensors: HashMap<String, ArrayD<f32>> = layer.named_tensors().into_iter().collect();
+        let tensors: Tensors = layer.named_tensors().into_iter().collect();
         // Drop "input_shape" from an otherwise valid config.
         let config: HashMap<String, String> = layer
             .config()
@@ -726,7 +729,7 @@ mod tests {
     fn from_config_rejects_input_shape_without_three_dimensions() {
         let mut rng = StdRng::seed_from_u64(2);
         let layer = Conv2d::initialization((1, 4, 4), 2, (3, 3), 1, 0, RELU.clone(), &mut rng);
-        let tensors: HashMap<String, ArrayD<f32>> = layer.named_tensors().into_iter().collect();
+        let tensors: Tensors = layer.named_tensors().into_iter().collect();
         // A 2-dimension input_shape where a convolution needs (channels, height, width).
         let mut config: HashMap<String, String> = layer.config().into_iter().collect();
         config.insert("input_shape".to_string(), "4,4".to_string());

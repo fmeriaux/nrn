@@ -1,6 +1,7 @@
 use crate::gradients::LayerGradients;
 use crate::layers::{BackwardPass, Layer, LayerConfigError, LayerKind, Parameter};
 use crate::model::LayerSpec;
+use crate::tensors::Tensors;
 use ndarray::{ArrayD, ArrayView2, ArrayViewD};
 use std::any::Any;
 use std::collections::HashMap;
@@ -52,7 +53,7 @@ impl Flatten {
     /// - `_tensors`: Unused — a `Flatten` holds no tensors.
     pub(super) fn from_config(
         config: &HashMap<String, String>,
-        _tensors: HashMap<String, ArrayD<f32>>,
+        _tensors: Tensors,
     ) -> Result<Self, LayerConfigError> {
         Ok(Flatten::new(super::config_dims(config, "shape")?))
     }
@@ -247,7 +248,7 @@ mod tests {
     fn config_round_trips_through_from_config() {
         let flatten = Flatten::new(vec![2, 3, 4]);
         let config: HashMap<String, String> = flatten.config().into_iter().collect();
-        let rebuilt = Flatten::from_config(&config, HashMap::new()).unwrap();
+        let rebuilt = Flatten::from_config(&config, Tensors::default()).unwrap();
 
         assert_eq!(flatten.input_shape(), rebuilt.input_shape());
         assert_eq!(flatten.config(), rebuilt.config());
