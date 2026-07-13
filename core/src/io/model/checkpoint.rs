@@ -254,8 +254,7 @@ impl CheckpointArchive {
     /// in the checkpoint at `index` and, if so, returns the loader-ready base
     /// path (`name`, without extension); `Ok(None)` when the file is absent.
     fn optional_file(&self, index: usize, name: &str, ext: &str) -> Result<Option<PathBuf>> {
-        let base = self.entry_at(index)?.dir.join(name);
-        Ok(base.with_extension(ext).exists().then_some(base))
+        Ok(self.entry_at(index)?.dir.join(name).optional_sidecar(ext))
     }
 
     /// Loads the model at position `index`, reconstructing its weights-only

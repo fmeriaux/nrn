@@ -84,11 +84,11 @@ impl TrainingRun {
         let dir = Path::combine_safe_with_cwd(path)?;
         let meta: TrainingMeta = json::load(dir.join("meta"))?;
         let config = ModelConfigRecord::load(dir.join(CONFIG_STEM))?;
-        let scaler = if dir.join(PREPROCESSOR_STEM).with_extension("json").exists() {
-            Some(ScalerRecord::load(dir.join(PREPROCESSOR_STEM))?)
-        } else {
-            None
-        };
+        let scaler = dir
+            .join(PREPROCESSOR_STEM)
+            .optional_sidecar("json")
+            .map(ScalerRecord::load)
+            .transpose()?;
 
         Ok(TrainingRun {
             dir,

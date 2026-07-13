@@ -4,6 +4,7 @@
 use crate::io::model::config::{CONFIG_STEM, ModelConfigRecord, PREPROCESSOR_STEM};
 use crate::io::model::network::NetworkConfigRecord;
 use crate::io::model::scalers::ScalerRecord;
+use crate::io::path::PathExt;
 use crate::model::{NeuralNetwork, Predictor};
 use std::io::Result;
 use std::path::{Path, PathBuf};
@@ -37,11 +38,12 @@ impl Predictor {
         let network = NeuralNetwork::load_weights(dir.join(MODEL_STEM), &config.network)?;
         let task = config.task.into();
 
-        let scaler = if dir.join(PREPROCESSOR_STEM).with_extension("json").exists() {
-            Some(ScalerRecord::load(dir.join(PREPROCESSOR_STEM))?.into())
-        } else {
-            None
-        };
+        let scaler = dir
+            .join(PREPROCESSOR_STEM)
+            .optional_sidecar("json")
+            .map(ScalerRecord::load)
+            .transpose()?
+            .map(Into::into);
 
         Ok(Predictor {
             network,
