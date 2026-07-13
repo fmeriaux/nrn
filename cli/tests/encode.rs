@@ -107,7 +107,7 @@ fn ds_alias_defaults_the_output_name_to_the_dataset_id() {
         .success();
 
     // No `-o`: the dataset is saved under its id.
-    assert!(tmp.path().join("imgs-c2-f4-n2.safetensors").exists());
+    assert!(tmp.path().join("imgs-c2-f4-n2.parquet").exists());
 }
 
 #[test]

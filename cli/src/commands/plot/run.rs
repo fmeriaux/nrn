@@ -272,8 +272,8 @@ mod tests {
     fn dataset_path_is_a_sibling_of_the_run_directory() {
         let args = parse(&[]);
         assert_eq!(
-            args.dataset_path("data.safetensors"),
-            Path::new("runs/data.safetensors")
+            args.dataset_path("data.parquet"),
+            Path::new("runs/data.parquet")
         );
     }
 }

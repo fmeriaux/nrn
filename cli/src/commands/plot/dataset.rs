@@ -45,7 +45,7 @@ mod tests {
     }
 
     fn parse(extra: &[&str]) -> DatasetArgs {
-        let mut argv = vec!["dataset", "data.safetensors"];
+        let mut argv = vec!["dataset", "data.parquet"];
         argv.extend_from_slice(extra);
         Cli::parse_from(argv).args
     }

@@ -127,7 +127,7 @@ mod tests {
 
     #[test]
     fn ds_is_an_alias_for_dataset() {
-        let cli = Cli::try_parse_from(["plot", "ds", "data.safetensors"]).unwrap();
+        let cli = Cli::try_parse_from(["plot", "ds", "data.parquet"]).unwrap();
         assert!(matches!(cli.command, PlotCommand::Dataset(_)));
     }
 }

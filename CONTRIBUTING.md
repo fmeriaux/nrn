@@ -29,7 +29,7 @@ cargo build --release
 A two-crate Cargo workspace:
 
 - **`core/`** (crate `nrn`) — the neural-network library: model, training stack (optimizers, schedulers,
-  losses), data handling, a backend-neutral plotting IR, and safetensors/JSON I/O. No binary. The library
+  losses), data handling, a backend-neutral plotting IR, and Parquet/safetensors/JSON I/O. No binary. The library
   types are re-exported flat at the crate root (e.g. `nrn::model`, `nrn::training`).
 - **`cli/`** (crate `nrn-cli`) — the `nrn` binary: `clap` argument parsing and one module per subcommand
   (`synth`, `encode`, `train`, `predict`, `plot`).

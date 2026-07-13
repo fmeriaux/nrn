@@ -1,5 +1,6 @@
-//! End-to-end IO round-trip over the full safetensors pipeline:
-//! dataset → scaler → model → training run → inputs, all saved and reloaded.
+//! End-to-end IO round-trip over the full persistence pipeline:
+//! dataset (Parquet) → scaler (JSON) → model / training run (safetensors) →
+//! instance (JSON), all saved and reloaded.
 #![cfg(feature = "io")]
 
 use ndarray::array;
@@ -53,7 +54,7 @@ fn sample_hyperparams() -> HyperParametersRecord {
 }
 
 #[test]
-fn full_pipeline_roundtrips_through_safetensors() {
+fn full_pipeline_roundtrips_every_artifact() {
     let dir = temp_dir();
 
     // --- Dataset --------------------------------------------------------

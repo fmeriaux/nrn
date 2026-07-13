@@ -1087,7 +1087,7 @@ fn synth_warns_on_uneven_clusters_and_plots_scatter() {
 
     let ds_name = "ring-seed1-c2-f2-n20";
     assert!(
-        dir.join(format!("{ds_name}.safetensors")).exists(),
+        dir.join(format!("{ds_name}.parquet")).exists(),
         "expected dataset named after the generated count"
     );
 }

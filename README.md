@@ -37,8 +37,8 @@ the learning.
 - **Synthetic playgrounds** — `uniform`, `ring` and `spiral` generators to probe what each architecture can
   and cannot learn.
 - **Beyond toys** — encode folders of images (e.g. MNIST digits) and train a real classifier.
-- **Pure-Rust I/O** — datasets, models and checkpoints are [safetensors](https://github.com/huggingface/safetensors);
-  no system libraries required to build or run.
+- **Pure-Rust I/O** — datasets are [Parquet](https://parquet.apache.org/); models and checkpoints are
+  [safetensors](https://github.com/huggingface/safetensors); no system libraries required to build or run.
 
 ## 📑 Table of Contents
 
@@ -65,7 +65,7 @@ consumes:
 ```
  nrn synth  ─▶  nrn train  ─▶  nrn plot  ─▶  nrn predict
    data          model         charts        inference
- (.safetensors)  (model dir)   (PNG / GIF)   (class probabilities)
+ (.parquet)      (model dir)   (PNG / GIF)   (class probabilities)
 ```
 
 - **`synth`** generates a labelled 2-D dataset (and previews it right in the terminal).
@@ -161,7 +161,7 @@ weight initialization and the data split.
 
 > [!NOTE]
 > Dataset files are named after what they contain: `{distribution}-seed{seed}-c{classes}-f{features}-n{samples}`.
-> Training a dataset `D.safetensors` creates a run directory `training-model-D/` and saves the final model
+> Training a dataset `D.parquet` creates a run directory `training-model-D/` and saves the final model
 > beside it as `model-D/` (network **plus** its scaler).
 
 ### 1 · A line is enough: SLP on separable data
@@ -175,11 +175,11 @@ ever draws a straight line, and here that's all it takes.
 nrn synth --seed 1024 --distribution uniform --samples 500 --features 2 --clusters 2
 ```
 
-This writes `uniform-seed1024-c2-f2-n500.safetensors` and, since the data is 2-D, prints a scatter preview
+This writes `uniform-seed1024-c2-f2-n500.parquet` and, since the data is 2-D, prints a scatter preview
 in your terminal. You can also render it to an image:
 
 ```sh
-nrn plot dataset uniform-seed1024-c2-f2-n500.safetensors --format image
+nrn plot dataset uniform-seed1024-c2-f2-n500.parquet --format image
 ```
 
 ![Two linearly separable clusters](docs/images/uniform-scatter.png)
@@ -187,7 +187,7 @@ nrn plot dataset uniform-seed1024-c2-f2-n500.safetensors --format image
 **Train** a single-layer perceptron, scaling the features with z-score normalization:
 
 ```sh
-nrn train start uniform-seed1024-c2-f2-n500.safetensors \
+nrn train start uniform-seed1024-c2-f2-n500.parquet \
   --scale z-score --epochs 200 --lr 0.01 --seed 7
 ```
 
@@ -240,7 +240,7 @@ nrn synth --seed 1024 --distribution ring --samples 500 --features 2 --clusters 
 never finding a separation:
 
 ```sh
-nrn train start ring-seed1024-c2-f2-n500.safetensors \
+nrn train start ring-seed1024-c2-f2-n500.parquet \
   --scale z-score --epochs 600 --lr 0.01 --seed 7
 ```
 
@@ -250,7 +250,7 @@ nrn train start ring-seed1024-c2-f2-n500.safetensors \
 boundary into a closed curve. `--early-stopping` keeps the run robust:
 
 ```sh
-nrn train start ring-seed1024-c2-f2-n500.safetensors \
+nrn train start ring-seed1024-c2-f2-n500.parquet \
   --layers 16,8 --scale z-score --epochs 8000 --lr 0.005 \
   --early-stopping 100 --seed 7
 ```
@@ -320,7 +320,7 @@ nrn synth --seed 1024 --distribution ring --samples 600 --features 2 --clusters 
 ![Three concentric classes: blob, ring, outer ring](docs/images/ring3-scatter.png)
 
 ```sh
-nrn train start ring-seed1024-c3-f2-n600.safetensors \
+nrn train start ring-seed1024-c3-f2-n600.parquet \
   --layers 16,8 --scale z-score --epochs 150 --lr 0.01 --seed 7
 ```
 
@@ -343,7 +343,7 @@ The prediction lists every class with its probability; the highest wins.
 > (`--layers 32,16`) learning to follow two interleaved arms. Try it:
 > ```sh
 > nrn synth --seed 7 --distribution spiral --samples 800 --features 2 --clusters 2
-> nrn train start spiral-seed7-c2-f2-n800.safetensors \
+> nrn train start spiral-seed7-c2-f2-n800.parquet \
 >   --layers 32,16 --scale z-score --epochs 40000 --lr 0.005 \
 >   --early-stopping 200 --seed 7
 > ```
@@ -368,7 +368,7 @@ nrn encode instance digit.png --grayscale --shape 28 --output digit
 **Train** a classifier — two hidden layers, min-max scaling for pixels, early stopping for safety:
 
 ```sh
-nrn train start digits.safetensors \
+nrn train start digits.parquet \
   --layers 128,128 --scale min-max --epochs 1000 \
   --batch-size 64 --early-stopping 20 --seed 7
 ```
@@ -387,7 +387,7 @@ CPU-intensive — start with a subset to iterate quickly.
 
 ```sh
 nrn plot run training-model-digits --format image
-nrn predict model-digits --instance digit.safetensors
+nrn predict model-digits --instance digit.json
 ```
 
 ```

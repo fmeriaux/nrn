@@ -45,17 +45,14 @@ mod tests {
 
     #[test]
     fn file_stem_string_drops_the_directory_and_extension() {
-        assert_eq!(
-            Path::new("runs/data.safetensors").file_stem_string(),
-            "data"
-        );
+        assert_eq!(Path::new("runs/data.parquet").file_stem_string(), "data");
         assert_eq!(Path::new("model").file_stem_string(), "model");
     }
 
     #[test]
     fn sibling_prefixes_the_stem_in_the_same_directory() {
         assert_eq!(
-            Path::new("runs/data.safetensors").sibling("curves"),
+            Path::new("runs/data.parquet").sibling("curves"),
             Path::new("runs/curves-data")
         );
     }
