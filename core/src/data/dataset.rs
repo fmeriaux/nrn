@@ -4,7 +4,7 @@ use ndarray::{Array, Array1, Array2, ArrayD, ArrayViewD, Axis, Dimension, Ix2};
 use ndarray_rand::rand::Rng;
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::prelude::{SliceRandom, StdRng};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 
 /// A dataset pairing per-sample inputs with per-sample targets.
@@ -222,12 +222,10 @@ impl Dataset {
     }
 
     /// Transforms the dataset into a samples-last [`ModelDataset`]: inputs are
-    /// rotated so the sample axis trails, and rank-1 class-id targets are one-hot
-    /// encoded (multi-class) or kept as a single row (binary), while rank-2 targets
-    /// are rotated samples-last unchanged.
-    ///
-    /// # Panics
-    /// When rank-1 targets are not contiguous 0-indexed class ids.
+    /// rotated so the sample axis trails, and rank-1 class-id targets are remapped
+    /// through a sorted vocabulary, then one-hot encoded (multi-class) or kept as a
+    /// single 0/1 row (binary), while rank-2 targets are rotated samples-last
+    /// unchanged.
     pub fn to_model_dataset(&self) -> ModelDataset {
         let inputs = self
             .inputs
@@ -235,16 +233,31 @@ impl Dataset {
             .permuted_axes(rotate_axis0_last(self.inputs.ndim()));
 
         let targets: ArrayD<f32> = if self.targets.ndim() == 1 {
-            let n_classes = self.n_classes();
+            // A sorted vocabulary maps arbitrary label values to dense 0-indexed rows,
+            // so gaps (e.g. {1, 2}) neither misalign the one-hot rows nor panic.
+            let mut sorted_labels = self.unique_labels();
+            sorted_labels.sort_by(f32::total_cmp);
+            let vocab: HashMap<u32, usize> = sorted_labels
+                .iter()
+                .enumerate()
+                .map(|(index, label)| (label.to_bits(), index))
+                .collect();
+            let n_classes = vocab.len();
+
             if n_classes > 2 {
                 let mut one_hot = Array2::zeros((n_classes, self.n_samples()));
                 for (i, &label) in self.targets.iter().enumerate() {
-                    one_hot[[label as usize, i]] = 1.0;
+                    one_hot[[vocab[&label.to_bits()], i]] = 1.0;
                 }
                 one_hot.into_dyn()
             } else {
-                // Binary labels (0.0 / 1.0) are used directly as a single target row.
-                self.targets.view().insert_axis(Axis(0)).to_owned()
+                Array1::from_iter(
+                    self.targets
+                        .iter()
+                        .map(|&label| vocab[&label.to_bits()] as f32),
+                )
+                .insert_axis(Axis(0))
+                .into_dyn()
             }
         } else {
             self.targets
@@ -495,6 +508,42 @@ mod tests {
         for i in 0..3 {
             assert_eq!(model_dataset.targets[[i, i]], 1.0);
         }
+    }
+
+    #[test]
+    fn gapped_multiclass_labels_one_hot_via_sorted_vocab() {
+        // Labels {1, 2, 5} are non-contiguous: the sorted vocabulary maps them to
+        // rows 0, 1, 2 in ascending order rather than by raw value.
+        let features = Array2::zeros((3, 2));
+        let labels = array![1.0f32, 2.0, 5.0];
+        let model_dataset = Dataset::tabular(features, labels, None)
+            .unwrap()
+            .to_model_dataset();
+        assert_eq!(model_dataset.targets.shape(), &[3, 3]);
+        for i in 0..3 {
+            assert_eq!(model_dataset.targets[[i, i]], 1.0);
+        }
+    }
+
+    #[test]
+    fn gapped_binary_labels_remap_to_zero_one() {
+        // Labels {1, 2}: the sorted vocabulary remaps the smaller value to 0 and
+        // the larger to 1, rather than passing the raw values through.
+        let features = Array2::zeros((3, 2));
+        let labels = array![1.0f32, 2.0, 1.0];
+        let model_dataset = Dataset::tabular(features, labels, None)
+            .unwrap()
+            .to_model_dataset();
+        assert_eq!(model_dataset.targets.shape(), &[1, 3]);
+        assert_eq!(
+            model_dataset
+                .targets
+                .index_axis(Axis(0), 0)
+                .iter()
+                .copied()
+                .collect::<Vec<f32>>(),
+            vec![0.0, 1.0, 0.0]
+        );
     }
 
     #[test]

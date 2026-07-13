@@ -73,7 +73,7 @@ impl Task {
     }
 }
 
-/// Checks that `targets` are rank-1 contiguous 0-indexed class ids over exactly
+/// Checks that `targets` are rank-1 non-negative integer class ids spanning exactly
 /// `expected` classes.
 fn validate_classification(targets: &ArrayD<f32>, expected: usize) -> Result<(), TaskDataError> {
     if targets.ndim() != 1 {
@@ -83,7 +83,7 @@ fn validate_classification(targets: &ArrayD<f32>, expected: usize) -> Result<(),
         });
     }
     if !targets.iter().all(|&v| v >= 0.0 && v.fract() == 0.0) {
-        return Err(TaskDataError::NonContiguousClassIds);
+        return Err(TaskDataError::InvalidClassIds);
     }
     let n_classes = targets
         .iter()
@@ -92,10 +92,6 @@ fn validate_classification(targets: &ArrayD<f32>, expected: usize) -> Result<(),
         .len();
     if n_classes < 2 {
         return Err(TaskDataError::TooFewClasses(n_classes));
-    }
-    let max_id = targets.iter().fold(0.0_f32, |m, &v| m.max(v)) as usize;
-    if max_id + 1 != n_classes {
-        return Err(TaskDataError::NonContiguousClassIds);
     }
     if n_classes != expected {
         return Err(TaskDataError::ClassCountMismatch {
@@ -151,8 +147,8 @@ fn validate_regression(targets: &ArrayD<f32>, n_outputs: usize) -> Result<(), Ta
 pub enum TaskDataError {
     /// The targets have the wrong rank for the task.
     WrongTargetRank { expected: usize, found: usize },
-    /// The class ids are not contiguous 0-indexed integers.
-    NonContiguousClassIds,
+    /// The class ids are not non-negative integers.
+    InvalidClassIds,
     /// Fewer than two distinct classes are present (carries the count found).
     TooFewClasses(usize),
     /// The number of classes differs from the task's declared count.
@@ -171,8 +167,8 @@ impl std::fmt::Display for TaskDataError {
             TaskDataError::WrongTargetRank { expected, found } => {
                 write!(f, "targets must be rank-{expected}, but found rank-{found}")
             }
-            TaskDataError::NonContiguousClassIds => {
-                write!(f, "class ids must be contiguous 0-indexed integers")
+            TaskDataError::InvalidClassIds => {
+                write!(f, "class ids must be non-negative integers")
             }
             TaskDataError::TooFewClasses(n) => {
                 write!(f, "a classifier needs at least 2 classes, but found {n}")
@@ -300,22 +296,35 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_non_contiguous_class_ids() {
-        // labels = {0, 2}: two classes, but not the contiguous {0, 1} set.
+    fn validate_accepts_non_contiguous_class_ids() {
+        // labels = {0, 2}: two classes, gaps in the id range are no longer rejected.
         let dataset = tabular_dataset(array![0.0f32, 2.0]);
-        assert_eq!(
-            Task::Binary.validate_dataset(&dataset),
-            Err(TaskDataError::NonContiguousClassIds)
+        assert!(Task::Binary.validate_dataset(&dataset).is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_out_of_range_multiclass_label() {
+        // labels = {0, 1, 2, 5}: four classes, id 5 no longer breaks validation.
+        let dataset = tabular_dataset(array![0.0f32, 1.0, 2.0, 5.0]);
+        assert!(
+            Task::MultiClass { n_classes: 4 }
+                .validate_dataset(&dataset)
+                .is_ok()
         );
     }
 
     #[test]
-    fn validate_rejects_out_of_range_multiclass_label() {
-        // labels = {0, 1, 2, 5}: four classes, but id 5 breaks contiguity.
-        let dataset = tabular_dataset(array![0.0f32, 1.0, 2.0, 5.0]);
+    fn validate_rejects_invalid_class_ids() {
+        // A negative and a fractional value are never valid class ids.
+        let dataset = tabular_dataset(array![0.0f32, -1.0]);
         assert_eq!(
-            Task::MultiClass { n_classes: 4 }.validate_dataset(&dataset),
-            Err(TaskDataError::NonContiguousClassIds)
+            Task::Binary.validate_dataset(&dataset),
+            Err(TaskDataError::InvalidClassIds)
+        );
+        let dataset = tabular_dataset(array![0.0f32, 1.5]);
+        assert_eq!(
+            Task::Binary.validate_dataset(&dataset),
+            Err(TaskDataError::InvalidClassIds)
         );
     }
 
