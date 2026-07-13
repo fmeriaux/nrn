@@ -1,5 +1,5 @@
 //! The [`NeuralNetwork`]: a stack of layers applied in order, plus the per-stage
-//! [`Activations`] a forward pass captures and the [`InputShapeMismatch`] it can raise.
+//! [`Activations`] a forward pass captures and the shape-mismatch errors it can raise.
 
 use crate::activations::Activation;
 use crate::layers::{Layer, format_shape};
@@ -70,19 +70,20 @@ impl Activations {
 
 impl NeuralNetwork {
     /// Assembles a network from a stack of layers, applied in order from input to output.
-    /// # Panics
-    /// When `layers` is empty.
-    pub fn new(layers: Vec<Box<dyn Layer>>) -> Self {
-        assert!(
-            !layers.is_empty(),
-            "A network must have at least one layer."
-        );
-        NeuralNetwork { layers }
+    /// # Errors
+    /// [`LayerConfigError::NoLayers`] when `layers` is empty.
+    pub fn new(layers: Vec<Box<dyn Layer>>) -> Result<Self, LayerConfigError> {
+        if layers.is_empty() {
+            return Err(LayerConfigError::NoLayers);
+        }
+        Ok(NeuralNetwork { layers })
     }
 
     /// Assembles a single-layer network from one layer.
     pub fn single(layer: impl Layer + 'static) -> Self {
-        Self::new(vec![Box::new(layer)])
+        NeuralNetwork {
+            layers: vec![Box::new(layer)],
+        }
     }
 
     /// Appends a layer to the network, returning the network for chaining.
@@ -126,7 +127,7 @@ impl NeuralNetwork {
                 Ok(layer)
             })
             .collect::<Result<Vec<_>, LayerConfigError>>()?;
-        Ok(Self::new(layers))
+        Self::new(layers)
     }
 
     /// Builds a fresh network from a [`NetworkConfig`], drawing weights from a generator seeded
@@ -145,7 +146,7 @@ impl NeuralNetwork {
                 Ok(layer)
             })
             .collect::<Result<Vec<_>, LayerConfigError>>()?;
-        Ok(Self::new(layers))
+        Self::new(layers)
     }
 
     /// Returns the input size of the network, which is the number of inputs to the first layer.
@@ -153,10 +154,25 @@ impl NeuralNetwork {
         self.layers[0].input_size()
     }
 
-    /// The network's per-sample input shape: the first layer's
-    /// [`input_shape`](crate::layers::Layer::input_shape), sample axis excluded.
+    /// The number of outputs the network produces: the last layer's output size.
+    pub fn output_size(&self) -> usize {
+        self.layers
+            .last()
+            .expect("a network always has at least one layer")
+            .output_size()
+    }
+
+    /// The network's per-sample input shape, sample axis excluded.
     pub fn input_shape(&self) -> Vec<usize> {
         self.layers[0].input_shape()
+    }
+
+    /// The network's per-sample output shape, sample axis excluded.
+    pub fn output_shape(&self) -> Vec<usize> {
+        self.layers
+            .last()
+            .expect("a network always has at least one layer")
+            .output_shape()
     }
 
     /// This network's architecture as a [`NetworkConfig`] — the declarative counterpart to its
@@ -211,25 +227,46 @@ impl NeuralNetwork {
         self.layers.iter().all(|layer| layer.is_finite())
     }
 
-    /// Validates that `inputs` carry the per-sample shape this network expects: the sample axis
-    /// is last, so the leading axes are the per-sample features and must equal the first layer's
-    /// [`input_shape`](crate::layers::Layer::input_shape).
+    /// Validates that `shape` matches this network's input shape.
     ///
     /// # Errors
-    /// [`InputShapeMismatch`] when the leading axes differ from the first layer's input shape.
+    /// [`InputShapeMismatch`] when `shape` differs from the network's input shape.
+    pub fn validate_input_shape(&self, shape: &[usize]) -> Result<(), InputShapeMismatch> {
+        let expected = self.input_shape();
+        (shape == expected)
+            .then_some(())
+            .ok_or_else(|| InputShapeMismatch {
+                expected,
+                found: shape.to_vec(),
+            })
+    }
+
+    /// Validates that this network's output shape matches `expected`.
+    ///
+    /// # Errors
+    /// [`OutputShapeMismatch`] when the network's output shape differs from `expected`.
+    pub fn validate_output_shape(&self, expected: &[usize]) -> Result<(), OutputShapeMismatch> {
+        let found = self.output_shape();
+        (found == expected)
+            .then_some(())
+            .ok_or_else(|| OutputShapeMismatch {
+                expected: expected.to_vec(),
+                found,
+            })
+    }
+
+    /// Validates that `inputs` carry the per-sample shape this network expects: the sample axis
+    /// is last, so the leading axes are the per-sample features.
+    ///
+    /// # Errors
+    /// [`InputShapeMismatch`] when the leading axes differ from the network's input shape.
     pub fn validate_inputs<D: Dimension>(
         &self,
         inputs: ArrayView<f32, D>,
     ) -> Result<(), InputShapeMismatch> {
-        let expected = self.layers[0].input_shape();
         let shape = inputs.shape();
         let found = &shape[..shape.len().saturating_sub(1)];
-        (found == expected)
-            .then_some(())
-            .ok_or_else(|| InputShapeMismatch {
-                expected,
-                found: found.to_vec(),
-            })
+        self.validate_input_shape(found)
     }
 
     /// Computes the forward pass of the network and returns the output layer's activations.
@@ -274,6 +311,27 @@ impl fmt::Display for InputShapeMismatch {
 
 impl std::error::Error for InputShapeMismatch {}
 
+/// A network's per-sample output shape did not match what was expected of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutputShapeMismatch {
+    /// The per-sample output shape expected.
+    pub expected: Vec<usize>,
+    /// The per-sample output shape the network produces.
+    pub found: Vec<usize>,
+}
+
+impl fmt::Display for OutputShapeMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "model outputs shape {:?} but shape {:?} was expected",
+            self.found, self.expected
+        )
+    }
+}
+
+impl std::error::Error for OutputShapeMismatch {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,6 +347,98 @@ mod tests {
         activation: Arc<dyn Activation>,
     ) -> NeuralNetwork {
         NeuralNetwork::single(Dense::new(weights, biases, activation))
+    }
+
+    #[test]
+    fn new_rejects_an_empty_layer_stack() {
+        let err = NeuralNetwork::new(vec![]).unwrap_err();
+        assert_eq!(err, LayerConfigError::NoLayers);
+        assert_eq!(err.to_string(), "a network must have at least one layer");
+    }
+
+    #[test]
+    fn output_size_matches_the_last_layer() {
+        let config = NetworkConfig::builder(vec![3])
+            .dense(4, &RELU)
+            .dense(2, &IDENTITY)
+            .build();
+        let model = NeuralNetwork::from_config(config, 0).unwrap();
+        assert_eq!(model.output_size(), 2);
+    }
+
+    #[test]
+    fn output_shape_matches_the_last_layer() {
+        let config = NetworkConfig::builder(vec![1, 4, 4])
+            .conv2d(2, (3, 3), 1, 0, &RELU)
+            .build();
+        let model = NeuralNetwork::from_config(config, 0).unwrap();
+        assert_eq!(model.output_shape(), vec![2, 2, 2]);
+    }
+
+    #[test]
+    fn validate_output_shape_rejects_a_matching_count_but_wrong_rank() {
+        use crate::layers::Conv2d;
+
+        // A Conv2d-only network produces a rank-3 (2, 2, 2) output = 8 features; a flat
+        // 8-wide expectation matches on count but not on shape.
+        let conv = Conv2d::initialization(
+            (1, 4, 4),
+            2,
+            (3, 3),
+            1,
+            0,
+            RELU.clone(),
+            &mut StdRng::seed_from_u64(0),
+        );
+        let model = NeuralNetwork::single(conv);
+
+        let err = model.validate_output_shape(&[8]).unwrap_err();
+        assert_eq!(err.expected, vec![8]);
+        assert_eq!(err.found, vec![2, 2, 2]);
+    }
+
+    #[test]
+    fn validate_output_shape_accepts_a_matching_flat_width() {
+        let config = NetworkConfig::builder(vec![3])
+            .dense(4, &RELU)
+            .dense(2, &IDENTITY)
+            .build();
+        let model = NeuralNetwork::from_config(config, 0).unwrap();
+        assert!(model.validate_output_shape(&[2]).is_ok());
+        assert!(model.validate_output_shape(&[3]).is_err());
+    }
+
+    #[test]
+    fn validate_input_shape_rejects_a_matching_count_but_wrong_rank() {
+        use crate::layers::Conv2d;
+
+        // A Conv2d-first network expects a per-sample shape of (1, 4, 4) = 16 features; a flat
+        // 16-wide shape matches on count but not on shape.
+        let conv = Conv2d::initialization(
+            (1, 4, 4),
+            2,
+            (3, 3),
+            1,
+            0,
+            RELU.clone(),
+            &mut StdRng::seed_from_u64(0),
+        );
+        let model = NeuralNetwork::single(conv);
+
+        let err = model.validate_input_shape(&[16]).unwrap_err();
+        assert_eq!(err.expected, vec![1, 4, 4]);
+        assert_eq!(err.found, vec![16]);
+    }
+
+    #[test]
+    fn validate_input_shape_accepts_a_matching_shape() {
+        let config = NetworkConfig::builder(vec![3])
+            .dense(4, &RELU)
+            .dense(2, &IDENTITY)
+            .build();
+        let model = NeuralNetwork::from_config(config, 0).unwrap();
+        assert!(model.validate_input_shape(&[3]).is_ok());
+        assert!(model.validate_input_shape(&[4]).is_err());
     }
 
     #[test]

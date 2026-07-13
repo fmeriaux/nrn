@@ -10,7 +10,7 @@ use crate::learning_rate::{LearningRate, LearningRateError};
 use crate::loss_functions::{
     BinaryCrossEntropy, CategoricalCrossEntropy, LossFunction, MeanSquaredError, Reduction,
 };
-use crate::model::{InputShapeMismatch, NeuralNetwork};
+use crate::model::{InputShapeMismatch, NeuralNetwork, OutputShapeMismatch};
 use crate::optimizers::{Adam, Optimizer, StochasticGradientDescent};
 use crate::schedulers::{
     ConstantScheduler, CosineAnnealing, CosineAnnealingError, Scheduler, StepDecay, StepDecayError,
@@ -492,18 +492,21 @@ impl HyperParameters {
     /// [`Trainer::restore`](crate::training::Trainer::restore) on the result.
     ///
     /// # Errors
-    /// [`InputShapeMismatch`] when `model`'s input size does not match the dataset's
-    /// feature count. The two are supplied separately (e.g. resuming a run with a fresh
-    /// dataset), so this is the one place their compatibility is checked; once past it,
-    /// every forward pass over the split is guaranteed to fit.
+    /// [`BuildError::InputShape`] when `model`'s input size does not match the dataset's
+    /// feature count; [`BuildError::OutputShape`] when `model`'s output shape does not match
+    /// `task`'s. `model`, `task`, and `data` are supplied separately (e.g. resuming a run with
+    /// a fresh dataset), so this is the one place their compatibility is checked; once past
+    /// it, every forward pass over the split is guaranteed to fit and to produce a
+    /// `task`-shaped output.
     pub fn build(
         self,
         model: NeuralNetwork,
         task: Task,
         data: TrainingData,
         callbacks: Callbacks,
-    ) -> Result<Trainer, InputShapeMismatch> {
+    ) -> Result<Trainer, BuildError> {
         model.validate_inputs(data.split.train.inputs().view())?;
+        model.validate_output_shape(&[task.output_size()])?;
 
         let optimizer = self.optimizer.instantiate(self.lr, self.weight_decay);
         let scheduler = self
@@ -529,6 +532,39 @@ impl HyperParameters {
             epoch_start: 0,
             seed: self.seed,
         })
+    }
+}
+
+/// The error [`HyperParameters::build`] raises when `model` is not compatible with the
+/// dataset or the task it is being trained for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BuildError {
+    /// `model`'s input shape does not match the dataset's.
+    InputShape(InputShapeMismatch),
+    /// `model`'s output shape does not match the task's.
+    OutputShape(OutputShapeMismatch),
+}
+
+impl fmt::Display for BuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BuildError::InputShape(e) => write!(f, "{e}"),
+            BuildError::OutputShape(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for BuildError {}
+
+impl From<InputShapeMismatch> for BuildError {
+    fn from(error: InputShapeMismatch) -> Self {
+        BuildError::InputShape(error)
+    }
+}
+
+impl From<OutputShapeMismatch> for BuildError {
+    fn from(error: OutputShapeMismatch) -> Self {
+        BuildError::OutputShape(error)
     }
 }
 
@@ -894,5 +930,34 @@ mod tests {
         let data = hp.prepare(ramp_dataset(), Some(supplied)).unwrap();
 
         assert!(data.split.train.inputs().iter().all(|&v| v < 0.5));
+    }
+
+    #[test]
+    fn build_rejects_a_model_output_shape_that_does_not_match_the_task() {
+        use crate::activations::SIGMOID;
+        use crate::layers::Dense;
+        use ndarray::{Array1, Array2};
+
+        let hp = spec_with_scaler(None);
+        let data = hp.prepare(ramp_dataset(), None).unwrap();
+
+        // Task::Binary needs a single output; this model produces 3.
+        let model = NeuralNetwork::single(Dense::new(
+            Array2::from_elem((3, 2), 0.1),
+            Array1::zeros(3),
+            SIGMOID.clone(),
+        ));
+
+        let err = hp
+            .build(model, Task::Binary, data, Callbacks::empty())
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(
+            err,
+            BuildError::OutputShape(OutputShapeMismatch {
+                expected: vec![1],
+                found: vec![3],
+            })
+        );
     }
 }

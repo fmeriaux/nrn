@@ -485,7 +485,8 @@ mod tests {
         let net = NeuralNetwork::new(vec![
             Box::new(Flatten::new(vec![2])),
             Box::new(Dense::new(array![[1.0, -1.0]], array![0.0], RELU.clone())),
-        ]);
+        ])
+        .unwrap();
         let diagram = network_diagram(&net, array![1.0, 1.0].view(), &DiagramOptions::default());
 
         // Stage 1 is the Flatten: it has units but contributes no edges.

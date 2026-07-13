@@ -278,6 +278,8 @@ pub enum LayerConfigError {
     /// A layer was configured with zero output units (a Dense with no neurons, a Conv2d with
     /// no filters) — every layer must produce at least one output.
     EmptyLayer,
+    /// A network was assembled with no layers at all.
+    NoLayers,
 }
 
 impl fmt::Display for LayerConfigError {
@@ -298,6 +300,9 @@ impl fmt::Display for LayerConfigError {
             LayerConfigError::Tensor(error) => write!(f, "{error}"),
             LayerConfigError::EmptyLayer => {
                 write!(f, "a layer must have at least one output unit")
+            }
+            LayerConfigError::NoLayers => {
+                write!(f, "a network must have at least one layer")
             }
         }
     }
