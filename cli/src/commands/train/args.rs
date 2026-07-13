@@ -343,7 +343,9 @@ impl ResumeOverrides {
 mod tests {
     use super::*;
     use clap::Parser;
-    use nrn::io::model::hyperparams::{LossKindRecord, LossRecord, ReductionRecord};
+    use nrn::io::model::hyperparams::{
+        LossKindRecord, LossRecord, OptimizerRecord, ReductionRecord,
+    };
 
     // ─── TrainArgs conversions ─────────────────────────────────────────────────
 
@@ -581,7 +583,7 @@ mod tests {
             batch_size: Some(32),
             lr: 0.001,
             weight_decay: 0.0,
-            optimizer: nrn::io::model::hyperparams::OptimizerRecord::Adam,
+            optimizer: OptimizerRecord::Adam,
             scheduler: SchedulerRecord::Constant,
             clipping: ClippingRecord::Norm { max_norm: 1.0 },
             early_stopping: None,
