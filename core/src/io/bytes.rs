@@ -1,5 +1,5 @@
 use crate::io::path::PathExt;
-use std::io::Result;
+use std::io::{Error, Result};
 use std::path::Path;
 
 /// Reads the entire contents of a file into a byte vector after validating the file path.
@@ -51,5 +51,5 @@ use std::path::Path;
 ///
 pub fn secure_read<P: AsRef<Path>>(path: P) -> Result<Vec<u8>> {
     let path = Path::combine_safe_with_cwd(path)?;
-    std::fs::read(path)
+    std::fs::read(&path).map_err(|e| Error::new(e.kind(), format!("{}: {e}", path.display())))
 }

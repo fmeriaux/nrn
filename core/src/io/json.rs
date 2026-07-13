@@ -18,7 +18,8 @@ pub fn save<T: Serialize, P: AsRef<Path>>(value: &T, path: P) -> Result<PathBuf>
 pub fn load<T: DeserializeOwned, P: AsRef<Path>>(path: P) -> Result<T> {
     let filepath = path.as_ref().with_extension("json");
     let filepath = Path::combine_safe_with_cwd(filepath)?;
-    let data = fs::read(&filepath)?;
+    let data = fs::read(&filepath)
+        .map_err(|e| Error::new(e.kind(), format!("{}: {e}", filepath.display())))?;
     serde_json::from_slice(&data).map_err(|e| Error::new(InvalidData, e))
 }
 
@@ -32,5 +33,15 @@ mod tests {
         // refused before any file is touched.
         assert!(save(&42i32, "../../nrn_json_traversal").is_err());
         assert!(load::<i32, _>("../../nrn_json_traversal").is_err());
+    }
+
+    #[test]
+    fn load_missing_file_reports_the_path_and_keeps_not_found() {
+        let error = load::<i32, _>("nrn_json_absent_fixture").unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        assert!(
+            error.to_string().contains("nrn_json_absent_fixture.json"),
+            "error should name the missing file, got: {error}"
+        );
     }
 }
