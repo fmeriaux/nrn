@@ -4,10 +4,10 @@
 //! ([`NeuralNetwork`]), plus the [`Predictor`] that pairs a trained network with its scaler.
 //! The submodules are re-exported flat, so every type lives at `crate::model::*`.
 
+mod config;
 mod network;
 mod predictor;
-mod specs;
 
+pub use config::*;
 pub use network::*;
 pub use predictor::*;
-pub use specs::*;

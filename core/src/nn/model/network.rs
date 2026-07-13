@@ -3,7 +3,7 @@
 
 use crate::activations::Activation;
 use crate::layers::{Dense, Layer, format_shape};
-use crate::model::{LayerSpec, LayerSpecError, NeuronLayerSpec};
+use crate::model::{LayerConfig, LayerConfigError, NetworkConfig, NeuronLayerSpec};
 use crate::tensors::Tensors;
 use ndarray::{ArrayD, ArrayView, ArrayViewD, Dimension};
 use ndarray_rand::rand::SeedableRng;
@@ -144,22 +144,41 @@ impl NeuralNetwork {
         Self::new(layers)
     }
 
-    /// Rebuilds a network from its `input_shape` and each layer's [`LayerSpec`] paired with its
+    /// Rebuilds a network from its `input_shape` and each layer's [`LayerConfig`] paired with its
     /// named tensors, in layer order. The input shape is threaded through the stack, so every
     /// layer is built at the shape the previous one produces.
-    pub fn from_specs_and_weights(
+    pub fn from_config_and_weights(
         input_shape: Vec<usize>,
-        layers: Vec<(LayerSpec, Tensors)>,
-    ) -> Result<Self, LayerSpecError> {
+        layers: Vec<(LayerConfig, Tensors)>,
+    ) -> Result<Self, LayerConfigError> {
         let mut shape = input_shape;
         let layers = layers
             .into_iter()
-            .map(|(spec, tensors)| {
-                let layer = spec.from_tensors(&shape, tensors)?;
+            .map(|(config, tensors)| {
+                let layer = config.from_tensors(&shape, tensors)?;
                 shape = layer.output_shape();
                 Ok(layer)
             })
-            .collect::<Result<Vec<_>, LayerSpecError>>()?;
+            .collect::<Result<Vec<_>, LayerConfigError>>()?;
+        Ok(Self::new(layers))
+    }
+
+    /// Builds a fresh network from a [`NetworkConfig`], drawing weights from a generator seeded
+    /// with `seed`. The input shape is threaded through the stack, so every layer is built at
+    /// the shape the previous one produces. Seeded counterpart to
+    /// [`from_config_and_weights`](NeuralNetwork::from_config_and_weights).
+    pub fn from_config(config: NetworkConfig, seed: u64) -> Result<Self, LayerConfigError> {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let mut shape = config.input_shape;
+        let layers = config
+            .layers
+            .into_iter()
+            .map(|layer_config| {
+                let layer = layer_config.initialization(&shape, &mut rng)?;
+                shape = layer.output_shape();
+                Ok(layer)
+            })
+            .collect::<Result<Vec<_>, LayerConfigError>>()?;
         Ok(Self::new(layers))
     }
 
@@ -174,10 +193,13 @@ impl NeuralNetwork {
         self.layers[0].input_shape()
     }
 
-    /// This network's architecture as a stack of weight-free [`LayerSpec`]s, in order — the
-    /// declarative counterpart to its tensors.
-    pub fn specs(&self) -> Vec<LayerSpec> {
-        self.layers.iter().map(|layer| layer.spec()).collect()
+    /// This network's architecture as a [`NetworkConfig`] — the declarative counterpart to its
+    /// tensors.
+    pub fn config(&self) -> NetworkConfig {
+        NetworkConfig {
+            input_shape: self.input_shape(),
+            layers: self.layers.iter().map(|layer| layer.config()).collect(),
+        }
     }
 
     /// Returns a summary of the network's architecture as a string, showing the per-sample
@@ -468,16 +490,17 @@ mod tests {
     }
 
     /// Extracts a model's architecture and weights the way `io` will at the persistence
-    /// boundary — pairing each [`LayerSpec`] with its named tensors — and reconstructs it via
-    /// [`NeuralNetwork::from_specs_and_weights`].
+    /// boundary — pairing each [`LayerConfig`] with its named tensors — and reconstructs it via
+    /// [`NeuralNetwork::from_config_and_weights`].
     fn round_trip(model: &NeuralNetwork) -> NeuralNetwork {
         let layers = model
-            .specs()
+            .config()
+            .layers
             .into_iter()
             .zip(model.layers())
-            .map(|(spec, layer)| (spec, layer.tensors()))
+            .map(|(config, layer)| (config, layer.tensors()))
             .collect();
-        NeuralNetwork::from_specs_and_weights(model.input_shape(), layers).unwrap()
+        NeuralNetwork::from_config_and_weights(model.input_shape(), layers).unwrap()
     }
 
     #[test]

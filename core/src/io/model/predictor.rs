@@ -2,7 +2,7 @@
 //! model blueprint as `config.json`, and, when present, the scaler as a `preprocessor.json` sidecar.
 
 use crate::io::json;
-use crate::io::model::network::NetworkConfig;
+use crate::io::model::network::NetworkConfigRecord;
 use crate::io::model::scalers::ScalerRecord;
 use crate::io::model::task::TaskRecord;
 use crate::model::{NeuralNetwork, Predictor};
@@ -22,7 +22,7 @@ const PREPROCESSOR_STEM: &str = "preprocessor";
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct PredictorConfig {
     /// The network architecture the `model.safetensors` weights belong to.
-    pub network: NetworkConfig,
+    pub network: NetworkConfigRecord,
     /// The learning task the network was trained for.
     pub task: TaskRecord,
 }
@@ -45,7 +45,7 @@ impl Predictor {
         let dir = dir.as_ref();
         self.network.save_weights(dir.join(MODEL_STEM))?;
         PredictorConfig {
-            network: NetworkConfig::from(&self.network),
+            network: NetworkConfigRecord::from(&self.network),
             task: self.task.into(),
         }
         .save(dir.join(CONFIG_STEM))?;
@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn config_carries_the_network_architecture() {
-        use crate::io::model::network::LayerSpecRecord;
+        use crate::io::model::network::LayerConfigRecord;
 
         let (network, _) = model_and_inputs();
         let predictor = Predictor::new(network, Task::Binary, None);
@@ -152,7 +152,7 @@ mod tests {
         assert_eq!(config.network.input_shape, vec![3]);
         assert_eq!(
             config.network.layers[0],
-            LayerSpecRecord::Dense {
+            LayerConfigRecord::Dense {
                 neurons: 4,
                 activation: "relu".to_string(),
             }

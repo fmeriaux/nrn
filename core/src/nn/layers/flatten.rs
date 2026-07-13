@@ -1,6 +1,6 @@
 use crate::gradients::LayerGradients;
 use crate::layers::{BackwardPass, Layer, Parameter};
-use crate::model::LayerSpec;
+use crate::model::LayerConfig;
 use crate::tensors::Tensors;
 use ndarray::{ArrayD, ArrayViewD};
 
@@ -106,8 +106,8 @@ impl Layer for Flatten {
         true
     }
 
-    fn spec(&self) -> LayerSpec {
-        LayerSpec::Flatten
+    fn config(&self) -> LayerConfig {
+        LayerConfig::Flatten
     }
 
     fn tensors(&self) -> Tensors {

@@ -1,12 +1,12 @@
 //! Persistence for a [`NeuralNetwork`]: its weights as a `.safetensors` file and its
-//! architecture as a serializable [`NetworkConfig`] beside them.
+//! architecture as a serializable [`NetworkConfigRecord`] beside them.
 //! [`save_weights`](NeuralNetwork::save_weights) writes tensors only; the architecture lives in
-//! the `NetworkConfig`, from which [`load_weights`](NeuralNetwork::load_weights) rebuilds it.
+//! the [`NetworkConfigRecord`], from which [`load_weights`](NeuralNetwork::load_weights) rebuilds it.
 
 use crate::activations::{Activation, ActivationProvider};
 use crate::io::json;
 use crate::io::model::tensors;
-use crate::model::{LayerSpec, NeuralNetwork};
+use crate::model::{LayerConfig, NetworkConfig, NeuralNetwork};
 use crate::tensors::Tensors;
 use safetensors::SafeTensors;
 use serde::{Deserialize, Serialize};
@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 impl NeuralNetwork {
     /// Writes this network's weights to `path.safetensors`, tensors only. Each tensor is named
-    /// `layers.{i}.{tensor}`; the architecture lives in a [`NetworkConfig`] beside them.
+    /// `layers.{i}.{tensor}`; the architecture lives in a [`NetworkConfigRecord`] beside them.
     /// # Arguments
     /// - `path`: The path (without extension) to write the weights to.
     pub fn save_weights<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf> {
@@ -36,50 +36,56 @@ impl NeuralNetwork {
     }
 
     /// Rebuilds a network from a weights file written by
-    /// [`save_weights`](NeuralNetwork::save_weights) and the [`NetworkConfig`] describing its
-    /// architecture.
+    /// [`save_weights`](NeuralNetwork::save_weights) and the [`NetworkConfigRecord`] describing
+    /// its architecture.
     /// # Arguments
     /// - `path`: The path (without extension) to read the weights from.
-    /// - `config`: The architecture the weights belong to.
-    pub fn load_weights<P: AsRef<Path>>(path: P, config: &NetworkConfig) -> Result<Self> {
+    /// - `record`: The architecture the weights belong to.
+    pub fn load_weights<P: AsRef<Path>>(path: P, record: &NetworkConfigRecord) -> Result<Self> {
         let bytes = tensors::load(path)?;
         let st =
             SafeTensors::deserialize(&bytes).map_err(|e| Error::new(InvalidData, e.to_string()))?;
+        let config = record.to_config()?;
 
         let layers = config
-            .specs()?
+            .layers
             .into_iter()
             .enumerate()
-            .map(|(i, spec)| Ok((spec, read_layer_tensors(&st, &format!("layers.{i}."))?)))
+            .map(|(i, layer_config)| {
+                Ok((
+                    layer_config,
+                    read_layer_tensors(&st, &format!("layers.{i}."))?,
+                ))
+            })
             .collect::<Result<Vec<_>>>()?;
 
-        NeuralNetwork::from_specs_and_weights(config.input_shape.clone(), layers)
+        NeuralNetwork::from_config_and_weights(config.input_shape, layers)
             .map_err(|e| Error::new(InvalidData, e.to_string()))
     }
 }
 
 /// Serializable blueprint of a network's architecture: its per-sample input shape and the stack
-/// of weight-free layer specs — the typed counterpart to the tensors in the weights file.
+/// of weight-free layer configs — the mirror of a core [`NetworkConfig`].
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct NetworkConfig {
+pub struct NetworkConfigRecord {
     /// The per-sample input shape, sample axis excluded.
     pub input_shape: Vec<usize>,
     /// The layers in order, from input to output.
-    pub layers: Vec<LayerSpecRecord>,
+    pub layers: Vec<LayerConfigRecord>,
 }
 
-/// Serializable mirror of a [`LayerSpec`], one JSON object tagged by kind.
+/// Serializable mirror of a [`LayerConfig`], one JSON object tagged by kind.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum LayerSpecRecord {
-    /// Mirror of [`LayerSpec::Dense`].
+pub enum LayerConfigRecord {
+    /// Mirror of [`LayerConfig::Dense`].
     Dense {
         /// The number of neurons, i.e. output features.
         neurons: usize,
         /// The name of the activation applied to the layer's output.
         activation: String,
     },
-    /// Mirror of [`LayerSpec::Conv2d`].
+    /// Mirror of [`LayerConfig::Conv2d`].
     Conv2d {
         /// The number of filters, i.e. output channels.
         out_channels: usize,
@@ -92,90 +98,103 @@ pub enum LayerSpecRecord {
         /// The name of the activation applied to the layer's output.
         activation: String,
     },
-    /// Mirror of [`LayerSpec::Flatten`].
+    /// Mirror of [`LayerConfig::Flatten`].
     Flatten,
 }
 
-impl NetworkConfig {
-    /// Saves this config to `path.json`.
+impl NetworkConfigRecord {
+    /// Saves this record to `path.json`.
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf> {
         json::save(self, path)
     }
 
-    /// Loads a config from `path.json`.
+    /// Loads a record from `path.json`.
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         json::load(path)
     }
 
-    /// The core [`LayerSpec`]s this config describes, in order, resolving each activation name
-    /// against the registry.
-    fn specs(&self) -> Result<Vec<LayerSpec>> {
-        self.layers.iter().map(LayerSpecRecord::to_spec).collect()
+    /// Resolves this record into a core [`NetworkConfig`], looking each layer's activation up
+    /// in the registry.
+    pub fn to_config(&self) -> Result<NetworkConfig> {
+        Ok(NetworkConfig {
+            input_shape: self.input_shape.clone(),
+            layers: self
+                .layers
+                .iter()
+                .map(LayerConfigRecord::to_config)
+                .collect::<Result<_>>()?,
+        })
     }
 }
 
-impl From<&NeuralNetwork> for NetworkConfig {
-    fn from(network: &NeuralNetwork) -> Self {
-        NetworkConfig {
-            input_shape: network.input_shape(),
-            layers: network.specs().iter().map(LayerSpecRecord::from).collect(),
+impl From<&NetworkConfig> for NetworkConfigRecord {
+    fn from(config: &NetworkConfig) -> Self {
+        NetworkConfigRecord {
+            input_shape: config.input_shape.clone(),
+            layers: config.layers.iter().map(LayerConfigRecord::from).collect(),
         }
     }
 }
 
-impl From<&LayerSpec> for LayerSpecRecord {
-    fn from(spec: &LayerSpec) -> Self {
-        match spec {
-            LayerSpec::Dense {
+impl From<&NeuralNetwork> for NetworkConfigRecord {
+    fn from(network: &NeuralNetwork) -> Self {
+        NetworkConfigRecord::from(&network.config())
+    }
+}
+
+impl From<&LayerConfig> for LayerConfigRecord {
+    fn from(config: &LayerConfig) -> Self {
+        match config {
+            LayerConfig::Dense {
                 neurons,
                 activation,
-            } => LayerSpecRecord::Dense {
+            } => LayerConfigRecord::Dense {
                 neurons: *neurons,
                 activation: activation.name().to_string(),
             },
-            LayerSpec::Conv2d {
+            LayerConfig::Conv2d {
                 out_channels,
                 kernel,
                 stride,
                 padding,
                 activation,
-            } => LayerSpecRecord::Conv2d {
+            } => LayerConfigRecord::Conv2d {
                 out_channels: *out_channels,
                 kernel: [kernel.0, kernel.1],
                 stride: *stride,
                 padding: *padding,
                 activation: activation.name().to_string(),
             },
-            LayerSpec::Flatten => LayerSpecRecord::Flatten,
+            LayerConfig::Flatten => LayerConfigRecord::Flatten,
         }
     }
 }
 
-impl LayerSpecRecord {
-    /// Resolves this record into a core [`LayerSpec`], looking its activation up in the registry.
-    fn to_spec(&self) -> Result<LayerSpec> {
+impl LayerConfigRecord {
+    /// Resolves this record into a core [`LayerConfig`], looking its activation up in the registry.
+    fn to_config(&self) -> Result<LayerConfig> {
         Ok(match self {
-            LayerSpecRecord::Dense {
+            LayerConfigRecord::Dense {
                 neurons,
                 activation,
-            } => LayerSpec::Dense {
+            } => LayerConfig::Dense {
                 neurons: *neurons,
                 activation: resolve_activation(activation)?,
             },
-            LayerSpecRecord::Conv2d {
+            LayerConfigRecord::Conv2d {
                 out_channels,
                 kernel,
                 stride,
                 padding,
                 activation,
-            } => LayerSpec::Conv2d {
+            } => LayerConfig::Conv2d {
                 out_channels: *out_channels,
                 kernel: (kernel[0], kernel[1]),
                 stride: *stride,
                 padding: *padding,
                 activation: resolve_activation(activation)?,
             },
-            LayerSpecRecord::Flatten => LayerSpec::Flatten,
+            LayerConfigRecord::Flatten => LayerConfig::Flatten,
         })
     }
 }
@@ -226,39 +245,39 @@ mod tests {
     }
 
     #[test]
-    fn layer_spec_record_round_trips_every_kind() {
-        use super::{LayerSpecRecord, resolve_activation};
-        use crate::model::LayerSpec;
+    fn layer_config_record_round_trips_every_kind() {
+        use super::{LayerConfigRecord, resolve_activation};
+        use crate::model::LayerConfig;
 
-        // LayerSpec carries an Arc<dyn Activation> and has no PartialEq, so the round-trip is
-        // checked at the record level: spec -> record -> spec -> record must be stable.
-        let specs = [
-            LayerSpec::Dense {
+        // LayerConfig carries an Arc<dyn Activation> and has no PartialEq, so the round-trip is
+        // checked at the record level: config -> record -> config -> record must be stable.
+        let configs = [
+            LayerConfig::Dense {
                 neurons: 4,
                 activation: resolve_activation("relu").unwrap(),
             },
-            LayerSpec::Conv2d {
+            LayerConfig::Conv2d {
                 out_channels: 2,
                 kernel: (3, 3),
                 stride: 1,
                 padding: 0,
                 activation: resolve_activation("relu").unwrap(),
             },
-            LayerSpec::Flatten,
+            LayerConfig::Flatten,
         ];
 
-        for spec in &specs {
-            let record = LayerSpecRecord::from(spec);
-            let rebuilt = record.to_spec().unwrap();
-            assert_eq!(LayerSpecRecord::from(&rebuilt), record);
+        for config in &configs {
+            let record = LayerConfigRecord::from(config);
+            let rebuilt = record.to_config().unwrap();
+            assert_eq!(LayerConfigRecord::from(&rebuilt), record);
         }
     }
 
     #[test]
-    fn layer_spec_record_serializes_tagged_by_kind() {
-        use super::LayerSpecRecord;
+    fn layer_config_record_serializes_tagged_by_kind() {
+        use super::LayerConfigRecord;
 
-        let record = LayerSpecRecord::Conv2d {
+        let record = LayerConfigRecord::Conv2d {
             out_channels: 2,
             kernel: [3, 3],
             stride: 1,
@@ -273,19 +292,19 @@ mod tests {
     }
 
     #[test]
-    fn network_config_captures_architecture_of_a_network() {
-        use super::{LayerSpecRecord, NetworkConfig};
+    fn network_config_record_captures_architecture_of_a_network() {
+        use super::{LayerConfigRecord, NetworkConfigRecord};
 
         let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 3);
         let model = NeuralNetwork::initialization(3, &specs, 0);
 
-        let config = NetworkConfig::from(&model);
+        let record = NetworkConfigRecord::from(&model);
 
-        assert_eq!(config.input_shape, vec![3]);
-        assert_eq!(config.layers.len(), 2);
+        assert_eq!(record.input_shape, vec![3]);
+        assert_eq!(record.layers.len(), 2);
         assert_eq!(
-            config.layers[0],
-            LayerSpecRecord::Dense {
+            record.layers[0],
+            LayerConfigRecord::Dense {
                 neurons: 4,
                 activation: "relu".to_string(),
             }
@@ -293,15 +312,15 @@ mod tests {
     }
 
     #[test]
-    fn to_spec_rejects_unknown_activation() {
-        use super::LayerSpecRecord;
+    fn to_config_rejects_unknown_activation() {
+        use super::LayerConfigRecord;
         use std::io::ErrorKind::InvalidData;
 
-        let record = LayerSpecRecord::Dense {
+        let record = LayerConfigRecord::Dense {
             neurons: 1,
             activation: "not_an_activation".to_string(),
         };
-        let err = record.to_spec().unwrap_err();
+        let err = record.to_config().unwrap_err();
         assert_eq!(err.kind(), InvalidData);
         assert!(
             err.to_string().contains("unknown activation function"),
@@ -311,11 +330,11 @@ mod tests {
 
     #[test]
     fn weights_save_load_roundtrip_predictions_are_identical() {
-        use super::NetworkConfig;
+        use super::NetworkConfigRecord;
 
         let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 2);
         let model = NeuralNetwork::initialization(3, &specs, 0);
-        let config = NetworkConfig::from(&model);
+        let record = NetworkConfigRecord::from(&model);
 
         let inputs = Array2::from_shape_fn((3, 5), |(i, j)| (i * 5 + j) as f32 * 0.1);
         let predictions_before = model.output(inputs.view());
@@ -328,7 +347,7 @@ mod tests {
         let metadata = crate::io::model::tensors::read_metadata(&bytes).unwrap();
         assert!(metadata.is_empty(), "weights file must hold no metadata");
 
-        let loaded = NeuralNetwork::load_weights(&path, &config).unwrap();
+        let loaded = NeuralNetwork::load_weights(&path, &record).unwrap();
         let predictions_after = loaded.output(inputs.view());
 
         cleanup(&path);
@@ -338,7 +357,7 @@ mod tests {
 
     #[test]
     fn cnn_weights_save_load_roundtrip_predictions_are_identical() {
-        use super::NetworkConfig;
+        use super::NetworkConfigRecord;
         use crate::activations::SIGMOID;
         use crate::layers::{Conv2d, Dense, Flatten, Layer};
         use ndarray::{Array, IxDyn};
@@ -360,7 +379,7 @@ mod tests {
         let model = NeuralNetwork::single(conv)
             .with_layer(flatten)
             .with_layer(dense);
-        let config = NetworkConfig::from(&model);
+        let record = NetworkConfigRecord::from(&model);
 
         let inputs = Array::from_shape_fn(IxDyn(&[1, 4, 4, 5]), |d| {
             (d[1] * 4 + d[2]) as f32 * 0.1 + d[3] as f32
@@ -369,7 +388,7 @@ mod tests {
 
         let path = temp_path("weights_cnn_model");
         model.save_weights(&path).unwrap();
-        let loaded = NeuralNetwork::load_weights(&path, &config).unwrap();
+        let loaded = NeuralNetwork::load_weights(&path, &record).unwrap();
         let predictions_after = loaded.output(inputs.view());
 
         cleanup(&path);

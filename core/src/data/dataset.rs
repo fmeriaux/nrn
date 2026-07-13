@@ -165,6 +165,12 @@ impl Dataset {
         self.inputs.len_of(Axis(1))
     }
 
+    /// The per-sample input shape, sample axis excluded — e.g. `[features]` for tabular data,
+    /// `[channels, height, width]` for spatial data.
+    pub fn sample_shape(&self) -> &[usize] {
+        &self.inputs.shape()[1..]
+    }
+
     /// Returns the number of unique classes (labels) in the dataset.
     pub fn n_classes(&self) -> usize {
         self.unique_labels().len()

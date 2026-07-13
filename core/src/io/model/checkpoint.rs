@@ -1,7 +1,7 @@
 use crate::evaluation::{Evaluation, EvaluationSet};
 use crate::evaluation_history::{EpochEvaluation, EvaluationHistory};
 use crate::io::json;
-use crate::io::model::network::NetworkConfig;
+use crate::io::model::network::NetworkConfigRecord;
 use crate::io::model::optimizer as optimizer_io;
 use crate::io::model::scheduler as scheduler_io;
 use crate::io::path::PathExt;
@@ -153,7 +153,7 @@ impl TrainerCallback for CheckpointRecorder {
 pub struct CheckpointArchive {
     dir: PathBuf,
     entries: Vec<CheckpointRef>,
-    network: NetworkConfig,
+    network: NetworkConfigRecord,
 }
 
 impl CheckpointArchive {
@@ -161,7 +161,7 @@ impl CheckpointArchive {
     /// (sorted by numeric epoch, not lexically, so 10+ checkpoints sort
     /// correctly). `network` is the architecture [`model_at`](CheckpointArchive::model_at)
     /// reconstructs each checkpoint's weights against. Reads no other files.
-    pub fn load<P: AsRef<Path>>(dir: P, network: NetworkConfig) -> Result<Self> {
+    pub fn load<P: AsRef<Path>>(dir: P, network: NetworkConfigRecord) -> Result<Self> {
         let dir = Path::combine_safe_with_cwd(dir)?;
 
         let mut entries: Vec<CheckpointRef> = fs::read_dir(&dir)?
@@ -259,7 +259,7 @@ impl CheckpointArchive {
     }
 
     /// Loads the model at position `index`, reconstructing its weights-only
-    /// `model.safetensors` against the archive's [`NetworkConfig`].
+    /// `model.safetensors` against the archive's [`NetworkConfigRecord`].
     pub fn model_at(&self, index: usize) -> Result<NeuralNetwork> {
         NeuralNetwork::load_weights(self.entry_at(index)?.dir.join("model"), &self.network)
     }
@@ -380,8 +380,8 @@ mod tests {
         NeuralNetwork::initialization(2, &specs, 0)
     }
 
-    fn sample_config() -> NetworkConfig {
-        NetworkConfig::from(&sample_model())
+    fn sample_config() -> NetworkConfigRecord {
+        NetworkConfigRecord::from(&sample_model())
     }
 
     fn write_checkpoint(recorder: &CheckpointRecorder, epoch: usize) {

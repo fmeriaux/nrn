@@ -2,7 +2,7 @@ use crate::activations::Activation;
 use crate::affine::Affine;
 use crate::gradients::LayerGradients;
 use crate::layers::{BackwardPass, Layer, Parameter};
-use crate::model::LayerSpec;
+use crate::model::LayerConfig;
 use crate::tensors::Tensors;
 use ndarray::{Array1, Array2, Array4, ArrayD, ArrayView2, ArrayView4, ArrayViewD, Ix2, Ix4};
 use ndarray_rand::rand::RngCore;
@@ -282,9 +282,9 @@ impl Layer for Conv2d {
         self.affine.is_finite()
     }
 
-    fn spec(&self) -> LayerSpec {
+    fn config(&self) -> LayerConfig {
         let (out_channels, _, kh, kw) = self.kernels_shape;
-        LayerSpec::Conv2d {
+        LayerConfig::Conv2d {
             out_channels,
             kernel: (kh, kw),
             stride: self.stride,

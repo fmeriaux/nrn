@@ -15,7 +15,7 @@ pub use dense::Dense;
 pub use flatten::Flatten;
 
 use crate::gradients::LayerGradients;
-use crate::model::LayerSpec;
+use crate::model::LayerConfig;
 use crate::tensors::Tensors;
 use dyn_clone::DynClone;
 use ndarray::{ArrayD, ArrayViewD, ArrayViewMutD};
@@ -93,9 +93,9 @@ pub trait Layer: DynClone + Debug {
     /// Whether every parameter value is finite (no NaN or Inf).
     fn is_finite(&self) -> bool;
 
-    /// This layer as a weight-free [`LayerSpec`]: its kind and hyperparameters, the tensors
+    /// This layer as a weight-free [`LayerConfig`]: its kind and hyperparameters, the tensors
     /// [`tensors`](Layer::tensors) carries excepted.
-    fn spec(&self) -> LayerSpec;
+    fn config(&self) -> LayerConfig;
 
     /// The layer's parameters as named tensors, keyed by their canonical names.
     fn tensors(&self) -> Tensors;

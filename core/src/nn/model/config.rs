@@ -1,5 +1,6 @@
-//! Layer specifications: the declarative description of a network's architecture, resolved into
-//! layers by [`NeuralNetwork::initialization`](crate::model::NeuralNetwork::initialization).
+//! Layer and network configuration: the declarative description of a network's architecture.
+//! [`NetworkConfig`] bundles the per-sample input shape with an ordered stack of
+//! [`LayerConfig`]s, one per layer kind.
 
 use crate::activations::{Activation, IDENTITY};
 use crate::layers::{Conv2d, Dense, Flatten, Layer};
@@ -193,14 +194,24 @@ impl NeuronLayerSpec {
     }
 }
 
+/// A network's architecture with no weights: the per-sample input shape and the ordered stack
+/// of layer configs — the declarative counterpart to a [`NeuralNetwork`](crate::model::NeuralNetwork).
+#[derive(Debug, Clone)]
+pub struct NetworkConfig {
+    /// The per-sample input shape, sample axis excluded.
+    pub input_shape: Vec<usize>,
+    /// The layers in order, from input to output.
+    pub layers: Vec<LayerConfig>,
+}
+
 /// A typed, weight-free description of one layer: its kind and the hyperparameters needed to
 /// build it, the concrete input shape excepted (that is threaded from the network's input).
 ///
 /// It spans every [`Layer`] kind and is the declarative counterpart to a layer's weights:
-/// combined with weights — freshly [initialized](LayerSpec::initialization) or supplied as
-/// [named tensors](LayerSpec::from_tensors) — a spec yields a live layer.
+/// combined with weights — freshly [initialized](LayerConfig::initialization) or supplied as
+/// [named tensors](LayerConfig::from_tensors) — a config yields a live layer.
 #[derive(Clone, Debug)]
-pub enum LayerSpec {
+pub enum LayerConfig {
     /// A fully connected [`Dense`] layer.
     Dense {
         /// The number of neurons, i.e. output features.
@@ -225,15 +236,15 @@ pub enum LayerSpec {
     Flatten,
 }
 
-impl LayerSpec {
+impl LayerConfig {
     /// Builds a fresh layer at `input_shape`, drawing its weights from `rng`.
     pub fn initialization(
         &self,
         input_shape: &[usize],
         rng: &mut dyn RngCore,
-    ) -> Result<Box<dyn Layer>, LayerSpecError> {
+    ) -> Result<Box<dyn Layer>, LayerConfigError> {
         Ok(match self {
-            LayerSpec::Dense {
+            LayerConfig::Dense {
                 neurons,
                 activation,
             } => {
@@ -241,7 +252,7 @@ impl LayerSpec {
                 let (weights, biases) = activation.initialization().apply((*neurons, inputs), rng);
                 Box::new(Dense::new(weights, biases, activation.clone()))
             }
-            LayerSpec::Conv2d {
+            LayerConfig::Conv2d {
                 out_channels,
                 kernel,
                 stride,
@@ -259,7 +270,7 @@ impl LayerSpec {
                     rng,
                 ))
             }
-            LayerSpec::Flatten => Box::new(Flatten::new(input_shape.to_vec())),
+            LayerConfig::Flatten => Box::new(Flatten::new(input_shape.to_vec())),
         })
     }
 
@@ -268,17 +279,17 @@ impl LayerSpec {
         &self,
         input_shape: &[usize],
         mut tensors: Tensors,
-    ) -> Result<Box<dyn Layer>, LayerSpecError> {
+    ) -> Result<Box<dyn Layer>, LayerConfigError> {
         Ok(match self {
-            LayerSpec::Dense { activation, .. } => {
+            LayerConfig::Dense { activation, .. } => {
                 flat_input(input_shape)?;
                 let weights = tensors
                     .take_weight::<Ix2>()
-                    .map_err(LayerSpecError::Tensor)?;
-                let biases = tensors.take_bias().map_err(LayerSpecError::Tensor)?;
+                    .map_err(LayerConfigError::Tensor)?;
+                let biases = tensors.take_bias().map_err(LayerConfigError::Tensor)?;
                 Box::new(Dense::new(weights, biases, activation.clone()))
             }
-            LayerSpec::Conv2d {
+            LayerConfig::Conv2d {
                 kernel,
                 stride,
                 padding,
@@ -288,8 +299,8 @@ impl LayerSpec {
                 let input = conv_input(input_shape, *kernel, *padding)?;
                 let kernels = tensors
                     .take_weight::<Ix4>()
-                    .map_err(LayerSpecError::Tensor)?;
-                let biases = tensors.take_bias().map_err(LayerSpecError::Tensor)?;
+                    .map_err(LayerConfigError::Tensor)?;
+                let biases = tensors.take_bias().map_err(LayerConfigError::Tensor)?;
                 Box::new(Conv2d::new(
                     kernels,
                     biases,
@@ -299,16 +310,16 @@ impl LayerSpec {
                     activation.clone(),
                 ))
             }
-            LayerSpec::Flatten => Box::new(Flatten::new(input_shape.to_vec())),
+            LayerConfig::Flatten => Box::new(Flatten::new(input_shape.to_vec())),
         })
     }
 }
 
 /// Validates that a dense layer's input is flat (rank-1), returning its feature count.
-fn flat_input(input_shape: &[usize]) -> Result<usize, LayerSpecError> {
+fn flat_input(input_shape: &[usize]) -> Result<usize, LayerConfigError> {
     match *input_shape {
         [inputs] => Ok(inputs),
-        _ => Err(LayerSpecError::UnexpectedInputRank {
+        _ => Err(LayerConfigError::UnexpectedInputRank {
             expected: 1,
             got: input_shape.to_vec(),
         }),
@@ -321,16 +332,16 @@ fn conv_input(
     input_shape: &[usize],
     kernel: (usize, usize),
     padding: usize,
-) -> Result<(usize, usize, usize), LayerSpecError> {
+) -> Result<(usize, usize, usize), LayerConfigError> {
     let &[channels, height, width] = input_shape else {
-        return Err(LayerSpecError::UnexpectedInputRank {
+        return Err(LayerConfigError::UnexpectedInputRank {
             expected: 3,
             got: input_shape.to_vec(),
         });
     };
     let (kh, kw) = kernel;
     if height + 2 * padding < kh || width + 2 * padding < kw {
-        return Err(LayerSpecError::WindowDoesNotFit {
+        return Err(LayerConfigError::WindowDoesNotFit {
             input: (height, width),
             window: kernel,
             padding,
@@ -339,9 +350,9 @@ fn conv_input(
     Ok((channels, height, width))
 }
 
-/// Error returned when a [`LayerSpec`] cannot be resolved into a layer.
+/// Error returned when a [`LayerConfig`] cannot be resolved into a layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LayerSpecError {
+pub enum LayerConfigError {
     /// The layer was given an input of the wrong rank — a dense head needs a flat (rank-1)
     /// input, a convolution a rank-3 `(channels, height, width)` one; insert a [`Flatten`]
     /// where the rank must drop.
@@ -365,14 +376,14 @@ pub enum LayerSpecError {
     Tensor(TensorError),
 }
 
-impl fmt::Display for LayerSpecError {
+impl fmt::Display for LayerConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            LayerSpecError::UnexpectedInputRank { expected, got } => write!(
+            LayerConfigError::UnexpectedInputRank { expected, got } => write!(
                 f,
                 "layer expects a rank-{expected} input, got shape {got:?}"
             ),
-            LayerSpecError::WindowDoesNotFit {
+            LayerConfigError::WindowDoesNotFit {
                 input,
                 window,
                 padding,
@@ -380,12 +391,12 @@ impl fmt::Display for LayerSpecError {
                 f,
                 "window {window:?} with padding {padding} does not fit input {input:?}"
             ),
-            LayerSpecError::Tensor(error) => write!(f, "{error}"),
+            LayerConfigError::Tensor(error) => write!(f, "{error}"),
         }
     }
 }
 
-impl std::error::Error for LayerSpecError {}
+impl std::error::Error for LayerConfigError {}
 
 #[cfg(test)]
 mod tests {
@@ -476,7 +487,7 @@ mod tests {
 
     #[test]
     fn dense_spec_initializes_a_layer_at_the_flat_input() {
-        let spec = LayerSpec::Dense {
+        let spec = LayerConfig::Dense {
             neurons: 4,
             activation: RELU.clone(),
         };
@@ -490,7 +501,7 @@ mod tests {
 
     #[test]
     fn conv_spec_initializes_a_layer_at_the_spatial_input() {
-        let spec = LayerSpec::Conv2d {
+        let spec = LayerConfig::Conv2d {
             out_channels: 2,
             kernel: (3, 3),
             stride: 1,
@@ -507,7 +518,7 @@ mod tests {
 
     #[test]
     fn dense_spec_rejects_a_non_flat_input() {
-        let spec = LayerSpec::Dense {
+        let spec = LayerConfig::Dense {
             neurons: 4,
             activation: RELU.clone(),
         };
@@ -516,7 +527,7 @@ mod tests {
 
         assert_eq!(
             err,
-            LayerSpecError::UnexpectedInputRank {
+            LayerConfigError::UnexpectedInputRank {
                 expected: 1,
                 got: vec![1, 4, 4],
             }
@@ -525,7 +536,7 @@ mod tests {
 
     #[test]
     fn conv_spec_rejects_a_non_spatial_input() {
-        let spec = LayerSpec::Conv2d {
+        let spec = LayerConfig::Conv2d {
             out_channels: 2,
             kernel: (3, 3),
             stride: 1,
@@ -537,7 +548,7 @@ mod tests {
 
         assert_eq!(
             err,
-            LayerSpecError::UnexpectedInputRank {
+            LayerConfigError::UnexpectedInputRank {
                 expected: 3,
                 got: vec![16],
             }
@@ -547,7 +558,7 @@ mod tests {
     #[test]
     fn conv_spec_rejects_a_window_larger_than_the_input() {
         // A 3×3 kernel with no padding cannot fit a 2×2 spatial input.
-        let spec = LayerSpec::Conv2d {
+        let spec = LayerConfig::Conv2d {
             out_channels: 2,
             kernel: (3, 3),
             stride: 1,
@@ -559,7 +570,7 @@ mod tests {
 
         assert_eq!(
             err,
-            LayerSpecError::WindowDoesNotFit {
+            LayerConfigError::WindowDoesNotFit {
                 input: (2, 2),
                 window: (3, 3),
                 padding: 0,

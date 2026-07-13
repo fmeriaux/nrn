@@ -7,7 +7,7 @@ use clap::Args;
 use nrn::activations::RELU;
 use nrn::data::Dataset;
 use nrn::io::model::hyperparams::HyperParametersRecord;
-use nrn::io::model::network::NetworkConfig;
+use nrn::io::model::network::NetworkConfigRecord;
 use nrn::io::model::run::{TrainingMeta, TrainingRun};
 use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec, Predictor};
 use nrn::task::Task;
@@ -92,7 +92,7 @@ impl StartArgs {
                 dataset: dataset_name,
                 model: model_name.clone(),
                 task: task.into(),
-                network: NetworkConfig::from(&model),
+                network: NetworkConfigRecord::from(&model),
                 hyperparams: HyperParametersRecord::from(&hyperparameters),
                 scaler: data.scaler().cloned().map(Into::into),
             };

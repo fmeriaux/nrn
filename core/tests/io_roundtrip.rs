@@ -12,7 +12,7 @@ use nrn::io::model::hyperparams::{
     ClippingRecord, HyperParametersRecord, LossKindRecord, LossRecord, OptimizerRecord,
     ReductionRecord, SchedulerRecord,
 };
-use nrn::io::model::network::NetworkConfig;
+use nrn::io::model::network::NetworkConfigRecord;
 use nrn::io::model::run::{TrainingMeta, TrainingRun};
 use nrn::io::model::scalers::ScalerRecord;
 use nrn::loss_functions::{BinaryCrossEntropy, LossFunction, Reduction};
@@ -103,7 +103,7 @@ fn full_pipeline_roundtrips_every_artifact() {
             dataset: "test_dataset".to_string(),
             model: "model-test_dataset".to_string(),
             task: Task::Binary.into(),
-            network: NetworkConfig::from(&model),
+            network: NetworkConfigRecord::from(&model),
             hyperparams: sample_hyperparams(),
             scaler: None,
         },
@@ -151,7 +151,7 @@ fn full_pipeline_roundtrips_every_artifact() {
     }
 
     let model_path = dir.join("model");
-    let config = NetworkConfig::from(&model);
+    let config = NetworkConfigRecord::from(&model);
     model.save_weights(&model_path).unwrap();
     let reloaded_model = NeuralNetwork::load_weights(&model_path, &config).unwrap();
     assert_eq!(

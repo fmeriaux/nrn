@@ -1,7 +1,7 @@
 use crate::io::json;
 use crate::io::model::checkpoint::{CheckpointArchive, CheckpointRecorder};
 use crate::io::model::hyperparams::HyperParametersRecord;
-use crate::io::model::network::NetworkConfig;
+use crate::io::model::network::NetworkConfigRecord;
 use crate::io::model::scalers::ScalerRecord;
 use crate::io::model::task::TaskRecord;
 use crate::io::path::PathExt;
@@ -23,7 +23,7 @@ pub struct TrainingMeta {
     pub task: TaskRecord,
     /// The architecture the run's checkpoint weights belong to, used to reconstruct each
     /// checkpoint's model from its weights-only `model.safetensors`.
-    pub network: NetworkConfig,
+    pub network: NetworkConfigRecord,
     /// Hyperparameters the run was configured with.
     pub hyperparams: HyperParametersRecord,
     /// Run-level scaler fitted on the train split, immutable across the run.
@@ -127,12 +127,12 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
-    fn sample_network() -> NetworkConfig {
+    fn sample_network() -> NetworkConfigRecord {
         use crate::activations::RELU;
         use crate::model::{NeuralNetwork, NeuronLayerSpec};
 
         let specs = NeuronLayerSpec::network_for(vec![3], &*RELU, 2);
-        NetworkConfig::from(&NeuralNetwork::initialization(2, &specs, 0))
+        NetworkConfigRecord::from(&NeuralNetwork::initialization(2, &specs, 0))
     }
 
     fn meta(dataset: &str) -> TrainingMeta {

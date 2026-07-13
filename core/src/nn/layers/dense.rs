@@ -2,7 +2,7 @@ use crate::activations::Activation;
 use crate::affine::Affine;
 use crate::gradients::LayerGradients;
 use crate::layers::{BackwardPass, Layer, Parameter};
-use crate::model::{LayerSpec, NeuronLayerSpec};
+use crate::model::{LayerConfig, NeuronLayerSpec};
 use crate::tensors::Tensors;
 use ndarray::{Array1, Array2, ArrayD, ArrayView1, ArrayView2, ArrayViewD, Ix2};
 use ndarray_rand::rand::RngCore;
@@ -175,8 +175,8 @@ impl Layer for Dense {
         self.affine.is_finite()
     }
 
-    fn spec(&self) -> LayerSpec {
-        LayerSpec::Dense {
+    fn config(&self) -> LayerConfig {
+        LayerConfig::Dense {
             neurons: self.affine.outputs(),
             activation: self.activation.clone(),
         }
