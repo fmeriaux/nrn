@@ -1,34 +1,33 @@
-//! safetensors serializer for an inference [`Instance`]: its feature vector
-//! stored under a single `instance` tensor.
+//! JSON serializer for an inference [`Instance`]: its feature vector stored
+//! under a single `instance` field.
 
 use crate::data::Instance;
-use crate::io::model::tensors;
-use safetensors::SafeTensors;
-use std::collections::HashMap;
-use std::io::ErrorKind::InvalidData;
-use std::io::{Error, Result};
+use crate::io::json;
+use ndarray::Array1;
+use serde::{Deserialize, Serialize};
+use std::io::Result;
 use std::path::{Path, PathBuf};
 
-/// safetensors tensor name for an inference instance.
-const INSTANCE: &str = "instance";
-
-fn invalid<E: std::fmt::Display>(error: E) -> Error {
-    Error::new(InvalidData, error.to_string())
+/// Serializable mirror of an [`Instance`]'s feature vector.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct InstanceRecord {
+    pub instance: Array1<f32>,
 }
 
 impl Instance {
-    /// Saves the instance's feature vector to a `.safetensors` file, returning the
+    /// Saves the instance's feature vector to a `.json` file, returning the
     /// written path.
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf> {
-        let entries = vec![(INSTANCE.to_string(), tensors::tensor(self.values()))];
-        tensors::save(path, entries, HashMap::new())
+        let record = InstanceRecord {
+            instance: self.values().clone(),
+        };
+        json::save(&record, path)
     }
 
-    /// Loads an instance from a `.safetensors` file written by [`Instance::save`].
+    /// Loads an instance from a `.json` file written by [`Instance::save`].
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Instance> {
-        let bytes = tensors::load(path)?;
-        let st = SafeTensors::deserialize(&bytes).map_err(invalid)?;
-        Ok(Instance::new(tensors::read_array1(INSTANCE, &st)?))
+        let record: InstanceRecord = json::load(path)?;
+        Ok(Instance::new(record.instance))
     }
 }
 
@@ -45,7 +44,7 @@ mod tests {
     }
 
     fn cleanup(path: &Path) {
-        let _ = std::fs::remove_file(path.with_extension("safetensors"));
+        let _ = std::fs::remove_file(path.with_extension("json"));
     }
 
     #[test]
@@ -63,11 +62,7 @@ mod tests {
     #[test]
     fn load_rejects_corrupt_file() {
         let path = temp_path("instance_corrupt");
-        std::fs::write(
-            path.with_extension("safetensors"),
-            b"not a safetensors buffer",
-        )
-        .unwrap();
+        std::fs::write(path.with_extension("json"), b"not a json instance").unwrap();
 
         assert!(Instance::load(&path).is_err());
 
