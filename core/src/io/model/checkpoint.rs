@@ -327,6 +327,7 @@ mod tests {
     use super::*;
     use crate::activations::{IDENTITY, RELU};
     use crate::gradients::LayerGradients;
+    use crate::io::model::config::ModelConfigRecord;
     use crate::io::model::hyperparams::HyperParametersRecord;
     use crate::io::model::run::{TrainingMeta, TrainingRun};
     use crate::io::model::task::TaskRecord;
@@ -364,11 +365,13 @@ mod tests {
             &TrainingMeta {
                 dataset: dataset.to_string(),
                 model: format!("model-{dataset}"),
-                task: TaskRecord::Binary,
-                network: sample_config(),
                 hyperparams: HyperParametersRecord::sample(),
-                scaler: None,
             },
+            &ModelConfigRecord {
+                network: sample_config(),
+                task: TaskRecord::Binary,
+            },
+            None,
             overwrite,
         )
         .unwrap()

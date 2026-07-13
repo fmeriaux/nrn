@@ -52,6 +52,7 @@ impl RunArgs {
         // Load everything up front so the status lines stay grouped above the
         // rendered output rather than interrupting it (console format).
         let meta = run.meta();
+        let config = run.config();
         let dataset = Dataset::load(self.dataset_path(&meta.dataset))?;
         loaded(&dataset);
 
@@ -64,8 +65,8 @@ impl RunArgs {
         }
 
         if dataset.n_features() == 2 {
-            let task = Task::from(meta.task.clone());
-            let scaler: Option<ScalerMethod> = meta.scaler.clone().map(Into::into);
+            let task = Task::from(config.task.clone());
+            let scaler: Option<ScalerMethod> = run.scaler().cloned().map(Into::into);
             if let Some(path) = self.boundary(&archive, &dataset, task, &scaler)? {
                 artifacts.add("Decision Boundary", path);
             }

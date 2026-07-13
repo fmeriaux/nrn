@@ -8,6 +8,7 @@ use nrn::activations::{IDENTITY, RELU};
 use nrn::data::scalers::{MinMaxScaler, Scaler, ScalerMethod};
 use nrn::data::{Dataset, Instance};
 use nrn::evaluation::{Evaluation, EvaluationSet};
+use nrn::io::model::config::ModelConfigRecord;
 use nrn::io::model::hyperparams::{
     ClippingRecord, HyperParametersRecord, LossKindRecord, LossRecord, OptimizerRecord,
     ReductionRecord, SchedulerRecord,
@@ -105,11 +106,13 @@ fn full_pipeline_roundtrips_every_artifact() {
         &TrainingMeta {
             dataset: "test_dataset".to_string(),
             model: "model-test_dataset".to_string(),
-            task: Task::Binary.into(),
-            network: NetworkConfigRecord::from(&model),
             hyperparams: sample_hyperparams(),
-            scaler: None,
         },
+        &ModelConfigRecord {
+            network: NetworkConfigRecord::from(&model),
+            task: Task::Binary.into(),
+        },
+        None,
         false,
     )
     .unwrap();

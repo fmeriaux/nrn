@@ -6,9 +6,11 @@ use crate::path::PathExt;
 use clap::Args;
 use nrn::activations::{IDENTITY, RELU};
 use nrn::data::Dataset;
+use nrn::io::model::config::ModelConfigRecord;
 use nrn::io::model::hyperparams::HyperParametersRecord;
 use nrn::io::model::network::NetworkConfigRecord;
 use nrn::io::model::run::{TrainingMeta, TrainingRun};
+use nrn::io::model::scalers::ScalerRecord;
 use nrn::model::{NetworkConfig, NeuralNetwork, Predictor};
 use nrn::task::Task;
 use nrn::training::Callbacks;
@@ -79,14 +81,17 @@ impl StartArgs {
             let meta = TrainingMeta {
                 dataset: dataset_name,
                 model: model_name.clone(),
-                task: task.into(),
-                network: NetworkConfigRecord::from(&model),
                 hyperparams: HyperParametersRecord::from(&hyperparameters),
-                scaler: data.scaler().cloned().map(Into::into),
             };
-            let recorder = TrainingRun::create(&run_dir, &meta, self.overwrite)
-                .map_err(overwrite_hint)?
-                .recorder();
+            let config = ModelConfigRecord {
+                network: NetworkConfigRecord::from(&model),
+                task: task.into(),
+            };
+            let scaler = data.scaler().cloned().map(ScalerRecord::from);
+            let recorder =
+                TrainingRun::create(&run_dir, &meta, &config, scaler.as_ref(), self.overwrite)
+                    .map_err(overwrite_hint)?
+                    .recorder();
             recording(&recorder);
             Some(recorder)
         } else {

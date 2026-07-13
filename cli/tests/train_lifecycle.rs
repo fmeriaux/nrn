@@ -124,8 +124,8 @@ fn continues_from_saved_model_without_checkpoints() {
 #[test]
 fn scaling_persists_a_sidecar_and_survives_resume() {
     // --scale flows the fitted scaler through the whole run: a preprocessor.json
-    // sidecar beside the model, the scaler recorded once in meta.json, and resume
-    // reusing it (the run must still complete).
+    // sidecar beside the model, the same sidecar recorded at the run root, and
+    // resume reusing it (the run must still complete).
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
     let ds = synth_ring(dir, "11", "20");
@@ -150,16 +150,16 @@ fn scaling_persists_a_sidecar_and_survives_resume() {
     )
     .success();
 
-    // Sidecar written beside the model weights, and the scaler recorded in meta.json.
+    // Sidecar written beside the model weights, and the run's own preprocessor.json.
     assert!(
         dir.join(format!("model-{ds}"))
             .join("preprocessor.json")
             .exists()
     );
-    let meta = fs::read_to_string(dir.join(&run_arg).join("meta.json")).unwrap();
-    assert!(meta.contains("MinMax"));
+    let run_scaler = fs::read_to_string(dir.join(&run_arg).join("preprocessor.json")).unwrap();
+    assert!(run_scaler.contains("MinMax"));
 
-    // Resume reuses the scaler from meta.json (no refit) and completes.
+    // Resume reuses the scaler from the run's preprocessor.json (no refit) and completes.
     nrn(dir, &["train", "resume", &run_arg, "--epochs", "1"]).success();
 }
 

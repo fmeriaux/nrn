@@ -1,41 +1,15 @@
 //! Directory serializer for a [`Predictor`]: the network weights as `model.safetensors`, the
 //! model blueprint as `config.json`, and, when present, the scaler as a `preprocessor.json` sidecar.
 
-use crate::io::json;
+use crate::io::model::config::{CONFIG_STEM, ModelConfigRecord, PREPROCESSOR_STEM};
 use crate::io::model::network::NetworkConfigRecord;
 use crate::io::model::scalers::ScalerRecord;
-use crate::io::model::task::TaskRecord;
 use crate::model::{NeuralNetwork, Predictor};
-use serde::{Deserialize, Serialize};
 use std::io::Result;
 use std::path::{Path, PathBuf};
 
 /// File stem of the network weights inside a predictor directory.
 const MODEL_STEM: &str = "model";
-/// File stem of the model blueprint inside a predictor directory.
-const CONFIG_STEM: &str = "config";
-/// File stem of the preprocessor sidecar inside a predictor directory.
-const PREPROCESSOR_STEM: &str = "preprocessor";
-
-/// Serializable blueprint of a predictor's model: the network architecture its weights belong to
-/// and the task its logits are read for.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct PredictorConfig {
-    /// The network architecture the `model.safetensors` weights belong to.
-    pub network: NetworkConfigRecord,
-    /// The learning task the network was trained for.
-    pub task: TaskRecord,
-}
-
-impl PredictorConfig {
-    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf> {
-        json::save(self, path)
-    }
-
-    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
-        json::load(path)
-    }
-}
 
 impl Predictor {
     /// Saves the predictor as a directory: `dir/model.safetensors` for the network weights,
@@ -44,7 +18,7 @@ impl Predictor {
     pub fn save<P: AsRef<Path>>(&self, dir: P) -> Result<PathBuf> {
         let dir = dir.as_ref();
         self.network.save_weights(dir.join(MODEL_STEM))?;
-        PredictorConfig {
+        ModelConfigRecord {
             network: NetworkConfigRecord::from(&self.network),
             task: self.task.into(),
         }
@@ -59,7 +33,7 @@ impl Predictor {
     /// when a `preprocessor.json` sidecar exists.
     pub fn load<P: AsRef<Path>>(dir: P) -> Result<Self> {
         let dir = dir.as_ref();
-        let config = PredictorConfig::load(dir.join(CONFIG_STEM))?;
+        let config = ModelConfigRecord::load(dir.join(CONFIG_STEM))?;
         let network = NeuralNetwork::load_weights(dir.join(MODEL_STEM), &config.network)?;
         let task = config.task.into();
 
@@ -79,9 +53,10 @@ impl Predictor {
 
 #[cfg(test)]
 mod tests {
-    use super::{CONFIG_STEM, MODEL_STEM, PredictorConfig};
+    use super::MODEL_STEM;
     use crate::activations::{IDENTITY, RELU};
     use crate::data::scalers::{MinMaxScaler, ScalerMethod};
+    use crate::io::model::config::{CONFIG_STEM, ModelConfigRecord};
     use crate::model::{NetworkConfig, NeuralNetwork, Predictor};
     use crate::task::Task;
     use ndarray::{Array2, array};
@@ -148,7 +123,7 @@ mod tests {
 
         let dir = temp_dir("config");
         predictor.save(&dir).unwrap();
-        let config = PredictorConfig::load(dir.join(CONFIG_STEM)).unwrap();
+        let config = ModelConfigRecord::load(dir.join(CONFIG_STEM)).unwrap();
 
         std::fs::remove_dir_all(&dir).ok();
 

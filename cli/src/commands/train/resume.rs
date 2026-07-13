@@ -28,16 +28,17 @@ impl ResumeArgs {
         let run_dir = Path::new(&self.run_dir);
         let run = TrainingRun::open(run_dir)?;
         let meta = run.meta();
+        let config = run.config();
 
         let dataset = Dataset::load(&meta.dataset)?;
         loaded(&dataset);
 
-        let task = Task::from(meta.task.clone());
+        let task = Task::from(config.task.clone());
         task.validate_dataset(&dataset)?;
         show(&task);
 
         let previous = HyperParameters::try_from(meta.hyperparams.clone())?;
-        let scaler = meta.scaler.clone().map(Into::into);
+        let scaler = run.scaler().cloned().map(Into::into);
 
         let mut record = meta.hyperparams.clone();
         self.overrides.apply(&mut record);

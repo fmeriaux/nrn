@@ -148,10 +148,13 @@ JSON. The guiding rule: **core runtime types stay serde-free**, so `io` owns the
 goes through `ActivationProvider::get_by_name`.
 
 A run lives in a directory managed by `TrainingRun`: `create`/`open` persist run-level `TrainingMeta`
-(`meta.json`), `trim_after` rewinds the trajectory (removing later checkpoints), `archive()` reads it
-back. Each `checkpoint-{epoch:06}/` is written by a `CheckpointRecorder` (the `TrainerCallback` from
-`TrainingRun::recorder`) and read by a `CheckpointArchive` (`model_at` / `optimizer_at` / `epoch_at` /
-`evaluation_history`, plus `sample` for evenly-spaced animation frames).
+(`meta.json` — dataset, final-model name, hyperparameters) alongside the model blueprint
+(`config.json`, a `ModelConfigRecord` of architecture + task) and, when the run scales its inputs,
+a `preprocessor.json` sidecar — the same `config.json`/`preprocessor.json` pair a `Predictor`
+directory carries. `trim_after` rewinds the trajectory (removing later checkpoints), `archive()`
+reads it back. Each `checkpoint-{epoch:06}/` is written by a `CheckpointRecorder` (the
+`TrainerCallback` from `TrainingRun::recorder`) and read by a `CheckpointArchive` (`model_at` /
+`optimizer_at` / `epoch_at` / `evaluation_history`, plus `sample` for evenly-spaced animation frames).
 
 ### CLI (`cli/src/`)
 
