@@ -127,15 +127,18 @@ impl From<InputShapeMismatch> for PredictionError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activations::RELU;
-    use crate::model::{LayerPlan, NeuronLayerSpec};
+    use crate::activations::{IDENTITY, RELU};
+    use crate::model::NetworkConfig;
     use ndarray::array;
 
     #[test]
     fn infer_instance_matches_infer_with_a_manual_sample_axis() {
-        let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![4]), 2, &*RELU).unwrap();
+        let config = NetworkConfig::builder(vec![2])
+            .dense(4, &RELU)
+            .dense(1, &IDENTITY)
+            .build();
         let predictor = Predictor::new(
-            NeuralNetwork::initialization(2, &specs, 0),
+            NeuralNetwork::from_config(config, 0).unwrap(),
             Task::Binary,
             None,
         );
@@ -155,9 +158,12 @@ mod tests {
 
     #[test]
     fn infer_instance_rejects_an_instance_of_the_wrong_size() {
-        let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![4]), 2, &*RELU).unwrap();
+        let config = NetworkConfig::builder(vec![2])
+            .dense(4, &RELU)
+            .dense(1, &IDENTITY)
+            .build();
         let predictor = Predictor::new(
-            NeuralNetwork::initialization(2, &specs, 0),
+            NeuralNetwork::from_config(config, 0).unwrap(),
             Task::Binary,
             None,
         );

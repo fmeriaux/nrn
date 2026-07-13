@@ -4,12 +4,12 @@ use super::callbacks::{ConsoleMonitor, ModelSaver};
 use crate::display::{Spinner, initialized, loaded, recording, show};
 use crate::path::PathExt;
 use clap::Args;
-use nrn::activations::RELU;
+use nrn::activations::{IDENTITY, RELU};
 use nrn::data::Dataset;
 use nrn::io::model::hyperparams::HyperParametersRecord;
 use nrn::io::model::network::NetworkConfigRecord;
 use nrn::io::model::run::{TrainingMeta, TrainingRun};
-use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec, Predictor};
+use nrn::model::{NetworkConfig, NeuralNetwork, Predictor};
 use nrn::task::Task;
 use nrn::training::Callbacks;
 use std::error::Error;
@@ -22,16 +22,12 @@ pub struct StartArgs {
     dataset: String,
 
     /// Load a pre-trained model to continue training (checkpoint count resets to 0)
-    #[arg(short, long, conflicts_with_all = &["layers", "auto_layers"])]
+    #[arg(short, long, conflicts_with = "layers")]
     model: Option<String>,
 
     /// Hidden layer sizes (comma-separated)
-    #[arg(long, value_delimiter = ',', conflicts_with_all = &["auto_layers", "model"])]
+    #[arg(long, value_delimiter = ',', conflicts_with = "model")]
     layers: Option<Vec<usize>>,
-
-    /// Infer hidden layers from dataset characteristics
-    #[arg(long, conflicts_with_all = &["layers", "model"], default_value_t = false)]
-    auto_layers: bool,
 
     /// Overwrite an existing training run directory
     #[arg(long, default_value_t = false)]
@@ -64,20 +60,12 @@ impl StartArgs {
                 model
             }
             None => {
-                let plan = if self.auto_layers {
-                    LayerPlan::Auto {
-                        n_features: dataset.n_features(),
-                        n_samples: dataset.n_samples(),
-                    }
-                } else {
-                    LayerPlan::Explicit(self.layers.clone().unwrap_or_default())
-                };
-                let layer_specs = NeuronLayerSpec::plan(plan, dataset.n_classes(), &*RELU)?;
-                let model = NeuralNetwork::initialization(
-                    dataset.n_features(),
-                    &layer_specs,
-                    hyperparameters.seed(),
-                );
+                let mut builder = NetworkConfig::builder(vec![dataset.n_features()]);
+                for hidden in self.layers.clone().unwrap_or_default() {
+                    builder = builder.dense(hidden, &RELU);
+                }
+                let config = builder.dense(task.output_size(), &IDENTITY).build();
+                let model = NeuralNetwork::from_config(config, hyperparameters.seed())?;
                 initialized(&model);
                 model
             }

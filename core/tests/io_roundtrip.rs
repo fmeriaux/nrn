@@ -4,7 +4,7 @@
 #![cfg(feature = "io")]
 
 use ndarray::array;
-use nrn::activations::RELU;
+use nrn::activations::{IDENTITY, RELU};
 use nrn::data::scalers::{MinMaxScaler, Scaler, ScalerMethod};
 use nrn::data::{Dataset, Instance};
 use nrn::evaluation::{Evaluation, EvaluationSet};
@@ -16,7 +16,7 @@ use nrn::io::model::network::NetworkConfigRecord;
 use nrn::io::model::run::{TrainingMeta, TrainingRun};
 use nrn::io::model::scalers::ScalerRecord;
 use nrn::loss_functions::{BinaryCrossEntropy, LossFunction, Reduction};
-use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec};
+use nrn::model::{NetworkConfig, NeuralNetwork};
 use nrn::optimizers::Adam;
 use nrn::schedulers::ConstantScheduler;
 use nrn::task::Task;
@@ -88,8 +88,11 @@ fn full_pipeline_roundtrips_every_artifact() {
     assert_eq!(expected, actual);
 
     // --- Model + training run (incremental writer → directory load) --
-    let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![4]), 2, &*RELU).unwrap();
-    let mut model = NeuralNetwork::initialization(2, &specs, 0);
+    let config = NetworkConfig::builder(vec![2])
+        .dense(4, &RELU)
+        .dense(1, &IDENTITY)
+        .build();
+    let mut model = NeuralNetwork::from_config(config, 0).unwrap();
 
     let loss_fn: Arc<dyn LossFunction> = Arc::new(BinaryCrossEntropy::new(Reduction::Mean));
     let mut optimizer = Adam::with_defaults(0.05.try_into().unwrap(), WeightDecay::ZERO);

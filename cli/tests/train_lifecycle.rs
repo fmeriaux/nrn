@@ -70,7 +70,7 @@ fn rejects_zero_neuron_hidden_layer() {
         &["train", "start", &ds, "--epochs", "2", "--layers", "4,0"],
     )
     .failure()
-    .stderr(contains("at least one neuron"));
+    .stderr(contains("at least one output unit"));
 }
 
 #[test]

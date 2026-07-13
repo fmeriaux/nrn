@@ -221,8 +221,8 @@ fn read_layer_tensors(st: &SafeTensors, prefix: &str) -> Result<Tensors> {
 
 #[cfg(test)]
 mod tests {
-    use crate::activations::RELU;
-    use crate::model::{NeuralNetwork, NeuronLayerSpec};
+    use crate::activations::{IDENTITY, RELU};
+    use crate::model::{NetworkConfig, NeuralNetwork};
     use ndarray::Array2;
     use std::path::{Path, PathBuf};
 
@@ -238,8 +238,11 @@ mod tests {
     fn save_weights_rejects_path_traversal() {
         // Writing through a path that escapes the working directory is refused by
         // the path guard in `tensors::save`; nothing is written.
-        let specs = NeuronLayerSpec::network_for(vec![2], &*RELU, 2);
-        let model = NeuralNetwork::initialization(2, &specs, 0);
+        let config = NetworkConfig::builder(vec![2])
+            .dense(2, &RELU)
+            .dense(1, &IDENTITY)
+            .build();
+        let model = NeuralNetwork::from_config(config, 0).unwrap();
 
         assert!(model.save_weights("../../nrn_traversal_model").is_err());
     }
@@ -295,8 +298,11 @@ mod tests {
     fn network_config_record_captures_architecture_of_a_network() {
         use super::{LayerConfigRecord, NetworkConfigRecord};
 
-        let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 3);
-        let model = NeuralNetwork::initialization(3, &specs, 0);
+        let config = NetworkConfig::builder(vec![3])
+            .dense(4, &RELU)
+            .dense(3, &IDENTITY)
+            .build();
+        let model = NeuralNetwork::from_config(config, 0).unwrap();
 
         let record = NetworkConfigRecord::from(&model);
 
@@ -332,8 +338,11 @@ mod tests {
     fn weights_save_load_roundtrip_predictions_are_identical() {
         use super::NetworkConfigRecord;
 
-        let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 2);
-        let model = NeuralNetwork::initialization(3, &specs, 0);
+        let config = NetworkConfig::builder(vec![3])
+            .dense(4, &RELU)
+            .dense(1, &IDENTITY)
+            .build();
+        let model = NeuralNetwork::from_config(config, 0).unwrap();
         let record = NetworkConfigRecord::from(&model);
 
         let inputs = Array2::from_shape_fn((3, 5), |(i, j)| (i * 5 + j) as f32 * 0.1);
@@ -359,26 +368,16 @@ mod tests {
     fn cnn_weights_save_load_roundtrip_predictions_are_identical() {
         use super::NetworkConfigRecord;
         use crate::activations::SIGMOID;
-        use crate::layers::{Conv2d, Dense, Flatten, Layer};
         use ndarray::{Array, IxDyn};
-        use ndarray_rand::rand::SeedableRng;
-        use ndarray_rand::rand::rngs::StdRng;
 
-        // Conv2d → Flatten → Dense, exercising every layer kind through the weights-only path.
-        let mut rng = StdRng::seed_from_u64(3);
-        let conv = Conv2d::initialization((1, 4, 4), 2, (3, 3), 1, 0, RELU.clone(), &mut rng);
-        let flatten = Flatten::new(conv.output_shape());
-        let dense = Dense::initialization(
-            flatten.output_size(),
-            &NeuronLayerSpec {
-                neurons: 1,
-                activation: SIGMOID.clone(),
-            },
-            &mut rng,
-        );
-        let model = NeuralNetwork::single(conv)
-            .with_layer(flatten)
-            .with_layer(dense);
+        // Conv2d → Flatten → Dense (sigmoid head), exercising every layer kind through the
+        // weights-only path.
+        let config = NetworkConfig::builder(vec![1, 4, 4])
+            .conv2d(2, (3, 3), 1, 0, &RELU)
+            .flatten()
+            .dense(1, &SIGMOID)
+            .build();
+        let model = NeuralNetwork::from_config(config, 3).unwrap();
         let record = NetworkConfigRecord::from(&model);
 
         let inputs = Array::from_shape_fn(IxDyn(&[1, 4, 4, 5]), |d| {

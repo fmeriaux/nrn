@@ -1,8 +1,8 @@
 use ndarray::array;
-use nrn::activations::SIGMOID;
+use nrn::activations::{IDENTITY, SIGMOID};
 use nrn::data::Dataset;
 use nrn::loss_functions::Reduction;
-use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec};
+use nrn::model::{NetworkConfig, NeuralNetwork};
 use nrn::task::Task;
 use nrn::training::{
     Callbacks, GradientClipping, HyperParameters, LossConfig, LossKind, OptimizerConfig,
@@ -33,7 +33,10 @@ fn xor_converges_to_low_loss() {
         .unwrap()
     };
 
-    let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![8]), 2, &*SIGMOID).unwrap();
+    let config = NetworkConfig::builder(vec![2])
+        .dense(8, &SIGMOID)
+        .dense(1, &IDENTITY)
+        .build();
 
     let hyperparameters = HyperParameters::from_values(
         10_000,
@@ -58,7 +61,7 @@ fn xor_converges_to_low_loss() {
     let data = hyperparameters.prepare(xor_dataset(), None).unwrap();
     let report = hyperparameters
         .build(
-            NeuralNetwork::initialization(2, &specs, 42),
+            NeuralNetwork::from_config(config, 42).unwrap(),
             Task::Binary,
             data,
             Callbacks::new(vec![]),
@@ -95,7 +98,10 @@ fn xor_converges_with_mini_batch() {
         .unwrap()
     };
 
-    let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![8]), 2, &*SIGMOID).unwrap();
+    let config = NetworkConfig::builder(vec![2])
+        .dense(8, &SIGMOID)
+        .dense(1, &IDENTITY)
+        .build();
 
     let hyperparameters = HyperParameters::from_values(
         8_000,
@@ -120,7 +126,7 @@ fn xor_converges_with_mini_batch() {
     let data = hyperparameters.prepare(xor_dataset(), None).unwrap();
     let report = hyperparameters
         .build(
-            NeuralNetwork::initialization(2, &specs, 42),
+            NeuralNetwork::from_config(config, 42).unwrap(),
             Task::Binary,
             data,
             Callbacks::new(vec![]),
@@ -159,7 +165,10 @@ fn three_class_converges_to_low_loss() {
 
     // Sigmoid avoids the dead-neuron risk of ReLU(0)=0 for the [0.0, 0.0] sample
     // (He init sets biases to zero, so relu([0,0]) = 0 and its gradient is dead at epoch 0).
-    let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![8]), 3, &*SIGMOID).unwrap();
+    let config = NetworkConfig::builder(vec![2])
+        .dense(8, &SIGMOID)
+        .dense(3, &IDENTITY)
+        .build();
 
     let hyperparameters = HyperParameters::from_values(
         5_000,
@@ -186,7 +195,7 @@ fn three_class_converges_to_low_loss() {
         .unwrap();
     let report = hyperparameters
         .build(
-            NeuralNetwork::initialization(2, &specs, 42),
+            NeuralNetwork::from_config(config, 42).unwrap(),
             Task::MultiClass { n_classes: 3 },
             data,
             Callbacks::new(vec![]),

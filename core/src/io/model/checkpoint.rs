@@ -325,12 +325,12 @@ impl CheckpointArchive {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activations::RELU;
+    use crate::activations::{IDENTITY, RELU};
     use crate::gradients::LayerGradients;
     use crate::io::model::hyperparams::HyperParametersRecord;
     use crate::io::model::run::{TrainingMeta, TrainingRun};
     use crate::io::model::task::TaskRecord;
-    use crate::model::NeuronLayerSpec;
+    use crate::model::NetworkConfig;
     use crate::optimizers::{Adam, StochasticGradientDescent};
     use crate::schedulers::{ConstantScheduler, Scheduler, StepDecay};
     use crate::weight_decay::WeightDecay;
@@ -376,8 +376,11 @@ mod tests {
     }
 
     fn sample_model() -> NeuralNetwork {
-        let specs = NeuronLayerSpec::network_for(vec![3], &*RELU, 2);
-        NeuralNetwork::initialization(2, &specs, 0)
+        let config = NetworkConfig::builder(vec![2])
+            .dense(3, &RELU)
+            .dense(1, &IDENTITY)
+            .build();
+        NeuralNetwork::from_config(config, 0).unwrap()
     }
 
     fn sample_config() -> NetworkConfigRecord {

@@ -80,9 +80,9 @@ impl Predictor {
 #[cfg(test)]
 mod tests {
     use super::{CONFIG_STEM, MODEL_STEM, PredictorConfig};
-    use crate::activations::RELU;
+    use crate::activations::{IDENTITY, RELU};
     use crate::data::scalers::{MinMaxScaler, ScalerMethod};
-    use crate::model::{NeuralNetwork, NeuronLayerSpec, Predictor};
+    use crate::model::{NetworkConfig, NeuralNetwork, Predictor};
     use crate::task::Task;
     use ndarray::{Array2, array};
 
@@ -91,8 +91,11 @@ mod tests {
     }
 
     fn model_and_inputs() -> (NeuralNetwork, Array2<f32>) {
-        let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 2);
-        let model = NeuralNetwork::initialization(3, &specs, 0);
+        let config = NetworkConfig::builder(vec![3])
+            .dense(4, &RELU)
+            .dense(1, &IDENTITY)
+            .build();
+        let model = NeuralNetwork::from_config(config, 0).unwrap();
         let inputs = Array2::from_shape_fn((3, 5), |(i, j)| (i * 5 + j) as f32 * 0.1);
         (model, inputs)
     }

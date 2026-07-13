@@ -64,9 +64,10 @@ of the scikit-learn convention). `Dataset` (row-major, `(samples, features)`) co
 
 ### Neural network (`core/src/nn/`)
 
-- **`model.rs`** — `NeuralNetwork` (Vec of `NeuronLayer`) and `NeuronLayerSpec`. `forward()` returns
-  all intermediate activations; `predict()` returns only the last. `NeuronLayerSpec::output_for(n_classes)`
-  auto-selects sigmoid (2 classes → 1 neuron) or softmax (multi-class).
+- **`model/`** — `NetworkConfig` (weight-free architecture, assembled via `NetworkConfigBuilder`)
+  and the `NeuralNetwork` it builds. `forward()` returns all intermediate activations; `predict()`
+  returns only the last. Task-folded output width (binary → 1 neuron, multi-class → `n_classes`)
+  is sourced by the CLI from `Task::output_size()`, not baked into the builder.
 - **`training/`** — the training stack, built around a **declarative spec → runtime trainer** split.
   `HyperParameters` is the single source of truth for a run: plain config, no trait objects, cross-field
   invariants validated on construction. Its `build(model, dataset, callbacks)` is the one place

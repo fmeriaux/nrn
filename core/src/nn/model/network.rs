@@ -2,8 +2,8 @@
 //! [`Activations`] a forward pass captures and the [`InputShapeMismatch`] it can raise.
 
 use crate::activations::Activation;
-use crate::layers::{Dense, Layer, format_shape};
-use crate::model::{LayerConfig, LayerConfigError, NetworkConfig, NeuronLayerSpec};
+use crate::layers::{Layer, format_shape};
+use crate::model::{LayerConfig, LayerConfigError, NetworkConfig};
 use crate::tensors::Tensors;
 use ndarray::{ArrayD, ArrayView, ArrayViewD, Dimension};
 use ndarray_rand::rand::SeedableRng;
@@ -108,40 +108,6 @@ impl NeuralNetwork {
     /// The network's layers, mutably, in order from input to output.
     pub(crate) fn layers_mut(&mut self) -> &mut [Box<dyn Layer>] {
         &mut self.layers
-    }
-
-    /// Creates a new `NeuralNetwork` with the specified input size and layer specifications.
-    ///
-    /// The weights are drawn from a generator seeded with `seed`, so initialization is
-    /// always reproducible: the same `seed` and architecture yield the same starting
-    /// weights. There is intentionally no unseeded constructor — an implicit random
-    /// initialization is exactly the source of non-reproducible (flaky) training runs.
-    /// # Arguments
-    /// - `inputs`: The number of inputs to the first layer of the network.
-    /// - `layer_specs`: A slice of `NeuronLayerSpec` representing the specifications for each layer in the network.
-    /// - `seed`: The seed for the weight-initialization generator.
-    pub fn initialization(inputs: usize, layer_specs: &[NeuronLayerSpec], seed: u64) -> Self {
-        assert!(inputs > 0, "Input size must be greater than zero.");
-        assert!(
-            !layer_specs.is_empty(),
-            "At least one layer must be specified."
-        );
-
-        // A single generator threaded through every layer, so the layers draw
-        // decorrelated weights from one reproducible stream.
-        let mut rng = StdRng::seed_from_u64(seed);
-        let mut layers = Vec::with_capacity(layer_specs.len());
-        let mut layer_input = inputs;
-
-        for layer_spec in layer_specs {
-            layers.push(
-                Box::new(Dense::initialization(layer_input, layer_spec, &mut rng))
-                    as Box<dyn Layer>,
-            );
-            layer_input = layer_spec.neurons;
-        }
-
-        Self::new(layers)
     }
 
     /// Rebuilds a network from its `input_shape` and each layer's [`LayerConfig`] paired with its
@@ -311,7 +277,9 @@ impl std::error::Error for InputShapeMismatch {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activations::{Activation, RELU, SIGMOID};
+    use crate::activations::{Activation, IDENTITY, RELU, SIGMOID};
+    use crate::layers::Dense;
+    use crate::model::NetworkConfig;
     use ndarray::{Array1, Array2, IxDyn, array};
     use std::sync::Arc;
 
@@ -326,8 +294,11 @@ mod tests {
     #[test]
     fn network_reports_input_size_and_summary() {
         // 3 inputs -> 4 relu -> 3 identity (logits)
-        let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 3);
-        let model = NeuralNetwork::initialization(3, &specs, 0);
+        let config = NetworkConfig::builder(vec![3])
+            .dense(4, &RELU)
+            .dense(3, &IDENTITY)
+            .build();
+        let model = NeuralNetwork::from_config(config, 0).unwrap();
 
         assert_eq!(model.input_size(), 3);
         assert_eq!(model.layers.len(), 2);
@@ -339,17 +310,14 @@ mod tests {
 
     #[test]
     fn summary_shows_per_sample_shapes_and_omits_the_suffix_for_a_layer_without_activation() {
-        use crate::layers::Flatten;
-
         // Flatten (2×2×2 → 8) preserves the spatial input shape in the summary and carries
         // no activation, so its segment is the bare output shape with no "-activation"
         // suffix; the Dense head keeps its suffix.
-        let model =
-            NeuralNetwork::single(Flatten::new(vec![2, 2, 2])).with_layer(Dense::initialization(
-                8,
-                &NeuronLayerSpec::output_for(2),
-                &mut StdRng::seed_from_u64(0),
-            ));
+        let config = NetworkConfig::builder(vec![2, 2, 2])
+            .flatten()
+            .dense(1, &IDENTITY)
+            .build();
+        let model = NeuralNetwork::from_config(config, 0).unwrap();
 
         assert_eq!(model.summary(), "[2, 2, 2] -> [8] -> [1]-identity");
     }
@@ -400,20 +368,19 @@ mod tests {
             &mut StdRng::seed_from_u64(0),
         );
         // Conv2d output is (2, 2, 2) = 8 features; a Dense taking 8 inputs matches on count.
-        let head = Dense::initialization(
-            8,
-            &NeuronLayerSpec::output_for(2),
-            &mut StdRng::seed_from_u64(1),
-        );
+        let head = Dense::initialization(8, 1, IDENTITY.clone(), &mut StdRng::seed_from_u64(1));
         let _ = NeuralNetwork::single(conv).with_layer(head);
     }
 
     #[test]
     fn output_shape_matches_architecture() {
-        // Network: 3 inputs -> 4 hidden (relu) -> 3 output (softmax), 5 samples
-        // Note: n_classes=2 produces 1 sigmoid neuron (binary); use 3 for multi-class
-        let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 3);
-        let model = NeuralNetwork::initialization(3, &specs, 0);
+        // Network: 3 inputs -> 4 hidden (relu) -> 3 output (logits), 5 samples
+        // Note: 2 classes fold to 1 output neuron (binary); use 3 for multi-class.
+        let config = NetworkConfig::builder(vec![3])
+            .dense(4, &RELU)
+            .dense(3, &IDENTITY)
+            .build();
+        let model = NeuralNetwork::from_config(config, 0).unwrap();
         let inputs = Array2::zeros((3, 5)); // (features, samples)
         let output = model.output(inputs.view()).unwrap();
         assert_eq!(output.shape(), &[3, 5]); // (classes, samples)
@@ -446,8 +413,12 @@ mod tests {
 
     #[test]
     fn predict_returns_last_forward_activation() {
-        let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 2);
-        let model = NeuralNetwork::initialization(3, &specs, 0);
+        // 2 classes fold to 1 output neuron (binary).
+        let config = NetworkConfig::builder(vec![3])
+            .dense(4, &RELU)
+            .dense(1, &IDENTITY)
+            .build();
+        let model = NeuralNetwork::from_config(config, 0).unwrap();
         let inputs = Array2::zeros((3, 5));
 
         let activations = model.forward(inputs.view()).unwrap();
@@ -506,8 +477,11 @@ mod tests {
     #[test]
     fn dense_network_round_trips_through_specs_and_weights() {
         // 3 inputs -> 4 relu -> 3 identity (logits).
-        let specs = NeuronLayerSpec::network_for(vec![4], &*RELU, 3);
-        let model = NeuralNetwork::initialization(3, &specs, 0);
+        let config = NetworkConfig::builder(vec![3])
+            .dense(4, &RELU)
+            .dense(3, &IDENTITY)
+            .build();
+        let model = NeuralNetwork::from_config(config, 0).unwrap();
 
         let rebuilt = round_trip(&model);
 
@@ -522,26 +496,13 @@ mod tests {
 
     #[test]
     fn convolutional_network_round_trips_through_specs_and_weights() {
-        use crate::layers::{Conv2d, Flatten};
-
         // Conv2d (1,4,4) -> (2,2,2) -> Flatten (8) -> Dense head (3 logits).
-        let conv = Conv2d::initialization(
-            (1, 4, 4),
-            2,
-            (3, 3),
-            1,
-            0,
-            RELU.clone(),
-            &mut StdRng::seed_from_u64(0),
-        );
-        let head = Dense::initialization(
-            8,
-            &NeuronLayerSpec::output_for(3),
-            &mut StdRng::seed_from_u64(1),
-        );
-        let model = NeuralNetwork::single(conv)
-            .with_layer(Flatten::new(vec![2, 2, 2]))
-            .with_layer(head);
+        let config = NetworkConfig::builder(vec![1, 4, 4])
+            .conv2d(2, (3, 3), 1, 0, &RELU)
+            .flatten()
+            .dense(3, &IDENTITY)
+            .build();
+        let model = NeuralNetwork::from_config(config, 0).unwrap();
 
         let rebuilt = round_trip(&model);
 

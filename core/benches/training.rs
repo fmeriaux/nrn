@@ -13,15 +13,12 @@
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use ndarray::{Array2, Array4};
-use ndarray_rand::rand::SeedableRng;
-use ndarray_rand::rand::rngs::StdRng;
-use nrn::activations::{RELU, SIGMOID, SOFTMAX};
+use nrn::activations::{IDENTITY, RELU};
 use nrn::data::ModelDataset;
 use nrn::gradients::GradientClipping;
-use nrn::layers::{Conv2d, Dense, Flatten};
 use nrn::learning_rate::LearningRate;
 use nrn::loss_functions::{BinaryCrossEntropy, CategoricalCrossEntropy, LossFunction, Reduction};
-use nrn::model::{NeuralNetwork, NeuronLayerSpec};
+use nrn::model::{NetworkConfig, NeuralNetwork};
 use nrn::optimizers::{Adam, Optimizer};
 use nrn::schedulers::{ConstantScheduler, Scheduler};
 use nrn::training::MiniBatch;
@@ -89,18 +86,12 @@ fn make_spatial_dataset(
 }
 
 fn small_workload() -> Workload {
-    let specs = vec![
-        NeuronLayerSpec {
-            neurons: 16,
-            activation: RELU.clone(),
-        },
-        NeuronLayerSpec {
-            neurons: 1,
-            activation: SIGMOID.clone(),
-        },
-    ];
+    let config = NetworkConfig::builder(vec![2])
+        .dense(16, &RELU)
+        .dense(1, &IDENTITY)
+        .build();
     Workload {
-        model: NeuralNetwork::initialization(2, &specs, 42),
+        model: NeuralNetwork::from_config(config, 42).unwrap(),
         dataset: make_dataset(2, 2, 1_000),
         loss: Arc::new(BinaryCrossEntropy::new(Reduction::Mean)),
         batch_size: 64,
@@ -108,22 +99,13 @@ fn small_workload() -> Workload {
 }
 
 fn mnist_workload() -> Workload {
-    let specs = vec![
-        NeuronLayerSpec {
-            neurons: 128,
-            activation: RELU.clone(),
-        },
-        NeuronLayerSpec {
-            neurons: 64,
-            activation: RELU.clone(),
-        },
-        NeuronLayerSpec {
-            neurons: 10,
-            activation: SOFTMAX.clone(),
-        },
-    ];
+    let config = NetworkConfig::builder(vec![784])
+        .dense(128, &RELU)
+        .dense(64, &RELU)
+        .dense(10, &IDENTITY)
+        .build();
     Workload {
-        model: NeuralNetwork::initialization(784, &specs, 42),
+        model: NeuralNetwork::from_config(config, 42).unwrap(),
         dataset: make_dataset(784, 10, 2_000),
         loss: Arc::new(CategoricalCrossEntropy::new(Reduction::Mean)),
         batch_size: 64,
@@ -131,26 +113,14 @@ fn mnist_workload() -> Workload {
 }
 
 fn cnn_workload() -> Workload {
-    // 1×28×28 → Conv2d(16 filters, 3×3, stride 1) → 16×26×26 → Flatten → Dense(10, softmax).
-    let conv = Conv2d::initialization(
-        (1, 28, 28),
-        16,
-        (3, 3),
-        1,
-        0,
-        RELU.clone(),
-        &mut StdRng::seed_from_u64(42),
-    );
-    let head = Dense::initialization(
-        16 * 26 * 26,
-        &NeuronLayerSpec::output_for(10),
-        &mut StdRng::seed_from_u64(43),
-    );
-    let model = NeuralNetwork::single(conv)
-        .with_layer(Flatten::new(vec![16, 26, 26]))
-        .with_layer(head);
+    // 1×28×28 → Conv2d(16 filters, 3×3, stride 1) → 16×26×26 → Flatten → Dense(10, logits).
+    let config = NetworkConfig::builder(vec![1, 28, 28])
+        .conv2d(16, (3, 3), 1, 0, &RELU)
+        .flatten()
+        .dense(10, &IDENTITY)
+        .build();
     Workload {
-        model,
+        model: NeuralNetwork::from_config(config, 42).unwrap(),
         dataset: make_spatial_dataset(1, 28, 28, 10, 1_000),
         loss: Arc::new(CategoricalCrossEntropy::new(Reduction::Mean)),
         batch_size: 64,

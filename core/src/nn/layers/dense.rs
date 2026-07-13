@@ -2,7 +2,7 @@ use crate::activations::Activation;
 use crate::affine::Affine;
 use crate::gradients::LayerGradients;
 use crate::layers::{BackwardPass, Layer, Parameter};
-use crate::model::{LayerConfig, NeuronLayerSpec};
+use crate::model::LayerConfig;
 use crate::tensors::Tensors;
 use ndarray::{Array1, Array2, ArrayD, ArrayView1, ArrayView2, ArrayViewD, Ix2};
 use ndarray_rand::rand::RngCore;
@@ -39,24 +39,27 @@ impl Dense {
 
     /// Initializes a new `Dense` layer with random weights and biases drawn from `rng`.
     /// # Panics
-    /// - When `spec.neurons` or `inputs` are less than or equal to zero.
+    /// - When `neurons` or `inputs` are less than or equal to zero.
     /// # Arguments
     /// - `inputs`: The number of inputs to this layer (i.e., the number of neurons in the previous layer).
-    /// - `spec`: The specifications for this layer, including the number of neurons and the activation method.
+    /// - `neurons`: The number of neurons in this layer.
+    /// - `activation`: The activation function used in this layer.
     /// - `rng`: The random number generator the weights are drawn from. Passing a seeded
     ///   generator makes the initialization reproducible.
-    pub fn initialization(inputs: usize, spec: &NeuronLayerSpec, rng: &mut dyn RngCore) -> Self {
+    pub fn initialization(
+        inputs: usize,
+        neurons: usize,
+        activation: Arc<dyn Activation>,
+        rng: &mut dyn RngCore,
+    ) -> Self {
         assert!(
-            spec.neurons > 0 && inputs > 0,
+            neurons > 0 && inputs > 0,
             "Neurons and inputs must be greater than zero."
         );
 
-        let (weights, biases) = spec
-            .activation
-            .initialization()
-            .apply((spec.neurons, inputs), rng);
+        let (weights, biases) = activation.initialization().apply((neurons, inputs), rng);
 
-        Self::new(weights, biases, spec.activation.clone())
+        Self::new(weights, biases, activation)
     }
 
     /// This layer's weight matrix `(neurons, inputs)`.

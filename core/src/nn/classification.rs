@@ -53,20 +53,20 @@ impl Classification {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activations::{RELU, SIGMOID};
+    use crate::activations::{IDENTITY, RELU};
     use crate::data::scalers::{Scaler, ScalerKind};
-    use crate::layers::{Conv2d, Dense, Flatten};
-    use crate::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec, PredictionError, Predictor};
+    use crate::model::{NetworkConfig, NeuralNetwork, PredictionError, Predictor};
     use crate::task::Task;
     use ndarray::{Array, Array4, ArrayD, IxDyn, array, s};
-    use ndarray_rand::rand::SeedableRng;
-    use ndarray_rand::rand::rngs::StdRng;
 
     #[test]
     fn from_activations_ranks_a_binary_networks_outputs() {
-        let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![4]), 2, &*RELU).unwrap();
+        let config = NetworkConfig::builder(vec![2])
+            .dense(4, &RELU)
+            .dense(1, &IDENTITY)
+            .build();
         let predictor = Predictor::new(
-            NeuralNetwork::initialization(2, &specs, 0),
+            NeuralNetwork::from_config(config, 0).unwrap(),
             Task::Binary,
             None,
         );
@@ -121,23 +121,12 @@ mod tests {
         // Conv2d (1×4×4 → 2×2×2) → Flatten (8) → Dense (1 identity logit, binary). The rank-4
         // spatial batch threads through the network unchanged; the Flatten collapses it to the
         // rank-2 the Dense head consumes, and infer yields (classes, samples) outputs.
-        let conv = Conv2d::initialization(
-            (1, 4, 4),
-            2,
-            (3, 3),
-            1,
-            0,
-            RELU.clone(),
-            &mut StdRng::seed_from_u64(0),
-        );
-        let head = Dense::initialization(
-            8,
-            &NeuronLayerSpec::output_for(2),
-            &mut StdRng::seed_from_u64(1),
-        );
-        let model = NeuralNetwork::single(conv)
-            .with_layer(Flatten::new(vec![2, 2, 2]))
-            .with_layer(head);
+        let config = NetworkConfig::builder(vec![1, 4, 4])
+            .conv2d(2, (3, 3), 1, 0, &RELU)
+            .flatten()
+            .dense(1, &IDENTITY)
+            .build();
+        let model = NeuralNetwork::from_config(config, 0).unwrap();
 
         // A spatial input the dense path could never accept: (channels, height, width, samples).
         let inputs = Array::from_shape_fn(IxDyn(&[1, 4, 4, 3]), |idx| {
@@ -156,11 +145,11 @@ mod tests {
         // rank-4 spatial batch. Two identical builds (same seed) let one go into the
         // predictor and the other check the bare network on manually scaled inputs.
         let network = |seed| {
-            NeuralNetwork::single(Flatten::new(vec![2, 2, 2])).with_layer(Dense::initialization(
-                8,
-                &NeuronLayerSpec::output_for(2),
-                &mut StdRng::seed_from_u64(seed),
-            ))
+            let config = NetworkConfig::builder(vec![2, 2, 2])
+                .flatten()
+                .dense(1, &IDENTITY)
+                .build();
+            NeuralNetwork::from_config(config, seed).unwrap()
         };
 
         // (features=2, height=2, width=2, samples=4), the two features on different scales.
@@ -194,12 +183,11 @@ mod tests {
     fn output_surfaces_a_scaler_feature_mismatch_as_a_scaling_error() {
         // A scaler fitted on 2 leading-axis features, then applied to a batch with 3:
         // the scaler's mismatch surfaces through `?` as PredictionError::Scaling.
-        let network =
-            NeuralNetwork::single(Flatten::new(vec![2, 2, 2])).with_layer(Dense::initialization(
-                8,
-                &NeuronLayerSpec::output_for(2),
-                &mut StdRng::seed_from_u64(0),
-            ));
+        let config = NetworkConfig::builder(vec![2, 2, 2])
+            .flatten()
+            .dense(1, &IDENTITY)
+            .build();
+        let network = NeuralNetwork::from_config(config, 0).unwrap();
         let fit_batch = Array::from_shape_fn(IxDyn(&[2, 4]), |d| (d[0] + d[1]) as f32);
         let scaler = ScalerKind::MinMax.fit(fit_batch.view());
         let predictor = Predictor::new(network, Task::Binary, Some(scaler));
@@ -217,8 +205,8 @@ mod tests {
 
     #[test]
     fn probabilities_always_in_zero_one() {
-        let specs = NeuronLayerSpec::network_for(vec![], &*SIGMOID, 2);
-        let model = NeuralNetwork::initialization(4, &specs, 0);
+        let config = NetworkConfig::builder(vec![4]).dense(1, &IDENTITY).build();
+        let model = NeuralNetwork::from_config(config, 0).unwrap();
         // f32 saturates to exactly 0.0 or 1.0 for large logits, so use closed interval
         let inputs = array![
             [100.0, -100.0],

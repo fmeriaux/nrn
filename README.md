@@ -191,7 +191,7 @@ nrn train start uniform-seed1024-c2-f2-n500.parquet \
   --scale z-score --epochs 200 --lr 0.01 --seed 7
 ```
 
-The CLI infers the architecture (`[2] -> 1-sigmoid`) and reports the final loss and accuracy. It reaches
+The CLI infers the architecture (`[2] -> [1]-identity`) and reports the final loss and accuracy. It reaches
 **100%** — a straight line cleanly separates the two blobs.
 
 **Visualize** the run — training curves plus an animated decision boundary:
@@ -212,7 +212,7 @@ nrn predict model-uniform-seed1024-c2-f2-n500
 
 ```
 📥 PREDICTOR LOADED
-   Architecture ... [2] -> 1-sigmoid
+   Architecture ... [2] -> [1]-identity
    Scaler ......... z-score
 
 Feature 0 ▸ -30
@@ -255,7 +255,7 @@ nrn train start ring-seed1024-c2-f2-n500.parquet \
   --early-stopping 100 --seed 7
 ```
 
-The architecture becomes `[2] -> 16-relu -> 8-relu -> 1-sigmoid` and accuracy reaches **100%**. The boundary
+The architecture becomes `[2] -> [16]-relu -> [8]-relu -> [1]-identity` and accuracy reaches **100%**. The boundary
 closes neatly around the inner blob:
 
 | Training curves | Decision boundary forming |
@@ -324,7 +324,7 @@ nrn train start ring-seed1024-c3-f2-n600.parquet \
   --layers 16,8 --scale z-score --epochs 150 --lr 0.01 --seed 7
 ```
 
-The CLI builds `[2] -> 16-relu -> 8-relu -> 3-softmax` and learns two nested boundaries separating the three
+The CLI builds `[2] -> [16]-relu -> [8]-relu -> [3]-identity` and learns two nested boundaries separating the three
 classes:
 
 | Training curves | Decision boundary forming |
@@ -373,7 +373,7 @@ nrn train start digits.parquet \
   --batch-size 64 --early-stopping 20 --seed 7
 ```
 
-The architecture becomes `[784] -> 128-relu -> 128-relu -> 10-softmax`. Training on full MNIST is
+The architecture becomes `[784] -> [128]-relu -> [128]-relu -> [10]-identity`. Training on full MNIST is
 CPU-intensive — start with a subset to iterate quickly.
 
 > [!NOTE]
@@ -392,7 +392,7 @@ nrn predict model-digits --instance digit.json
 
 ```
 📥 PREDICTOR LOADED
-   Architecture ... [784] -> 128-relu -> 128-relu -> 10-softmax
+   Architecture ... [784] -> [128]-relu -> [128]-relu -> [10]-identity
    Scaler ......... min-max
 📊 CLASSIFICATION
    Class 7 ... 99.90%

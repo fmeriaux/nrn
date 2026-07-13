@@ -128,11 +128,14 @@ mod tests {
     }
 
     fn sample_network() -> NetworkConfigRecord {
-        use crate::activations::RELU;
-        use crate::model::{NeuralNetwork, NeuronLayerSpec};
+        use crate::activations::{IDENTITY, RELU};
+        use crate::model::{NetworkConfig, NeuralNetwork};
 
-        let specs = NeuronLayerSpec::network_for(vec![3], &*RELU, 2);
-        NetworkConfigRecord::from(&NeuralNetwork::initialization(2, &specs, 0))
+        let config = NetworkConfig::builder(vec![2])
+            .dense(3, &RELU)
+            .dense(1, &IDENTITY)
+            .build();
+        NetworkConfigRecord::from(&NeuralNetwork::from_config(config, 0).unwrap())
     }
 
     fn meta(dataset: &str) -> TrainingMeta {
