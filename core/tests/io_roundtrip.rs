@@ -7,13 +7,13 @@ use nrn::activations::RELU;
 use nrn::data::scalers::{MinMaxScaler, Scaler, ScalerMethod};
 use nrn::data::{Dataset, Instance};
 use nrn::evaluation::{Evaluation, EvaluationSet};
-use nrn::io::hyperparams::{
+use nrn::io::model::hyperparams::{
     ClippingRecord, HyperParametersRecord, LossKindRecord, LossRecord, OptimizerRecord,
     ReductionRecord, SchedulerRecord,
 };
-use nrn::io::network::NetworkConfig;
-use nrn::io::run::{TrainingMeta, TrainingRun};
-use nrn::io::scalers::ScalerRecord;
+use nrn::io::model::network::NetworkConfig;
+use nrn::io::model::run::{TrainingMeta, TrainingRun};
+use nrn::io::model::scalers::ScalerRecord;
 use nrn::loss_functions::{BinaryCrossEntropy, LossFunction, Reduction};
 use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec};
 use nrn::optimizers::Adam;

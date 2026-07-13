@@ -2,9 +2,9 @@
 //! model blueprint as `config.json`, and, when present, the scaler as a `preprocessor.json` sidecar.
 
 use crate::io::json;
-use crate::io::network::NetworkConfig;
-use crate::io::scalers::ScalerRecord;
-use crate::io::task::TaskRecord;
+use crate::io::model::network::NetworkConfig;
+use crate::io::model::scalers::ScalerRecord;
+use crate::io::model::task::TaskRecord;
 use crate::model::{NeuralNetwork, Predictor};
 use serde::{Deserialize, Serialize};
 use std::io::Result;
@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn config_carries_the_network_architecture() {
-        use crate::io::network::LayerSpecRecord;
+        use crate::io::model::network::LayerSpecRecord;
 
         let (network, _) = model_and_inputs();
         let predictor = Predictor::new(network, Task::Binary, None);
@@ -167,8 +167,8 @@ mod tests {
         let dir = temp_dir("weights_only");
         predictor.save(&dir).unwrap();
 
-        let bytes = crate::io::tensors::load(dir.join(MODEL_STEM)).unwrap();
-        let metadata = crate::io::tensors::read_metadata(&bytes).unwrap();
+        let bytes = crate::io::model::tensors::load(dir.join(MODEL_STEM)).unwrap();
+        let metadata = crate::io::model::tensors::read_metadata(&bytes).unwrap();
 
         std::fs::remove_dir_all(&dir).ok();
 

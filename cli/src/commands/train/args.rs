@@ -1,7 +1,7 @@
 use clap::*;
 use ndarray_rand::rand::random;
 use nrn::data::scalers::ScalerKind;
-use nrn::io::hyperparams::{
+use nrn::io::model::hyperparams::{
     ClippingRecord, EarlyStoppingRecord, HyperParametersRecord, SchedulerRecord,
 };
 use nrn::task::Task;
@@ -343,7 +343,7 @@ impl ResumeOverrides {
 mod tests {
     use super::*;
     use clap::Parser;
-    use nrn::io::hyperparams::{LossKindRecord, LossRecord, ReductionRecord};
+    use nrn::io::model::hyperparams::{LossKindRecord, LossRecord, ReductionRecord};
 
     // ─── TrainArgs conversions ─────────────────────────────────────────────────
 
@@ -581,7 +581,7 @@ mod tests {
             batch_size: Some(32),
             lr: 0.001,
             weight_decay: 0.0,
-            optimizer: nrn::io::hyperparams::OptimizerRecord::Adam,
+            optimizer: nrn::io::model::hyperparams::OptimizerRecord::Adam,
             scheduler: SchedulerRecord::Constant,
             clipping: ClippingRecord::Norm { max_norm: 1.0 },
             early_stopping: None,

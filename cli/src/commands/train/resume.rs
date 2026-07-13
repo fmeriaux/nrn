@@ -4,7 +4,7 @@ use super::callbacks::{ConsoleMonitor, ModelSaver};
 use crate::display::{Spinner, loaded, recording, show, warning};
 use clap::Args;
 use nrn::data::Dataset;
-use nrn::io::run::TrainingRun;
+use nrn::io::model::run::TrainingRun;
 use nrn::task::Task;
 use nrn::training::{Callbacks, HyperParameters};
 use std::error::Error;

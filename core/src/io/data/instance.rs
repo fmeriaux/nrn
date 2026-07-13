@@ -2,7 +2,7 @@
 //! stored under a single `instance` tensor.
 
 use crate::data::Instance;
-use crate::io::tensors;
+use crate::io::model::tensors;
 use safetensors::SafeTensors;
 use std::collections::HashMap;
 use std::io::ErrorKind::InvalidData;

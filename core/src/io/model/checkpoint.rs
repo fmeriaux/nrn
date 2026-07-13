@@ -1,10 +1,10 @@
 use crate::evaluation::{Evaluation, EvaluationSet};
 use crate::evaluation_history::{EpochEvaluation, EvaluationHistory};
 use crate::io::json;
-use crate::io::network::NetworkConfig;
-use crate::io::optimizer as optimizer_io;
+use crate::io::model::network::NetworkConfig;
+use crate::io::model::optimizer as optimizer_io;
+use crate::io::model::scheduler as scheduler_io;
 use crate::io::path::PathExt;
-use crate::io::scheduler as scheduler_io;
 use crate::model::NeuralNetwork;
 use crate::optimizers::{Optimizer, OptimizerState};
 use crate::schedulers::{Scheduler, SchedulerState};
@@ -82,7 +82,7 @@ pub(super) struct CheckpointRef {
 /// and/or `scheduler.json` respectively. The architecture the weights belong to lives in the
 /// run's `meta.json`.
 /// Implements [`TrainerCallback`]: [`on_checkpoint`](TrainerCallback::on_checkpoint)
-/// writes a checkpoint. Obtained via [`TrainingRun::recorder`](crate::io::run::TrainingRun::recorder).
+/// writes a checkpoint. Obtained via [`TrainingRun::recorder`](crate::io::model::run::TrainingRun::recorder).
 #[derive(Debug)]
 pub struct CheckpointRecorder {
     dir: PathBuf,
@@ -90,7 +90,7 @@ pub struct CheckpointRecorder {
 
 impl CheckpointRecorder {
     /// Creates a recorder writing into `dir`. Obtained via
-    /// [`TrainingRun::recorder`](crate::io::run::TrainingRun::recorder).
+    /// [`TrainingRun::recorder`](crate::io::model::run::TrainingRun::recorder).
     pub(super) fn new(dir: PathBuf) -> Self {
         CheckpointRecorder { dir }
     }
@@ -327,9 +327,9 @@ mod tests {
     use super::*;
     use crate::activations::RELU;
     use crate::gradients::LayerGradients;
-    use crate::io::hyperparams::HyperParametersRecord;
-    use crate::io::run::{TrainingMeta, TrainingRun};
-    use crate::io::task::TaskRecord;
+    use crate::io::model::hyperparams::HyperParametersRecord;
+    use crate::io::model::run::{TrainingMeta, TrainingRun};
+    use crate::io::model::task::TaskRecord;
     use crate::model::NeuronLayerSpec;
     use crate::optimizers::{Adam, StochasticGradientDescent};
     use crate::schedulers::{ConstantScheduler, Scheduler, StepDecay};

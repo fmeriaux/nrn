@@ -153,7 +153,7 @@ fn accuracy_for(task: &Task) -> Arc<dyn Accuracy> {
 /// objects), validates its cross-field invariants on construction, and builds
 /// the runtime [`Trainer`] via [`build`](HyperParameters::build).
 ///
-/// Its serializable mirror is [`crate::io::hyperparams::HyperParametersRecord`].
+/// Its serializable mirror is [`crate::io::model::hyperparams::HyperParametersRecord`].
 #[derive(Debug, Clone)]
 pub struct HyperParameters {
     /// Number of epochs to train; must be at least `1`.

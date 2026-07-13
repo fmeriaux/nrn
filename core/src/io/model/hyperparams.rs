@@ -261,10 +261,10 @@ impl TryFrom<&EarlyStoppingRecord> for EarlyStoppingConfig {
 }
 
 /// Serializable mirror of [`HyperParameters`], persisted in
-/// [`crate::io::run::TrainingMeta`].
+/// [`crate::io::model::run::TrainingMeta`].
 ///
 /// `layers` is intentionally omitted: the model architecture is reconstructed from
-/// `model.safetensors` by [`crate::io::run::CheckpointArchive::model_at`].
+/// `model.safetensors` by [`crate::io::model::run::CheckpointArchive::model_at`].
 ///
 /// Conversions are lossless both ways: [`From<&HyperParameters>`](HyperParametersRecord)
 /// projects the domain spec onto this record, and [`TryFrom<HyperParametersRecord>`]

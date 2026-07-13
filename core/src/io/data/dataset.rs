@@ -1,5 +1,5 @@
 use crate::data::{Dataset, DatasetOrigin};
-use crate::io::tensors;
+use crate::io::model::tensors;
 use safetensors::SafeTensors;
 use std::collections::HashMap;
 use std::io::ErrorKind::InvalidData;
@@ -214,7 +214,7 @@ mod tests {
     #[test]
     fn load_rejects_tensors_that_violate_dataset_invariants() {
         use super::{INPUTS, TARGETS};
-        use crate::io::tensors;
+        use crate::io::model::tensors;
         use std::collections::HashMap;
 
         // The tensors are individually well-formed, but two input rows against

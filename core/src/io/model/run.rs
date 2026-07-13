@@ -1,10 +1,10 @@
-use crate::io::checkpoint::{CheckpointArchive, CheckpointRecorder};
-use crate::io::hyperparams::HyperParametersRecord;
 use crate::io::json;
-use crate::io::network::NetworkConfig;
+use crate::io::model::checkpoint::{CheckpointArchive, CheckpointRecorder};
+use crate::io::model::hyperparams::HyperParametersRecord;
+use crate::io::model::network::NetworkConfig;
+use crate::io::model::scalers::ScalerRecord;
+use crate::io::model::task::TaskRecord;
 use crate::io::path::PathExt;
-use crate::io::scalers::ScalerRecord;
-use crate::io::task::TaskRecord;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::ErrorKind::AlreadyExists;
@@ -148,7 +148,7 @@ mod tests {
 
     /// Creates an empty `checkpoint-{epoch:06}/` directory. The run lifecycle
     /// (create/trim) only cares about which checkpoint directories exist, not
-    /// their contents — that I/O is exercised in [`crate::io::checkpoint`].
+    /// their contents — that I/O is exercised in [`crate::io::model::checkpoint`].
     fn make_checkpoint(dir: &Path, epoch: usize) {
         fs::create_dir_all(dir.join(format!("checkpoint-{epoch:06}"))).unwrap();
     }

@@ -5,7 +5,7 @@
 
 use crate::activations::{Activation, ActivationProvider};
 use crate::io::json;
-use crate::io::tensors;
+use crate::io::model::tensors;
 use crate::model::{LayerSpec, NeuralNetwork};
 use crate::tensors::Tensors;
 use safetensors::SafeTensors;
@@ -324,8 +324,8 @@ mod tests {
         model.save_weights(&path).unwrap();
 
         // The weights file carries no architecture metadata: it is tensors only.
-        let bytes = crate::io::tensors::load(&path).unwrap();
-        let metadata = crate::io::tensors::read_metadata(&bytes).unwrap();
+        let bytes = crate::io::model::tensors::load(&path).unwrap();
+        let metadata = crate::io::model::tensors::read_metadata(&bytes).unwrap();
         assert!(metadata.is_empty(), "weights file must hold no metadata");
 
         let loaded = NeuralNetwork::load_weights(&path, &config).unwrap();
