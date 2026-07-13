@@ -21,8 +21,8 @@ pub enum Task {
 
 impl Task {
     /// Infers the task from the shape and dtype of a dataset's targets:
-    /// - rank-1 non-negative integers over two distinct values →
-    ///   [`Binary`](Task::Binary), over three or more → [`MultiClass`](Task::MultiClass);
+    /// - rank-1 integers over two distinct values → [`Binary`](Task::Binary), over three or
+    ///   more → [`MultiClass`](Task::MultiClass);
     /// - rank-1 real values → [`Regression`](Task::Regression) with one output;
     /// - rank-2 `(samples, k)` in `{0, 1}` → [`MultiLabel`](Task::MultiLabel);
     /// - rank-2 `(samples, k)` real values → [`Regression`](Task::Regression) with
@@ -30,7 +30,7 @@ impl Task {
     pub fn from_dataset(dataset: &Dataset) -> Self {
         let targets = dataset.targets();
         if targets.ndim() == 1 {
-            let class_ids = targets.iter().all(|&v| v >= 0.0 && v.fract() == 0.0);
+            let class_ids = targets.iter().all(|&v| v.fract() == 0.0);
             match dataset.n_classes() {
                 2 if class_ids => Task::Binary,
                 n if class_ids && n > 2 => Task::MultiClass { n_classes: n },
@@ -73,8 +73,7 @@ impl Task {
     }
 }
 
-/// Checks that `targets` are rank-1 non-negative integer class ids spanning exactly
-/// `expected` classes.
+/// Checks that `targets` are rank-1 integer class ids spanning exactly `expected` classes.
 fn validate_classification(targets: &ArrayD<f32>, expected: usize) -> Result<(), TaskDataError> {
     if targets.ndim() != 1 {
         return Err(TaskDataError::WrongTargetRank {
@@ -82,7 +81,7 @@ fn validate_classification(targets: &ArrayD<f32>, expected: usize) -> Result<(),
             found: targets.ndim(),
         });
     }
-    if !targets.iter().all(|&v| v >= 0.0 && v.fract() == 0.0) {
+    if !targets.iter().all(|&v| v.fract() == 0.0) {
         return Err(TaskDataError::InvalidClassIds);
     }
     let n_classes = targets
@@ -147,7 +146,7 @@ fn validate_regression(targets: &ArrayD<f32>, n_outputs: usize) -> Result<(), Ta
 pub enum TaskDataError {
     /// The targets have the wrong rank for the task.
     WrongTargetRank { expected: usize, found: usize },
-    /// The class ids are not non-negative integers.
+    /// The class ids are not integers.
     InvalidClassIds,
     /// Fewer than two distinct classes are present (carries the count found).
     TooFewClasses(usize),
@@ -168,7 +167,7 @@ impl std::fmt::Display for TaskDataError {
                 write!(f, "targets must be rank-{expected}, but found rank-{found}")
             }
             TaskDataError::InvalidClassIds => {
-                write!(f, "class ids must be non-negative integers")
+                write!(f, "class ids must be integers")
             }
             TaskDataError::TooFewClasses(n) => {
                 write!(f, "a classifier needs at least 2 classes, but found {n}")
@@ -314,13 +313,21 @@ mod tests {
     }
 
     #[test]
+    fn validate_accepts_negative_class_ids() {
+        // labels = {-1, 1}: remapped by sorted position regardless of sign.
+        let dataset = tabular_dataset(array![-1.0f32, 1.0]);
+        assert!(Task::Binary.validate_dataset(&dataset).is_ok());
+    }
+
+    #[test]
+    fn from_dataset_infers_binary_from_a_negative_one_plus_one_encoding() {
+        let dataset = tabular_dataset(array![-1.0f32, 1.0, -1.0, 1.0]);
+        assert_eq!(Task::from_dataset(&dataset), Task::Binary);
+    }
+
+    #[test]
     fn validate_rejects_invalid_class_ids() {
-        // A negative and a fractional value are never valid class ids.
-        let dataset = tabular_dataset(array![0.0f32, -1.0]);
-        assert_eq!(
-            Task::Binary.validate_dataset(&dataset),
-            Err(TaskDataError::InvalidClassIds)
-        );
+        // A fractional value is never a valid class id.
         let dataset = tabular_dataset(array![0.0f32, 1.5]);
         assert_eq!(
             Task::Binary.validate_dataset(&dataset),
