@@ -244,12 +244,13 @@ impl Trainer {
 mod tests {
     use super::super::early_stopping::EarlyStoppingConfig;
     use super::super::hyperparams::{
-        HyperParameters, LossConfig, OptimizerConfig, SchedulerConfig,
+        HyperParameters, LossConfig, LossKind, OptimizerConfig, SchedulerConfig,
     };
     use super::*;
     use crate::activations::SIGMOID;
     use crate::data::Dataset;
     use crate::layers::Dense;
+    use crate::loss_functions::Reduction;
     use crate::optimizers::Optimizer;
     use crate::schedulers::Scheduler;
     use crate::task::Task;
@@ -307,7 +308,10 @@ mod tests {
             OptimizerConfig::Adam,
             SchedulerConfig::Constant,
             GradientClipping::None,
-            LossConfig::for_task(&Task::Binary),
+            LossConfig {
+                kind: LossKind::BinaryCrossEntropy,
+                reduction: Reduction::Mean,
+            },
             early_stopping,
             val_ratio,
             0.1,
@@ -721,7 +725,10 @@ mod tests {
                 cycle_multiplier: 1,
             },
             GradientClipping::None,
-            LossConfig::for_task(&Task::Binary),
+            LossConfig {
+                kind: LossKind::BinaryCrossEntropy,
+                reduction: Reduction::Mean,
+            },
             None,
             0.1,
             0.1,
@@ -772,7 +779,10 @@ mod tests {
             OptimizerConfig::Sgd,
             SchedulerConfig::Constant,
             GradientClipping::None,
-            LossConfig::for_task(&Task::Binary),
+            LossConfig {
+                kind: LossKind::BinaryCrossEntropy,
+                reduction: Reduction::Mean,
+            },
             None,
             0.1,
             0.1,
@@ -816,7 +826,10 @@ mod tests {
                 cycle_multiplier: 1,
             },
             GradientClipping::None,
-            LossConfig::for_task(&Task::Binary),
+            LossConfig {
+                kind: LossKind::BinaryCrossEntropy,
+                reduction: Reduction::Mean,
+            },
             None,
             0.1,
             0.1,
