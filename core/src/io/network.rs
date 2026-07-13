@@ -27,12 +27,9 @@ impl NeuralNetwork {
             .iter()
             .enumerate()
             .flat_map(|(i, layer)| {
-                layer
-                    .named_tensors()
-                    .into_iter()
-                    .map(move |(name, tensor)| {
-                        (format!("layers.{i}.{name}"), tensors::tensor(&tensor))
-                    })
+                layer.tensors().into_iter().map(move |(name, tensor)| {
+                    (format!("layers.{i}.{name}"), tensors::tensor(&tensor))
+                })
             })
             .collect();
         tensors::save(path, entries, HashMap::new())

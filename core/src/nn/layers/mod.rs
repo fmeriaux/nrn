@@ -16,8 +16,9 @@ pub use flatten::Flatten;
 
 use crate::gradients::LayerGradients;
 use crate::model::LayerSpec;
+use crate::tensors::Tensors;
 use dyn_clone::DynClone;
-use ndarray::{ArrayD, ArrayView2, ArrayViewD, ArrayViewMutD};
+use ndarray::{ArrayD, ArrayViewD, ArrayViewMutD};
 use std::fmt::Debug;
 
 /// One trainable parameter of a layer, exposed for an optimizer to update in place.
@@ -93,11 +94,11 @@ pub trait Layer: DynClone + Debug {
     fn is_finite(&self) -> bool;
 
     /// This layer as a weight-free [`LayerSpec`]: its kind and hyperparameters, the tensors
-    /// [`named_tensors`](Layer::named_tensors) carries excepted.
+    /// [`tensors`](Layer::tensors) carries excepted.
     fn spec(&self) -> LayerSpec;
 
-    /// The layer's parameters as named tensors.
-    fn named_tensors(&self) -> Vec<(String, ArrayD<f32>)>;
+    /// The layer's parameters as named tensors, keyed by their canonical names.
+    fn tensors(&self) -> Tensors;
 
     /// The name of the activation this layer applies, or `None` for a layer without one.
     fn activation_name(&self) -> Option<&str>;
@@ -111,10 +112,6 @@ pub trait Layer: DynClone + Debug {
             None => shape,
         }
     }
-
-    /// The layer's weight matrix `(output_size, input_size)`, or `None` for a layer
-    /// that is not an affine map and carries no weights.
-    fn weight_matrix(&self) -> Option<ArrayView2<'_, f32>>;
 }
 
 dyn_clone::clone_trait_object!(Layer);

@@ -120,20 +120,13 @@ mod tests {
     use super::*;
     use crate::activations::SIGMOID;
     use crate::model::NeuronLayerSpec;
-    use crate::tensors::Tensors;
-    use ndarray::{Array1, Ix1};
+    use ndarray::Array1;
 
     /// A layer's biases, read through the [`Layer`] trait's named tensors.
     fn biases(model: &NeuralNetwork, index: usize) -> Array1<f32> {
         model.layers()[index]
-            .named_tensors()
-            .into_iter()
-            .find(|(name, _)| name.as_str() == Tensors::BIAS)
-            .map(|(_, tensor)| {
-                tensor
-                    .into_dimensionality::<Ix1>()
-                    .expect("biases are rank-1")
-            })
+            .tensors()
+            .take_bias()
             .expect("a dense layer carries biases")
     }
 

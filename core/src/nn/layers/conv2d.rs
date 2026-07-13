@@ -293,23 +293,14 @@ impl Layer for Conv2d {
         }
     }
 
-    fn named_tensors(&self) -> Vec<(String, ArrayD<f32>)> {
-        vec![
-            (Tensors::WEIGHT.to_string(), self.kernels().into_dyn()),
-            (
-                Tensors::BIAS.to_string(),
-                self.affine.biases().to_owned().into_dyn(),
-            ),
-        ]
+    fn tensors(&self) -> Tensors {
+        Tensors::empty()
+            .with_weight(self.kernels())
+            .with_bias(self.affine.biases().to_owned())
     }
 
     fn activation_name(&self) -> Option<&str> {
         Some(self.activation.name())
-    }
-
-    fn weight_matrix(&self) -> Option<ArrayView2<'_, f32>> {
-        // A convolution has no single (output_size, input_size) weight matrix.
-        None
     }
 }
 
@@ -433,14 +424,11 @@ mod tests {
         assert_eq!(layer.input_size(), 2 * 5 * 5);
         assert_eq!(layer.output_size(), 3 * 3 * 3);
         assert_eq!(layer.activation_name(), Some("relu"));
-        assert!(layer.weight_matrix().is_none());
         assert!(layer.is_finite());
 
-        let tensors = layer.named_tensors();
-        assert_eq!(tensors[0].0, "weight");
-        assert_eq!(tensors[0].1.shape(), &[3, 2, 3, 3]);
-        assert_eq!(tensors[1].0, "bias");
-        assert_eq!(tensors[1].1.shape(), &[3]);
+        let mut tensors = layer.tensors();
+        assert_eq!(tensors.take_weight::<Ix4>().unwrap().shape(), &[3, 2, 3, 3]);
+        assert_eq!(tensors.take_bias().unwrap().shape(), &[3]);
 
         let params = layer.parameters_mut();
         assert_eq!(params.len(), 2);

@@ -1,7 +1,8 @@
 use crate::gradients::LayerGradients;
 use crate::layers::{BackwardPass, Layer, Parameter};
 use crate::model::LayerSpec;
-use ndarray::{ArrayD, ArrayView2, ArrayViewD};
+use crate::tensors::Tensors;
+use ndarray::{ArrayD, ArrayViewD};
 
 /// A reshape layer collapsing each sample's feature dimensions into a single axis,
 /// mapping a spatial batch `(feature dims…, samples)` to the flat `(features, samples)`
@@ -109,15 +110,11 @@ impl Layer for Flatten {
         LayerSpec::Flatten
     }
 
-    fn named_tensors(&self) -> Vec<(String, ArrayD<f32>)> {
-        vec![]
+    fn tensors(&self) -> Tensors {
+        Tensors::empty()
     }
 
     fn activation_name(&self) -> Option<&str> {
-        None
-    }
-
-    fn weight_matrix(&self) -> Option<ArrayView2<'_, f32>> {
         None
     }
 }
@@ -150,8 +147,7 @@ mod tests {
         assert_eq!(flatten.input_size(), 60);
         assert_eq!(flatten.output_size(), 60);
         assert_eq!(flatten.activation_name(), None);
-        assert!(flatten.weight_matrix().is_none());
-        assert!(flatten.named_tensors().is_empty());
+        assert!(flatten.tensors().is_empty());
         assert!(flatten.parameters_mut().is_empty());
         assert!(flatten.is_finite());
     }

@@ -3,6 +3,7 @@
 
 use ndarray::{Array, Array1, ArrayD, Dimension, Ix1};
 use std::collections::HashMap;
+use std::collections::hash_map::IntoIter;
 use std::fmt;
 
 /// A layer's named tensors keyed by their canonical parameter names. It exposes those names
@@ -16,6 +17,28 @@ impl Tensors {
     pub const WEIGHT: &'static str = "weight";
     /// Canonical name of a layer's bias tensor.
     pub const BIAS: &'static str = "bias";
+
+    /// An empty set, to be populated with the `with_*` builders.
+    pub fn empty() -> Self {
+        Tensors::default()
+    }
+
+    /// Adds the tensor `tensor` under `name`, casting it from rank `D` to a dynamic shape.
+    pub fn with<D: Dimension>(mut self, name: &str, tensor: Array<f32, D>) -> Self {
+        self.0.insert(name.to_string(), tensor.into_dyn());
+        self
+    }
+
+    /// Adds the [`WEIGHT`](Tensors::WEIGHT) tensor of any rank (rank-2 for a dense matrix,
+    /// rank-4 for a convolution kernel).
+    pub fn with_weight<D: Dimension>(self, weight: Array<f32, D>) -> Self {
+        self.with(Self::WEIGHT, weight)
+    }
+
+    /// Adds the [`BIAS`](Tensors::BIAS) tensor, a rank-1 vector.
+    pub fn with_bias(self, bias: Array1<f32>) -> Self {
+        self.with(Self::BIAS, bias)
+    }
 
     /// Removes the tensor named `name`, casting it to rank `D`. Errors with
     /// [`TensorError::Missing`] when it is absent, or [`TensorError::WrongRank`] when its rank is
@@ -44,6 +67,11 @@ impl Tensors {
     /// Removes the [`BIAS`](Tensors::BIAS) tensor, a rank-1 vector.
     pub fn take_bias(&mut self) -> Result<Array1<f32>, TensorError> {
         self.take::<Ix1>(Self::BIAS)
+    }
+
+    /// Whether there are no tensors, as for a parameterless layer.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
@@ -87,6 +115,15 @@ impl From<HashMap<String, ArrayD<f32>>> for Tensors {
 impl FromIterator<(String, ArrayD<f32>)> for Tensors {
     fn from_iter<I: IntoIterator<Item = (String, ArrayD<f32>)>>(iter: I) -> Self {
         Tensors(iter.into_iter().collect())
+    }
+}
+
+impl IntoIterator for Tensors {
+    type Item = (String, ArrayD<f32>);
+    type IntoIter = IntoIter<String, ArrayD<f32>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
     }
 }
 

@@ -182,25 +182,14 @@ impl Layer for Dense {
         }
     }
 
-    fn named_tensors(&self) -> Vec<(String, ArrayD<f32>)> {
-        vec![
-            (
-                Tensors::WEIGHT.to_string(),
-                self.affine.weights().to_owned().into_dyn(),
-            ),
-            (
-                Tensors::BIAS.to_string(),
-                self.affine.biases().to_owned().into_dyn(),
-            ),
-        ]
+    fn tensors(&self) -> Tensors {
+        Tensors::empty()
+            .with_weight(self.affine.weights().to_owned())
+            .with_bias(self.affine.biases().to_owned())
     }
 
     fn activation_name(&self) -> Option<&str> {
         Some(self.activation.name())
-    }
-
-    fn weight_matrix(&self) -> Option<ArrayView2<'_, f32>> {
-        Some(self.affine.weights())
     }
 }
 
@@ -217,7 +206,7 @@ mod tests {
         assert_eq!(layer.output_size(), 2);
         assert_eq!(layer.input_size(), 3);
         assert_eq!(layer.activation_name(), Some("relu"));
-        assert_eq!(layer.weight_matrix().unwrap().dim(), (2, 3));
+        assert_eq!(layer.tensors().take_weight::<Ix2>().unwrap().dim(), (2, 3));
     }
 
     #[test]
@@ -237,13 +226,11 @@ mod tests {
     }
 
     #[test]
-    fn named_tensors_are_weight_and_bias() {
+    fn tensors_are_weight_and_bias() {
         let layer = Dense::new(array![[1.0, 2.0]], array![3.0], RELU.clone());
-        let tensors = layer.named_tensors();
-        assert_eq!(tensors[0].0, "weight");
-        assert_eq!(tensors[0].1, array![[1.0, 2.0]].into_dyn());
-        assert_eq!(tensors[1].0, "bias");
-        assert_eq!(tensors[1].1, array![3.0].into_dyn());
+        let mut tensors = layer.tensors();
+        assert_eq!(tensors.take_weight::<Ix2>().unwrap(), array![[1.0, 2.0]]);
+        assert_eq!(tensors.take_bias().unwrap(), array![3.0]);
     }
 
     #[test]

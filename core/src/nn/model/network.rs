@@ -475,7 +475,7 @@ mod tests {
             .specs()
             .into_iter()
             .zip(model.layers())
-            .map(|(spec, layer)| (spec, layer.named_tensors().into_iter().collect()))
+            .map(|(spec, layer)| (spec, layer.tensors()))
             .collect();
         NeuralNetwork::from_specs_and_weights(model.input_shape(), layers).unwrap()
     }

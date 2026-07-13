@@ -191,15 +191,15 @@ impl ActivationDiagram {
                     (LayerRole::Input, Vec::new())
                 } else {
                     let layer = &network.layers()[stage - 1];
-                    let edges = match layer.weight_matrix() {
-                        Some(weights) => edges_for(
-                            weights,
+                    let edges = match layer.tensors().take_weight::<Ix2>() {
+                        Ok(weights) => edges_for(
+                            weights.view(),
                             stages[stage - 1].column(0),
                             &shown[stage - 1],
                             &shown[stage],
                             options.min_edge_magnitude,
                         ),
-                        None => Vec::new(),
+                        Err(_) => Vec::new(),
                     };
                     (
                         LayerRole::Activated(
@@ -477,10 +477,10 @@ mod tests {
     }
 
     #[test]
-    fn a_layer_without_a_weight_matrix_contributes_a_node_column_with_no_edges() {
+    fn a_layer_without_a_weight_contributes_a_node_column_with_no_edges() {
         use crate::layers::Flatten;
 
-        // A parameterless Flatten exposes no weight_matrix, so its diagram layer is a bare
+        // A parameterless Flatten exposes no weight tensor, so its diagram layer is a bare
         // node column: units but no incoming edges. The Dense head still wires its edges.
         let net = NeuralNetwork::new(vec![
             Box::new(Flatten::new(vec![2])),

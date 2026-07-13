@@ -161,9 +161,8 @@ mod tests {
     use crate::model::{NeuralNetwork, NeuronLayerSpec};
     use crate::optimizers::StochasticGradientDescent;
     use crate::schedulers::ConstantScheduler;
-    use crate::tensors::Tensors;
     use crate::weight_decay::WeightDecay;
-    use ndarray::{Array1, Array2, ArrayD, Ix1, array};
+    use ndarray::{Array1, Array2, ArrayD, Ix2, array};
 
     /// Mean-reduced binary cross-entropy for the single-logit test networks.
     fn binary_loss() -> Arc<dyn LossFunction> {
@@ -178,22 +177,16 @@ mod tests {
     /// A layer's weight matrix, read through the [`Layer`] trait.
     fn weights(model: &NeuralNetwork, index: usize) -> Array2<f32> {
         model.layers()[index]
-            .weight_matrix()
+            .tensors()
+            .take_weight::<Ix2>()
             .expect("a dense layer exposes a weight matrix")
-            .to_owned()
     }
 
     /// A layer's biases, read through the [`Layer`] trait's named tensors.
     fn biases(model: &NeuralNetwork, index: usize) -> Array1<f32> {
         model.layers()[index]
-            .named_tensors()
-            .into_iter()
-            .find(|(name, _)| name.as_str() == Tensors::BIAS)
-            .map(|(_, tensor)| {
-                tensor
-                    .into_dimensionality::<Ix1>()
-                    .expect("biases are rank-1")
-            })
+            .tensors()
+            .take_bias()
             .expect("a dense layer carries biases")
     }
 
