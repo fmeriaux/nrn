@@ -162,7 +162,7 @@ impl TrainerCallback for ModelSaver {
         _epoch: usize,
     ) -> CallbackResult {
         if let Some(model) = model {
-            let predictor = Predictor::new(model.clone(), self.task, self.scaler.clone());
+            let predictor = Predictor::new(model.clone(), self.task.clone(), self.scaler.clone());
             saved(&Artifacts::single("Model", predictor.save(&self.path)?));
         }
         Ok(())

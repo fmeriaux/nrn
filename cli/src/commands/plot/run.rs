@@ -119,7 +119,12 @@ impl RunArgs {
                 let mut figures = Vec::with_capacity(indices.len());
                 for &index in indices {
                     figures.push(boundary_at(
-                        archive, index, dataset, task, scaler, resolution,
+                        archive,
+                        index,
+                        dataset,
+                        task.clone(),
+                        scaler,
+                        resolution,
                     )?);
                     progress.advance();
                 }
@@ -141,7 +146,8 @@ impl RunArgs {
 
                 let progress = Frames::new(indices.len(), "Rendering GIF");
                 for &index in indices {
-                    let figure = boundary_at(archive, index, dataset, task, scaler, resolution)?;
+                    let figure =
+                        boundary_at(archive, index, dataset, task.clone(), scaler, resolution)?;
                     writer.write_frame(&figure.to_image(&cfg)?)?;
                     progress.advance();
                 }

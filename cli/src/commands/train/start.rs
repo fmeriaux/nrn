@@ -85,7 +85,7 @@ impl StartArgs {
             };
             let config = ModelConfigRecord {
                 network: NetworkConfigRecord::from(&model),
-                task: task.into(),
+                task: task.clone().into(),
             };
             let scaler = data.scaler().cloned().map(ScalerRecord::from);
             let recorder =
@@ -103,7 +103,7 @@ impl StartArgs {
             .with(ModelSaver::new(
                 &run_dir,
                 &model_name,
-                task,
+                task.clone(),
                 data.scaler().cloned(),
             ))
             .with_opt(recorder);

@@ -21,7 +21,7 @@ impl Predictor {
         self.network.save_weights(dir.join(MODEL_STEM))?;
         ModelConfigRecord {
             network: NetworkConfigRecord::from(&self.network),
-            task: self.task.into(),
+            task: self.task.clone().into(),
         }
         .save(dir.join(CONFIG_STEM))?;
         if let Some(scaler) = &self.scaler {
