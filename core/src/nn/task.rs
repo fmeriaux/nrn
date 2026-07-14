@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::error::Error;
 
 /// The learning task a training run optimizes for. Each variant names the task and carries the
-/// output width it implies.
+/// output shape it implies.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Task {
     /// Two mutually exclusive classes, one output.
