@@ -10,36 +10,22 @@ ML workflow: data generation/encoding → training (with optional scaling) → v
 
 ## Commands
 
-The project uses [Task](https://taskfile.dev) (`brew install go-task/tap/go-task`). Run `task`
-(no arguments) to list all tasks. `task checks` (lint + build + test) is the pre-commit gate.
+Build/test/lint commands, testing conventions, and commit conventions are documented in
+[CONTRIBUTING.md](CONTRIBUTING.md) — that's the source of truth, followed here too (`task checks`
+is the pre-commit gate; single test: `cargo nextest run <name>`).
 
-Useful extras:
+## Code style
 
-```sh
-cargo nextest run <name>        # single test by name, across workspace
-cargo nextest run -p nrn <name> # core crate only
-task lint                       # rustfmt --check + clippy (-D warnings), with & without features
-task audit                      # cargo-audit advisory scan
-task coverage / coverage-html   # cargo-llvm-cov summary / HTML report
-task coverage-check             # fail under the line-coverage threshold (CI gate)
-```
-
-All serialization is pure Rust — no system C library is needed to build or run.
-
-## Testing
-
-New public behavior ships with a test; every bug fix ships with a regression test that fails
-before the fix. Unit tests live in-module under `#[cfg(test)]`; CLI behavior is covered
-end-to-end through `assert_cmd` in `cli/tests/`. CI gates merges on a line-coverage threshold
-(`task coverage-check`) — keep coverage from regressing.
-
-## Commit conventions
-
-[Conventional Commits](https://conventionalcommits.org). Every message is prefixed with a type,
-optionally scoped (`feat(training): …`):
-
-`feat:` feature · `fix:` bug fix · `refactor:` neither · `test:` tests · `docs:` docs only ·
-`ci:` CI/CD · `build:` build system / deps · `chore:` everything else.
+- **Doc comments (`///`)** — descriptive only, never justify a design choice ("so that…",
+  "because…") or enumerate a field's consumers. Document all fields of a struct/variant, or none.
+  Applies beyond `///` too: `Cargo.toml`/config comments, CI/Taskfile comments, Markdown docs.
+- **Panic messages** — `expect()` (internal invariant, addressed to a maintainer) has no trailing
+  period; `assert!`/`panic!` (caller precondition, documented under `# Panics`) ends with one.
+  Casing follows natural language; code identifiers and acronyms stay verbatim.
+- **API shape** — prefer an inherent method on the domain type (`predictor.decision_boundary(..)`)
+  over a free function taking the type as its first argument.
+- **Docs stay in sync** — when a CLI flag, command, or workflow step changes, update
+  README.md/CONTRIBUTING.md in the same PR; verify examples by actually running the binary.
 
 ## Workspace structure
 
