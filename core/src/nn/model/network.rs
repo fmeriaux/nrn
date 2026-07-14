@@ -395,6 +395,10 @@ mod tests {
         let err = model.validate_output_shape(&[8]).unwrap_err();
         assert_eq!(err.expected, vec![8]);
         assert_eq!(err.found, vec![2, 2, 2]);
+        assert_eq!(
+            err.to_string(),
+            "model outputs shape [2, 2, 2] but shape [8] was expected"
+        );
     }
 
     #[test]

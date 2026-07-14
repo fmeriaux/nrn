@@ -959,5 +959,42 @@ mod tests {
                 found: vec![3],
             })
         );
+        assert_eq!(
+            err.to_string(),
+            "model outputs shape [3] but shape [1] was expected"
+        );
+    }
+
+    #[test]
+    fn build_rejects_a_model_input_shape_that_does_not_match_the_dataset() {
+        use crate::activations::SIGMOID;
+        use crate::layers::Dense;
+        use ndarray::{Array1, Array2};
+
+        let hp = spec_with_scaler(None);
+        let data = hp.prepare(ramp_dataset(), None).unwrap();
+
+        // ramp_dataset carries 2 features; this model expects 3.
+        let model = NeuralNetwork::single(Dense::new(
+            Array2::from_elem((1, 3), 0.1),
+            Array1::zeros(1),
+            SIGMOID.clone(),
+        ));
+
+        let err = hp
+            .build(model, Task::Binary, data, Callbacks::empty())
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(
+            err,
+            BuildError::InputShape(InputShapeMismatch {
+                expected: vec![3],
+                found: vec![2],
+            })
+        );
+        assert_eq!(
+            err.to_string(),
+            "instance has shape [2] but the model expects [3]"
+        );
     }
 }
