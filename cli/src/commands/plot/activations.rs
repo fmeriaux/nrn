@@ -4,6 +4,7 @@ use crate::display::{Artifacts, loaded, saved};
 use crate::path::PathExt;
 use clap::Args;
 use nrn::model::Predictor;
+use nrn::plot::ActivationDiagram;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
@@ -41,7 +42,9 @@ impl ActivationsArgs {
         let image_path = self.image_path();
         let instance = acquire_instance(self.instance, predictor.network.input_size())?;
 
-        let diagram = predictor.activation_diagram(instance.view(), &options)?;
+        let activations = predictor.infer_instance(instance.view())?;
+        let diagram =
+            ActivationDiagram::from_activations(&predictor.network, &activations, &options);
 
         match self.format {
             Format::Console => println!("{}", diagram.to_console()),

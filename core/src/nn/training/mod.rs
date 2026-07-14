@@ -14,7 +14,7 @@ pub use callbacks::{CallbackError, CallbackResult, Callbacks, TrainerCallback};
 pub use early_stopping::{EarlyStopping, EarlyStoppingConfig, EarlyStoppingConfigError};
 pub use evaluator::Evaluator;
 pub use hyperparams::{
-    HyperParameters, HyperParametersError, LossConfig, OptimizerConfig, SchedulerConfig,
+    HyperParameters, HyperParametersError, LossConfig, LossKind, OptimizerConfig, SchedulerConfig,
 };
 pub use outcome::TrainingOutcome;
 pub use preprocessing::TrainingData;

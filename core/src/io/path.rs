@@ -18,6 +18,10 @@ pub trait PathExt {
     /// normalizing, and validating no directory traversal outside the current directory.
     /// Returns an error if the result is outside the current working directory.
     fn combine_safe_with_cwd<P: AsRef<Path>>(user_path: P) -> Result<PathBuf>;
+
+    /// Returns `self` if a sidecar file exists at `self` with `ext` appended, `None` otherwise —
+    /// for optional files whose presence gates whether they get loaded at all.
+    fn optional_sidecar(&self, ext: &str) -> Option<PathBuf>;
 }
 
 impl PathExt for Path {
@@ -67,5 +71,47 @@ impl PathExt for Path {
     fn combine_safe_with_cwd<P: AsRef<Path>>(user_path: P) -> Result<PathBuf> {
         let cwd = env::current_dir()?;
         cwd.combine_safe(user_path)
+    }
+
+    fn optional_sidecar(&self, ext: &str) -> Option<PathBuf> {
+        self.with_extension(ext)
+            .exists()
+            .then(|| self.to_path_buf())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        env::temp_dir().join(format!("nrn_path_{tag}_{}", std::process::id()))
+    }
+
+    #[test]
+    fn optional_sidecar_returns_the_stem_when_the_file_exists() {
+        let dir = temp_dir("sidecar_present");
+        fs::create_dir_all(&dir).unwrap();
+        let stem = dir.join("preprocessor");
+        fs::write(stem.with_extension("json"), "{}").unwrap();
+
+        let found = stem.optional_sidecar("json");
+
+        fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(found, Some(stem));
+    }
+
+    #[test]
+    fn optional_sidecar_returns_none_when_the_file_is_absent() {
+        let dir = temp_dir("sidecar_absent");
+        fs::create_dir_all(&dir).unwrap();
+        let stem = dir.join("preprocessor");
+
+        let found = stem.optional_sidecar("json");
+
+        fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(found, None);
     }
 }

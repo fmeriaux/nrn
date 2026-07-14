@@ -20,6 +20,7 @@ mod instance;
 mod model;
 mod predictor;
 mod progress;
+mod task;
 mod terminal;
 mod theme;
 

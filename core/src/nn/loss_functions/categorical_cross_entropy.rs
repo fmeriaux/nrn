@@ -47,10 +47,13 @@ impl LossFunction for CategoricalCrossEntropy {
         logsumexp * sum_y - sum_yz
     }
 
-    /// Computes ∂L/∂z — the gradient of the loss with respect to the logits: `softmax(z) − y`.
-    /// Works out-of-the-box for N-Dimensional tensors.
+    /// Computes ∂L/∂z — the gradient of the loss with respect to the logits: the per-position
+    /// residual `softmax(z) − y`, scaled by the [`Reduction`] over the positions (the class lane
+    /// is a single term). Works out-of-the-box for N-Dimensional tensors.
     fn gradient(&self, inputs: ArrayViewD<f32>, targets: ArrayViewD<f32>) -> ArrayD<f32> {
-        SOFTMAX.apply(inputs) - targets
+        let positions = inputs.len() / inputs.shape()[0];
+        let residual = SOFTMAX.apply(inputs) - targets;
+        self.reduction.scale_gradient(residual, positions)
     }
 }
 
@@ -112,6 +115,36 @@ mod tests {
         let (g0, g1) = (grad[[0, 0]], grad[[1, 0]]);
         assert!((g0 - (-0.5)).abs() < 1e-6, "grad was {g0}");
         assert!((g1 - 0.5).abs() < 1e-6, "grad was {g1}");
+    }
+
+    #[test]
+    fn mean_gradient_divides_the_residual_by_the_position_count() {
+        // Two uniform 2-class positions: residual is softmax(0.5) − y at each, and Mean halves
+        // it over the two positions (the class lane counts as a single term).
+        let inputs = array![[0.0_f32, 0.0], [0.0, 0.0]].into_dyn();
+        let targets = array![[1.0_f32, 0.0], [0.0, 1.0]].into_dyn();
+        let grad = cce().gradient(inputs.view(), targets.view());
+        // Position 0: (0.5-1, 0.5-0)/2 = (-0.25, 0.25); position 1: (0.5, 0.5-1)/2 = (0.25, -0.25).
+        assert!(
+            (grad[[0, 0]] - (-0.25)).abs() < 1e-6,
+            "grad was {}",
+            grad[[0, 0]]
+        );
+        assert!(
+            (grad[[1, 0]] - 0.25).abs() < 1e-6,
+            "grad was {}",
+            grad[[1, 0]]
+        );
+        assert!(
+            (grad[[0, 1]] - 0.25).abs() < 1e-6,
+            "grad was {}",
+            grad[[0, 1]]
+        );
+        assert!(
+            (grad[[1, 1]] - (-0.25)).abs() < 1e-6,
+            "grad was {}",
+            grad[[1, 1]]
+        );
     }
 
     #[test]

@@ -1087,66 +1087,9 @@ fn synth_warns_on_uneven_clusters_and_plots_scatter() {
 
     let ds_name = "ring-seed1-c2-f2-n20";
     assert!(
-        dir.join(format!("{ds_name}.safetensors")).exists(),
+        dir.join(format!("{ds_name}.parquet")).exists(),
         "expected dataset named after the generated count"
     );
-}
-
-#[test]
-fn start_with_auto_layers_infers_architecture() {
-    // --auto-layers derives the hidden layers from the dataset shape instead of
-    // taking explicit --layers; the recap reports the inferred architecture.
-    let tmp = tempfile::tempdir().unwrap();
-    let dir = tmp.path();
-
-    nrn(
-        dir,
-        &[
-            "synth",
-            "--min",
-            "0",
-            "--max",
-            "10",
-            "--seed",
-            "1",
-            "--distribution",
-            "ring",
-            "--clusters",
-            "2",
-            "--samples",
-            "20",
-        ],
-    )
-    .success();
-
-    let ds_name = "ring-seed1-c2-f2-n20";
-
-    let out = Command::cargo_bin("nrn")
-        .unwrap()
-        .current_dir(dir)
-        .args([
-            "train",
-            "start",
-            "--seed",
-            "42",
-            ds_name,
-            "--epochs",
-            "2",
-            "--checkpoint-interval",
-            "0",
-            "--no-clip",
-            "--auto-layers",
-        ])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.contains("relu") && stdout.contains("identity"),
-        "expected an inferred hidden-layer architecture in the recap: {stdout}"
-    );
-    assert!(model_exists(dir, ds_name));
 }
 
 #[test]

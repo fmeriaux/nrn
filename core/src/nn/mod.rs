@@ -12,5 +12,7 @@ pub mod loss_functions;
 pub mod model;
 pub mod optimizers;
 pub mod schedulers;
+pub mod task;
+pub mod tensors;
 pub mod training;
 pub mod weight_decay;

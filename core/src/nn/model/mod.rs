@@ -1,13 +1,15 @@
-//! This module defines the core data structures for representing neural network architectures.
+//! Neural network architecture: a declarative, weight-free description of a network's shape,
+//! and the live network of weighted layers it builds.
 //!
-//! It provides types for individual neuron layers ([`NeuronLayerSpec`]) and entire networks
-//! ([`NeuralNetwork`]), plus the [`Predictor`] that pairs a trained network with its scaler.
+//! [`NetworkConfig`], assembled fluently through [`NetworkConfigBuilder`], is the architecture
+//! alone; [`NeuralNetwork`] is the weighted layers it configures. [`Predictor`] pairs a trained
+//! network with the scaler fitted alongside it.
 //! The submodules are re-exported flat, so every type lives at `crate::model::*`.
 
+mod config;
 mod network;
 mod predictor;
-mod specs;
 
+pub use config::*;
 pub use network::*;
 pub use predictor::*;
-pub use specs::*;

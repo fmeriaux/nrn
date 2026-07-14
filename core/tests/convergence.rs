@@ -1,9 +1,12 @@
 use ndarray::array;
-use nrn::activations::SIGMOID;
+use nrn::activations::{IDENTITY, SIGMOID};
 use nrn::data::Dataset;
-use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec};
+use nrn::loss_functions::Reduction;
+use nrn::model::{NetworkConfig, NeuralNetwork};
+use nrn::task::Task;
 use nrn::training::{
-    Callbacks, GradientClipping, HyperParameters, LossConfig, OptimizerConfig, SchedulerConfig,
+    Callbacks, GradientClipping, HyperParameters, LossConfig, LossKind, OptimizerConfig,
+    SchedulerConfig,
 };
 
 #[test]
@@ -13,7 +16,7 @@ fn xor_converges_to_low_loss() {
     // `test_ratio = 0.5` the shuffled split trains on half of them, so every XOR
     // point is still represented in training.
     let xor_dataset = || {
-        Dataset::new(
+        Dataset::tabular(
             array![
                 [0.0, 0.0],
                 [0.0, 1.0],
@@ -30,7 +33,10 @@ fn xor_converges_to_low_loss() {
         .unwrap()
     };
 
-    let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![8]), 2, &*SIGMOID).unwrap();
+    let config = NetworkConfig::builder(vec![2])
+        .dense(8, &SIGMOID)
+        .dense(1, &IDENTITY)
+        .build();
 
     let hyperparameters = HyperParameters::from_values(
         10_000,
@@ -41,7 +47,10 @@ fn xor_converges_to_low_loss() {
         OptimizerConfig::Adam,
         SchedulerConfig::Constant,
         GradientClipping::None,
-        LossConfig::CrossEntropy,
+        LossConfig {
+            kind: LossKind::BinaryCrossEntropy,
+            reduction: Reduction::Mean,
+        },
         None,
         0.0,
         0.5,
@@ -52,7 +61,8 @@ fn xor_converges_to_low_loss() {
     let data = hyperparameters.prepare(xor_dataset(), None).unwrap();
     let report = hyperparameters
         .build(
-            NeuralNetwork::initialization(2, &specs, 42),
+            NeuralNetwork::from_config(config, 42).unwrap(),
+            Task::Binary,
             data,
             Callbacks::new(vec![]),
         )
@@ -71,7 +81,7 @@ fn xor_converges_with_mini_batch() {
     // lr decay, so we stop at 8 000 epochs where loss is reliably < 0.01.
     // See `xor_converges_to_low_loss` for the doubled-dataset / split rationale.
     let xor_dataset = || {
-        Dataset::new(
+        Dataset::tabular(
             array![
                 [0.0, 0.0],
                 [0.0, 1.0],
@@ -88,7 +98,10 @@ fn xor_converges_with_mini_batch() {
         .unwrap()
     };
 
-    let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![8]), 2, &*SIGMOID).unwrap();
+    let config = NetworkConfig::builder(vec![2])
+        .dense(8, &SIGMOID)
+        .dense(1, &IDENTITY)
+        .build();
 
     let hyperparameters = HyperParameters::from_values(
         8_000,
@@ -99,7 +112,10 @@ fn xor_converges_with_mini_batch() {
         OptimizerConfig::Adam,
         SchedulerConfig::Constant,
         GradientClipping::None,
-        LossConfig::CrossEntropy,
+        LossConfig {
+            kind: LossKind::BinaryCrossEntropy,
+            reduction: Reduction::Mean,
+        },
         None,
         0.0,
         0.5,
@@ -110,7 +126,8 @@ fn xor_converges_with_mini_batch() {
     let data = hyperparameters.prepare(xor_dataset(), None).unwrap();
     let report = hyperparameters
         .build(
-            NeuralNetwork::initialization(2, &specs, 42),
+            NeuralNetwork::from_config(config, 42).unwrap(),
+            Task::Binary,
             data,
             Callbacks::new(vec![]),
         )
@@ -131,7 +148,7 @@ fn three_class_converges_to_low_loss() {
     // output path end-to-end. The dataset holds two copies of the 3 points (6
     // samples); with `test_ratio = 0.5` the shuffled split trains on half of them.
     let three_class_dataset = || {
-        Dataset::new(
+        Dataset::tabular(
             array![
                 [0.0, 0.0],
                 [1.0, 0.0],
@@ -148,7 +165,10 @@ fn three_class_converges_to_low_loss() {
 
     // Sigmoid avoids the dead-neuron risk of ReLU(0)=0 for the [0.0, 0.0] sample
     // (He init sets biases to zero, so relu([0,0]) = 0 and its gradient is dead at epoch 0).
-    let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![8]), 3, &*SIGMOID).unwrap();
+    let config = NetworkConfig::builder(vec![2])
+        .dense(8, &SIGMOID)
+        .dense(3, &IDENTITY)
+        .build();
 
     let hyperparameters = HyperParameters::from_values(
         5_000,
@@ -159,7 +179,10 @@ fn three_class_converges_to_low_loss() {
         OptimizerConfig::Adam,
         SchedulerConfig::Constant,
         GradientClipping::None,
-        LossConfig::CrossEntropy,
+        LossConfig {
+            kind: LossKind::CategoricalCrossEntropy,
+            reduction: Reduction::Mean,
+        },
         None,
         0.0,
         0.5,
@@ -172,7 +195,8 @@ fn three_class_converges_to_low_loss() {
         .unwrap();
     let report = hyperparameters
         .build(
-            NeuralNetwork::initialization(2, &specs, 42),
+            NeuralNetwork::from_config(config, 42).unwrap(),
+            Task::MultiClass { n_classes: 3 },
             data,
             Callbacks::new(vec![]),
         )

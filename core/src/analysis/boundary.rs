@@ -68,7 +68,7 @@ impl Predictor {
         let n_dims = mins.len();
         let (grid_points, inputs) = make_grid_and_inputs(mins, maxs, resolution);
         let predictions = self
-            .class_probabilities(inputs.view())
+            .output(inputs.view())
             .expect("grid dimensionality matches the network input size")
             .into_dimensionality::<Ix2>()
             .expect("a flat grid yields rank-2 (classes, points) probabilities");
@@ -250,6 +250,7 @@ mod tests {
     use crate::data::scalers::{MinMaxScaler, ScalerMethod};
     use crate::layers::Dense;
     use crate::model::NeuralNetwork;
+    use crate::task::Task;
     use ndarray::array;
 
     #[test]
@@ -281,6 +282,7 @@ mod tests {
                 array![0.0],
                 IDENTITY.clone(),
             )),
+            Task::Binary,
             None,
         )
     }
@@ -294,6 +296,7 @@ mod tests {
                 array![0.0, 0.0, -10.0],
                 IDENTITY.clone(),
             )),
+            Task::MultiClass { n_classes: 3 },
             None,
         )
     }
@@ -328,7 +331,7 @@ mod tests {
         let scaler = ScalerMethod::MinMax(
             MinMaxScaler::default().fit(array![[0.0, 2.0], [0.0, 2.0]].view()),
         );
-        let predictor = Predictor::new(network, Some(scaler));
+        let predictor = Predictor::new(network, Task::Binary, Some(scaler));
 
         // Grid x0 ∈ {-1, 0, 1, 2, 3}; the boundary sits on raw x0 == 1.0.
         let boundary = predictor.decision_boundary(&[-1.0, -1.0], &[3.0, 3.0], 5);

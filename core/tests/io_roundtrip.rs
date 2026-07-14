@@ -1,21 +1,26 @@
-//! End-to-end IO round-trip over the full safetensors pipeline:
-//! dataset → scaler → model → training run → inputs, all saved and reloaded.
+//! End-to-end IO round-trip over the full persistence pipeline:
+//! dataset (Parquet) → scaler (JSON) → model / training run (safetensors) →
+//! instance (JSON), all saved and reloaded.
 #![cfg(feature = "io")]
 
 use ndarray::array;
-use nrn::activations::RELU;
+use nrn::activations::{IDENTITY, RELU};
 use nrn::data::scalers::{MinMaxScaler, Scaler, ScalerMethod};
 use nrn::data::{Dataset, Instance};
 use nrn::evaluation::{Evaluation, EvaluationSet};
-use nrn::io::hyperparams::{
-    ClippingRecord, HyperParametersRecord, LossRecord, OptimizerRecord, SchedulerRecord,
+use nrn::io::model::config::ModelConfigRecord;
+use nrn::io::model::hyperparams::{
+    ClippingRecord, HyperParametersRecord, LossKindRecord, LossRecord, OptimizerRecord,
+    ReductionRecord, SchedulerRecord,
 };
-use nrn::io::run::{TrainingMeta, TrainingRun};
-use nrn::io::scalers::ScalerRecord;
+use nrn::io::model::network::NetworkConfigRecord;
+use nrn::io::model::run::{TrainingMeta, TrainingRun};
+use nrn::io::model::scalers::ScalerRecord;
 use nrn::loss_functions::{BinaryCrossEntropy, LossFunction, Reduction};
-use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec, Predictor};
+use nrn::model::{NetworkConfig, NeuralNetwork};
 use nrn::optimizers::Adam;
 use nrn::schedulers::ConstantScheduler;
+use nrn::task::Task;
 use nrn::training::{GradientClipping, TrainerCallback};
 use nrn::weight_decay::WeightDecay;
 use std::path::PathBuf;
@@ -40,18 +45,21 @@ fn sample_hyperparams() -> HyperParametersRecord {
         early_stopping: None,
         val_ratio: 0.1,
         test_ratio: 0.1,
-        loss: LossRecord::CrossEntropy,
+        loss: LossRecord {
+            kind: LossKindRecord::BinaryCrossEntropy,
+            reduction: ReductionRecord::Mean,
+        },
         seed: 0,
         scaler: None,
     }
 }
 
 #[test]
-fn full_pipeline_roundtrips_through_safetensors() {
+fn full_pipeline_roundtrips_every_artifact() {
     let dir = temp_dir();
 
     // --- Dataset --------------------------------------------------------
-    let dataset = Dataset::new(
+    let dataset = Dataset::tabular(
         array![[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]],
         array![0.0, 1.0, 1.0, 0.0],
         None,
@@ -61,8 +69,8 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let dataset_path = dir.join("dataset");
     dataset.save(&dataset_path).unwrap();
     let loaded = Dataset::load(&dataset_path).unwrap();
-    assert_eq!(dataset.features(), loaded.features());
-    assert_eq!(dataset.labels(), loaded.labels());
+    assert_eq!(dataset.inputs(), loaded.inputs());
+    assert_eq!(dataset.targets(), loaded.targets());
 
     // --- Scaler (serialized as JSON, not safetensors) -------------------
     // Scalers work on the model dataset's samples-last inputs (features leading).
@@ -81,8 +89,11 @@ fn full_pipeline_roundtrips_through_safetensors() {
     assert_eq!(expected, actual);
 
     // --- Model + training run (incremental writer → directory load) --
-    let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![4]), 2, &*RELU).unwrap();
-    let mut model = NeuralNetwork::initialization(2, &specs, 0);
+    let config = NetworkConfig::builder(vec![2])
+        .dense(4, &RELU)
+        .dense(1, &IDENTITY)
+        .build();
+    let mut model = NeuralNetwork::from_config(config, 0).unwrap();
 
     let loss_fn: Arc<dyn LossFunction> = Arc::new(BinaryCrossEntropy::new(Reduction::Mean));
     let mut optimizer = Adam::with_defaults(0.05.try_into().unwrap(), WeightDecay::ZERO);
@@ -96,8 +107,12 @@ fn full_pipeline_roundtrips_through_safetensors() {
             dataset: "test_dataset".to_string(),
             model: "model-test_dataset".to_string(),
             hyperparams: sample_hyperparams(),
-            scaler: None,
         },
+        &ModelConfigRecord {
+            network: NetworkConfigRecord::from(&model),
+            task: Task::Binary.into(),
+        },
+        None,
         false,
     )
     .unwrap();
@@ -142,8 +157,9 @@ fn full_pipeline_roundtrips_through_safetensors() {
     }
 
     let model_path = dir.join("model");
-    model.save(&model_path).unwrap();
-    let reloaded_model = NeuralNetwork::load(&model_path).unwrap();
+    let config = NetworkConfigRecord::from(&model);
+    model.save_weights(&model_path).unwrap();
+    let reloaded_model = NeuralNetwork::load_weights(&model_path, &config).unwrap();
     assert_eq!(
         model.output(model_dataset.inputs().view()),
         reloaded_model.output(model_dataset.inputs().view())
@@ -169,47 +185,6 @@ fn full_pipeline_roundtrips_through_safetensors() {
     let instance_path = dir.join("instance");
     instance.save(&instance_path).unwrap();
     assert_eq!(instance, Instance::load(&instance_path).unwrap());
-
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-fn sample_network() -> NeuralNetwork {
-    let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![4]), 2, &*RELU).unwrap();
-    NeuralNetwork::initialization(2, &specs, 0)
-}
-
-#[test]
-fn predictor_with_scaler_roundtrips_through_directory() {
-    let dir = temp_dir().join("predictor_scaled");
-    let input = array![0.3, 0.7];
-
-    let features = array![[0.0, 0.0], [1.0, 1.0]];
-    let scaler = ScalerMethod::MinMax(MinMaxScaler::default().fit(features.view()));
-    let predictor = Predictor::new(sample_network(), Some(scaler));
-    let expected = predictor.class_probabilities(input.view());
-
-    predictor.save(&dir).unwrap();
-    let reloaded = Predictor::load(&dir).unwrap();
-
-    assert!(reloaded.scaler.is_some());
-    assert_eq!(expected, reloaded.class_probabilities(input.view()));
-
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn predictor_without_scaler_roundtrips_with_none() {
-    let dir = temp_dir().join("predictor_unscaled");
-    let input = array![0.3, 0.7];
-
-    let predictor = Predictor::new(sample_network(), None);
-    let expected = predictor.class_probabilities(input.view());
-
-    predictor.save(&dir).unwrap();
-    let reloaded = Predictor::load(&dir).unwrap();
-
-    assert!(reloaded.scaler.is_none());
-    assert_eq!(expected, reloaded.class_probabilities(input.view()));
 
     let _ = std::fs::remove_dir_all(&dir);
 }

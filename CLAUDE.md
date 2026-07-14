@@ -64,9 +64,10 @@ of the scikit-learn convention). `Dataset` (row-major, `(samples, features)`) co
 
 ### Neural network (`core/src/nn/`)
 
-- **`model.rs`** — `NeuralNetwork` (Vec of `NeuronLayer`) and `NeuronLayerSpec`. `forward()` returns
-  all intermediate activations; `predict()` returns only the last. `NeuronLayerSpec::output_for(n_classes)`
-  auto-selects sigmoid (2 classes → 1 neuron) or softmax (multi-class).
+- **`model/`** — `NetworkConfig` (weight-free architecture, assembled via `NetworkConfigBuilder`)
+  and the `NeuralNetwork` it builds. `forward()` returns all intermediate activations; `predict()`
+  returns only the last. Task-folded output width (binary → 1 neuron, multi-class → `n_classes`)
+  is sourced by the CLI from `Task::output_size()`, not baked into the builder.
 - **`training/`** — the training stack, built around a **declarative spec → runtime trainer** split.
   `HyperParameters` is the single source of truth for a run: plain config, no trait objects, cross-field
   invariants validated on construction. Its `build(model, dataset, callbacks)` is the one place
@@ -84,7 +85,8 @@ of the scikit-learn convention). `Dataset` (row-major, `(samples, features)`) co
 - **`optimizers/`** — `Optimizer` trait: SGD and Adam. Passed to `train()` as `&mut dyn Optimizer`.
 - **`schedulers/`** — `Scheduler` trait (steps once per epoch): `ConstantScheduler`, `StepDecay`,
   `CosineAnnealing` (optional warm restarts).
-- **`loss_functions/`** — `LossFunction` trait; cross-entropy (used for binary and multi-class).
+- **`loss_functions/`** — `LossFunction` trait; cross-entropy (binary and categorical) and
+  mean squared error (regression).
 - **`accuracies/`** — `Accuracy` trait; `accuracy_for(n_classes)` picks binary vs argmax-match.
 - **`evaluation.rs`** — `Evaluation` (loss + accuracy for one split) and `EvaluationSet`
   (train / optional validation / test).
@@ -146,10 +148,13 @@ JSON. The guiding rule: **core runtime types stay serde-free**, so `io` owns the
 goes through `ActivationProvider::get_by_name`.
 
 A run lives in a directory managed by `TrainingRun`: `create`/`open` persist run-level `TrainingMeta`
-(`meta.json`), `trim_after` rewinds the trajectory (removing later checkpoints), `archive()` reads it
-back. Each `checkpoint-{epoch:06}/` is written by a `CheckpointRecorder` (the `TrainerCallback` from
-`TrainingRun::recorder`) and read by a `CheckpointArchive` (`model_at` / `optimizer_at` / `epoch_at` /
-`evaluation_history`, plus `sample` for evenly-spaced animation frames).
+(`meta.json` — dataset, final-model name, hyperparameters) alongside the model blueprint
+(`config.json`, a `ModelConfigRecord` of architecture + task) and, when the run scales its inputs,
+a `preprocessor.json` sidecar — the same `config.json`/`preprocessor.json` pair a `Predictor`
+directory carries. `trim_after` rewinds the trajectory (removing later checkpoints), `archive()`
+reads it back. Each `checkpoint-{epoch:06}/` is written by a `CheckpointRecorder` (the
+`TrainerCallback` from `TrainingRun::recorder`) and read by a `CheckpointArchive` (`model_at` /
+`optimizer_at` / `epoch_at` / `evaluation_history`, plus `sample` for evenly-spaced animation frames).
 
 ### CLI (`cli/src/`)
 

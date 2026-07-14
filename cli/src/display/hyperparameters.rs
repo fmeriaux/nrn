@@ -5,7 +5,7 @@
 use super::{Describe, Named, column_width, row};
 use nrn::data::scalers::ScalerKind;
 use nrn::training::{
-    EarlyStoppingConfig, GradientClipping, HyperParameters, LossConfig, OptimizerConfig,
+    EarlyStoppingConfig, GradientClipping, HyperParameters, LossConfig, LossKind, OptimizerConfig,
     SchedulerConfig,
 };
 
@@ -64,8 +64,10 @@ impl Describe for HyperParametersView<'_> {
 }
 
 fn loss_value(loss: &LossConfig) -> String {
-    match loss {
-        LossConfig::CrossEntropy => "Cross-Entropy".to_string(),
+    match loss.kind {
+        LossKind::BinaryCrossEntropy => "Binary Cross-Entropy".to_string(),
+        LossKind::CategoricalCrossEntropy => "Categorical Cross-Entropy".to_string(),
+        LossKind::MeanSquaredError => "Mean Squared Error".to_string(),
     }
 }
 

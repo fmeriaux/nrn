@@ -215,11 +215,12 @@ mod tests {
     use crate::evaluation_history::{EpochEvaluation, EvaluationHistory};
     use crate::layers::Dense;
     use crate::model::NeuralNetwork;
+    use crate::task::Task;
     use ndarray::array;
 
     /// A two-feature, two-class dataset.
     fn two_feature_dataset() -> Dataset {
-        Dataset::new(
+        Dataset::tabular(
             array![[0.0, 0.0], [1.0, 1.0], [0.0, 1.0], [1.0, 0.0]],
             array![0.0, 1.0, 0.0, 1.0],
             None,
@@ -229,7 +230,7 @@ mod tests {
 
     /// A one-feature, two-class dataset (too few features for a scatter plot).
     fn one_feature_dataset() -> Dataset {
-        Dataset::new(
+        Dataset::tabular(
             array![[0.0], [1.0], [0.0], [1.0]],
             array![0.0, 1.0, 0.0, 1.0],
             None,
@@ -245,6 +246,7 @@ mod tests {
                 array![0.0],
                 IDENTITY.clone(),
             )),
+            Task::Binary,
             None,
         )
     }

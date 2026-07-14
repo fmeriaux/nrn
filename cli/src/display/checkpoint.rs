@@ -1,6 +1,6 @@
 use super::{Describe, Named, rows, theme};
 use crate::path::PathExt;
-use nrn::io::checkpoint::{CheckpointArchive, CheckpointRecorder};
+use nrn::io::model::checkpoint::{CheckpointArchive, CheckpointRecorder};
 
 impl Named for CheckpointArchive {
     const NAME: &'static str = "TRAINING RUN";

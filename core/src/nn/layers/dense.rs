@@ -1,12 +1,11 @@
 use crate::activations::Activation;
 use crate::affine::Affine;
 use crate::gradients::LayerGradients;
-use crate::layers::{BackwardPass, Layer, LayerConfigError, LayerKind, Parameter};
-use crate::model::NeuronLayerSpec;
-use ndarray::{Array1, Array2, ArrayD, ArrayView1, ArrayView2, ArrayViewD, Ix1, Ix2};
+use crate::layers::{BackwardPass, Layer, Parameter};
+use crate::model::LayerConfig;
+use crate::tensors::Tensors;
+use ndarray::{Array1, Array2, ArrayD, ArrayView1, ArrayView2, ArrayViewD, Ix2};
 use ndarray_rand::rand::RngCore;
-use std::any::Any;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// A fully connected layer: an affine map `weights · input + bias` followed by an
@@ -40,32 +39,27 @@ impl Dense {
 
     /// Initializes a new `Dense` layer with random weights and biases drawn from `rng`.
     /// # Panics
-    /// - When `spec.neurons` or `inputs` are less than or equal to zero.
+    /// - When `neurons` or `inputs` are less than or equal to zero.
     /// # Arguments
     /// - `inputs`: The number of inputs to this layer (i.e., the number of neurons in the previous layer).
-    /// - `spec`: The specifications for this layer, including the number of neurons and the activation method.
+    /// - `neurons`: The number of neurons in this layer.
+    /// - `activation`: The activation function used in this layer.
     /// - `rng`: The random number generator the weights are drawn from. Passing a seeded
     ///   generator makes the initialization reproducible.
-    pub fn initialization(inputs: usize, spec: &NeuronLayerSpec, rng: &mut dyn RngCore) -> Self {
+    pub fn initialization(
+        inputs: usize,
+        neurons: usize,
+        activation: Arc<dyn Activation>,
+        rng: &mut dyn RngCore,
+    ) -> Self {
         assert!(
-            spec.neurons > 0 && inputs > 0,
+            neurons > 0 && inputs > 0,
             "Neurons and inputs must be greater than zero."
         );
 
-        let (weights, biases) = spec
-            .activation
-            .initialization()
-            .apply((spec.neurons, inputs), rng);
+        let (weights, biases) = activation.initialization().apply((neurons, inputs), rng);
 
-        Self::new(weights, biases, spec.activation.clone())
-    }
-
-    /// Returns the specifications of this layer.
-    pub fn spec(&self) -> NeuronLayerSpec {
-        NeuronLayerSpec {
-            neurons: self.affine.outputs(),
-            activation: self.activation.clone(),
-        }
+        Self::new(weights, biases, activation)
     }
 
     /// This layer's weight matrix `(neurons, inputs)`.
@@ -81,26 +75,6 @@ impl Dense {
     /// The activation applied to this layer's output.
     pub fn activation(&self) -> &Arc<dyn Activation> {
         &self.activation
-    }
-
-    /// Builds a `Dense` layer from its configuration and tensors.
-    /// # Arguments
-    /// - `config`: Carries the `"activation"` name.
-    /// - `tensors`: Carries the `"weights"` (rank-2) and `"biases"` (rank-1) tensors.
-    pub(super) fn from_config(
-        config: &HashMap<String, String>,
-        mut tensors: HashMap<String, ArrayD<f32>>,
-    ) -> Result<Self, LayerConfigError> {
-        let weights = super::take_tensor::<Ix2>(&mut tensors, "weights")?;
-        let biases = super::take_tensor::<Ix1>(&mut tensors, "biases")?;
-        let activation = super::config_activation(config)?;
-        Ok(Dense::new(weights, biases, activation))
-    }
-
-    /// Mutable access to this layer's affine map.
-    #[cfg(test)]
-    pub(crate) fn affine_mut(&mut self) -> &mut Affine {
-        &mut self.affine
     }
 }
 
@@ -156,18 +130,15 @@ impl Layer for Dense {
             .expect("input folds to (inputs, columns)");
 
         // dz = dL/d(pre-activation); the activation's VJP turns dL/d(output) into it. The shared
-        // weights average over every column — positions and samples alike.
+        // weights sum their gradient over every column — positions and samples alike.
         let dz = self
             .activation
             .vjp(da.view().into_dyn(), output.view().into_dyn())
             .into_dimensionality::<Ix2>()
             .expect("the VJP preserves the rank-2 (outputs, columns) shape");
-        let (dw, db, dinput) = self.affine.backward(
-            dz.view(),
-            input.view(),
-            columns as f32,
-            compute_input_gradient,
-        );
+        let (dw, db, dinput) =
+            self.affine
+                .backward(dz.view(), input.view(), compute_input_gradient);
 
         let input_gradient = dinput.map(|dinput| {
             dinput
@@ -207,41 +178,21 @@ impl Layer for Dense {
         self.affine.is_finite()
     }
 
-    fn kind(&self) -> LayerKind {
-        LayerKind::Dense
+    fn config(&self) -> LayerConfig {
+        LayerConfig::Dense {
+            neurons: self.affine.outputs(),
+            activation: self.activation.clone(),
+        }
     }
 
-    fn config(&self) -> Vec<(String, String)> {
-        vec![("activation".to_string(), self.activation.name().to_string())]
-    }
-
-    fn named_tensors(&self) -> Vec<(String, ArrayD<f32>)> {
-        vec![
-            (
-                "weights".to_string(),
-                self.affine.weights().to_owned().into_dyn(),
-            ),
-            (
-                "biases".to_string(),
-                self.affine.biases().to_owned().into_dyn(),
-            ),
-        ]
+    fn tensors(&self) -> Tensors {
+        Tensors::empty()
+            .with_weight(self.affine.weights().to_owned())
+            .with_bias(self.affine.biases().to_owned())
     }
 
     fn activation_name(&self) -> Option<&str> {
         Some(self.activation.name())
-    }
-
-    fn weight_matrix(&self) -> Option<ArrayView2<'_, f32>> {
-        Some(self.affine.weights())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
     }
 }
 
@@ -257,13 +208,8 @@ mod tests {
         let layer = Dense::new(Array2::zeros((2, 3)), Array1::zeros(2), RELU.clone());
         assert_eq!(layer.output_size(), 2);
         assert_eq!(layer.input_size(), 3);
-        assert_eq!(layer.kind(), LayerKind::Dense);
         assert_eq!(layer.activation_name(), Some("relu"));
-        assert_eq!(layer.weight_matrix().unwrap().dim(), (2, 3));
-
-        let spec = layer.spec();
-        assert_eq!(spec.neurons, 2);
-        assert_eq!(spec.activation.name(), "relu");
+        assert_eq!(layer.tensors().take_weight::<Ix2>().unwrap().dim(), (2, 3));
     }
 
     #[test]
@@ -283,21 +229,18 @@ mod tests {
     }
 
     #[test]
-    fn named_tensors_are_weights_and_biases() {
+    fn tensors_are_weight_and_bias() {
         let layer = Dense::new(array![[1.0, 2.0]], array![3.0], RELU.clone());
-        let tensors = layer.named_tensors();
-        assert_eq!(tensors[0].0, "weights");
-        assert_eq!(tensors[0].1, array![[1.0, 2.0]].into_dyn());
-        assert_eq!(tensors[1].0, "biases");
-        assert_eq!(tensors[1].1, array![3.0].into_dyn());
+        let mut tensors = layer.tensors();
+        assert_eq!(tensors.take_weight::<Ix2>().unwrap(), array![[1.0, 2.0]]);
+        assert_eq!(tensors.take_bias().unwrap(), array![3.0]);
     }
 
     #[test]
     fn backward_gradients_match_numerical_approximation() {
         // Isolated single dense layer: with an upstream gradient of all ones, the loss
         // is L = sum(output), so finite differences of that sum recover the analytical
-        // gradients. backward divides the parameter gradients by the sample count, so
-        // the numerical estimate (which does not) is compared against `grad * m`.
+        // gradients directly — backward is a pure VJP that applies no reduction.
         let layer = Dense::new(
             array![[0.2, -0.4, 0.1], [0.5, 0.3, -0.2]],
             array![0.05, -0.1],
@@ -308,7 +251,6 @@ mod tests {
             [0.2, 0.7, -0.5, 0.4],
             [-0.1, 0.6, 0.3, -0.4]
         ];
-        let m = input.ncols() as f32;
 
         let output = layer.forward(input.view().into_dyn());
         let da = ArrayD::<f32>::ones(output.raw_dim());
@@ -329,7 +271,7 @@ mod tests {
         };
 
         // Weight and bias gradients: perturb each parameter, take the central difference
-        // of the loss, and compare to `grad * m`.
+        // of the loss, and compare to the analytical gradient directly.
         for i in 0..layer.output_size() {
             for j in 0..layer.input_size() {
                 let mut plus = layer.clone();
@@ -337,14 +279,14 @@ mod tests {
                 let mut minus = layer.clone();
                 minus.affine.weights_mut()[[i, j]] -= eps;
                 let numerical = (loss(&plus) - loss(&minus)) / (2.0 * eps);
-                check(grads[0][[i, j]] * m, numerical, &format!("dw[{i},{j}]"));
+                check(grads[0][[i, j]], numerical, &format!("dw[{i},{j}]"));
             }
             let mut plus = layer.clone();
             plus.affine.biases_mut()[i] += eps;
             let mut minus = layer.clone();
             minus.affine.biases_mut()[i] -= eps;
             let numerical = (loss(&plus) - loss(&minus)) / (2.0 * eps);
-            check(grads[1][i] * m, numerical, &format!("db[{i}]"));
+            check(grads[1][i], numerical, &format!("db[{i}]"));
         }
 
         // Gradient with respect to the input: perturb each input entry.
@@ -434,8 +376,8 @@ mod tests {
     fn backward_gradients_on_a_spatial_batch_match_numerical_approximation() {
         use ndarray::{Array, IxDyn};
 
-        // The trailing (spatial + sample) axes fold into the columns the shared weights average
-        // over, so the parameter gradients are the mean over positions × samples: m = columns.
+        // The trailing (spatial + sample) axes fold into the columns the shared weights sum their
+        // gradient over, so the parameter gradients accumulate across positions × samples.
         let layer = Dense::new(
             array![[0.2, -0.4], [0.5, 0.3], [-0.1, 0.6]],
             array![0.05, -0.1, 0.2],
@@ -444,8 +386,6 @@ mod tests {
         let input = Array::from_shape_fn(IxDyn(&[2, 2, 2, 3]), |idx| {
             ((idx[0] * 7 + idx[1] * 3 + idx[2] * 2 + idx[3]) % 11) as f32 * 0.1 - 0.5
         });
-        let in_features = layer.input_size();
-        let m = (input.len() / in_features) as f32; // columns = positions × samples
 
         let output = layer.forward(input.view());
         let da = ArrayD::<f32>::ones(output.raw_dim());
@@ -455,8 +395,7 @@ mod tests {
         assert_eq!(da_prev.shape(), input.shape());
 
         // With an upstream gradient of all ones, the loss is L = sum(output); finite differences
-        // of that sum recover the analytical gradients. backward divides by m, so the numerical
-        // estimate (which does not) is compared against `grad * m`.
+        // of that sum recover the analytical gradients directly — backward applies no reduction.
         let loss = |layer: &Dense| layer.forward(input.view()).sum();
         // A coarser step than the rank-2 case: L sums over more columns, so f32 cancellation
         // dominates a smaller one.
@@ -478,14 +417,14 @@ mod tests {
                 let mut minus = layer.clone();
                 minus.affine.weights_mut()[[o, j]] -= eps;
                 let numerical = (loss(&plus) - loss(&minus)) / (2.0 * eps);
-                check(grads[0][[o, j]] * m, numerical, &format!("dw[{o},{j}]"));
+                check(grads[0][[o, j]], numerical, &format!("dw[{o},{j}]"));
             }
             let mut plus = layer.clone();
             plus.affine.biases_mut()[o] += eps;
             let mut minus = layer.clone();
             minus.affine.biases_mut()[o] -= eps;
             let numerical = (loss(&plus) - loss(&minus)) / (2.0 * eps);
-            check(grads[1][o] * m, numerical, &format!("db[{o}]"));
+            check(grads[1][o], numerical, &format!("db[{o}]"));
         }
     }
 }

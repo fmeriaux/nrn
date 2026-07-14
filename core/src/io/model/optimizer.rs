@@ -1,4 +1,4 @@
-use crate::io::tensors;
+use crate::io::model::tensors;
 use crate::optimizers::OptimizerState;
 use safetensors::SafeTensors;
 use std::io::ErrorKind::InvalidData;

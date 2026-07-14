@@ -2,17 +2,20 @@ use super::callbacks::Callbacks;
 use super::early_stopping::{EarlyStoppingConfig, EarlyStoppingConfigError};
 use super::preprocessing::TrainingData;
 use super::trainer::Trainer;
-use crate::accuracies::accuracy_for;
+use crate::accuracies::{Accuracy, BINARY_ACCURACY, CATEGORICAL_ACCURACY};
 use crate::data::Dataset;
 use crate::data::scalers::{ScalerFeatureMismatch, ScalerKind, ScalerMethod};
 use crate::gradients::{GradientClipping, GradientClippingError};
 use crate::learning_rate::{LearningRate, LearningRateError};
-use crate::loss_functions::{BinaryCrossEntropy, CategoricalCrossEntropy, LossFunction, Reduction};
-use crate::model::{InputShapeMismatch, NeuralNetwork};
+use crate::loss_functions::{
+    BinaryCrossEntropy, CategoricalCrossEntropy, LossFunction, MeanSquaredError, Reduction,
+};
+use crate::model::{InputShapeMismatch, NeuralNetwork, OutputShapeMismatch};
 use crate::optimizers::{Adam, Optimizer, StochasticGradientDescent};
 use crate::schedulers::{
     ConstantScheduler, CosineAnnealing, CosineAnnealingError, Scheduler, StepDecay, StepDecayError,
 };
+use crate::task::Task;
 use crate::weight_decay::{WeightDecay, WeightDecayError};
 use std::fmt;
 use std::sync::Arc;
@@ -43,11 +46,25 @@ pub enum SchedulerConfig {
     Step { decay_factor: f32, steps: usize },
 }
 
-/// Declarative choice of loss function. Turned into a concrete [`LossFunction`]
-/// by [`HyperParameters::build`].
-#[derive(Debug, Clone, PartialEq)]
-pub enum LossConfig {
-    CrossEntropy,
+/// Declarative choice of loss function: its [`kind`](LossKind) and its [`Reduction`].
+/// Turned into a concrete [`LossFunction`] by [`HyperParameters::build`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LossConfig {
+    /// Which loss function to minimize.
+    pub kind: LossKind,
+    /// How the loss reduces its per-term values into the reported scalar.
+    pub reduction: Reduction,
+}
+
+/// The concrete loss function of a [`LossConfig`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LossKind {
+    /// Binary cross-entropy from logits, for a single-logit task (binary or multi-label).
+    BinaryCrossEntropy,
+    /// Categorical cross-entropy from softmax logits, for a multi-class task.
+    CategoricalCrossEntropy,
+    /// Mean squared error, for a regression task.
+    MeanSquaredError,
 }
 
 impl OptimizerConfig {
@@ -90,15 +107,43 @@ impl SchedulerConfig {
 }
 
 impl LossConfig {
-    /// Instantiates the concrete loss function for a classifier with `n_classes` classes.
-    fn instantiate(&self, n_classes: usize) -> Arc<dyn LossFunction> {
-        // Keyed on the class count, a stand-in for the output activation (a two-class output is
-        // a single sigmoid logit); revisit to key on the output activation once it is explicit.
-        match self {
-            LossConfig::CrossEntropy if n_classes == 2 => {
-                Arc::new(BinaryCrossEntropy::new(Reduction::Mean))
+    /// The loss that fits `task`, with the default [`Mean`](Reduction::Mean) reduction: binary
+    /// cross-entropy for a single-logit task (binary or multi-label), categorical cross-entropy
+    /// for multi-class, mean squared error for regression.
+    pub fn for_task(task: &Task) -> Self {
+        let kind = match task {
+            Task::Binary | Task::MultiLabel { .. } => LossKind::BinaryCrossEntropy,
+            Task::MultiClass { .. } => LossKind::CategoricalCrossEntropy,
+            Task::Regression { .. } => LossKind::MeanSquaredError,
+        };
+        LossConfig {
+            kind,
+            reduction: Reduction::Mean,
+        }
+    }
+
+    /// Instantiates the concrete loss function.
+    fn instantiate(&self) -> Arc<dyn LossFunction> {
+        match self.kind {
+            LossKind::BinaryCrossEntropy => Arc::new(BinaryCrossEntropy::new(self.reduction)),
+            LossKind::CategoricalCrossEntropy => {
+                Arc::new(CategoricalCrossEntropy::new(self.reduction))
             }
-            LossConfig::CrossEntropy => Arc::new(CategoricalCrossEntropy::new(Reduction::Mean)),
+            LossKind::MeanSquaredError => Arc::new(MeanSquaredError::new(self.reduction)),
+        }
+    }
+}
+
+/// Selects the accuracy metric for `task`: binary accuracy for a single-logit task
+/// (binary or multi-label), categorical (argmax) accuracy for multi-class.
+/// # Panics
+/// When `task` is [`Regression`](Task::Regression), which has no accuracy metric.
+fn accuracy_for(task: &Task) -> Arc<dyn Accuracy> {
+    match task {
+        Task::Binary | Task::MultiLabel { .. } => BINARY_ACCURACY.clone(),
+        Task::MultiClass { .. } => CATEGORICAL_ACCURACY.clone(),
+        Task::Regression { .. } => {
+            panic!("Accuracy does not apply to a regression task.")
         }
     }
 }
@@ -108,7 +153,7 @@ impl LossConfig {
 /// objects), validates its cross-field invariants on construction, and builds
 /// the runtime [`Trainer`] via [`build`](HyperParameters::build).
 ///
-/// Its serializable mirror is [`crate::io::hyperparams::HyperParametersRecord`].
+/// Its serializable mirror is [`crate::io::model::hyperparams::HyperParametersRecord`].
 #[derive(Debug, Clone)]
 pub struct HyperParameters {
     /// Number of epochs to train; must be at least `1`.
@@ -439,35 +484,37 @@ impl HyperParameters {
     }
 
     /// Instantiates the runtime [`Trainer`] from this specification, binding it to
-    /// the `model`, the prepared [`TrainingData`], and `callbacks`. This is the one
-    /// place declarative configs become concrete objects: the optimizer, scheduler,
-    /// and loss are instantiated.
+    /// the `model`, the `task`, the prepared [`TrainingData`], and `callbacks`. This
+    /// is the one place declarative configs become concrete objects: the optimizer, scheduler,
+    /// and loss are instantiated, and the `task` selects the accuracy metric.
     ///
     /// The trainer starts from epoch 0; to resume a run, call
     /// [`Trainer::restore`](crate::training::Trainer::restore) on the result.
     ///
     /// # Errors
-    /// [`InputShapeMismatch`] when `model`'s input size does not match the dataset's
-    /// feature count. The two are supplied separately (e.g. resuming a run with a fresh
-    /// dataset), so this is the one place their compatibility is checked; once past it,
-    /// every forward pass over the split is guaranteed to fit.
+    /// [`BuildError::InputShape`] when `model`'s input size does not match the dataset's
+    /// feature count; [`BuildError::OutputShape`] when `model`'s output shape does not match
+    /// `task`'s. `model`, `task`, and `data` are supplied separately (e.g. resuming a run with
+    /// a fresh dataset), so this is the one place their compatibility is checked; once past
+    /// it, every forward pass over the split is guaranteed to fit and to produce a
+    /// `task`-shaped output.
     pub fn build(
         self,
         model: NeuralNetwork,
+        task: Task,
         data: TrainingData,
         callbacks: Callbacks,
-    ) -> Result<Trainer, InputShapeMismatch> {
+    ) -> Result<Trainer, BuildError> {
         model.validate_inputs(data.split.train.inputs().view())?;
+        model.validate_output_shape(&[task.output_size()])?;
 
         let optimizer = self.optimizer.instantiate(self.lr, self.weight_decay);
         let scheduler = self
             .scheduler
             .instantiate(self.lr)
             .expect("schedule parameters were validated in HyperParameters::new");
-        // Loss and accuracy are both derived from the model's class count, not taken as config.
-        let n_classes = model.n_classes();
-        let loss = self.loss.instantiate(n_classes);
-        let accuracy = accuracy_for(n_classes);
+        let loss = self.loss.instantiate();
+        let accuracy = accuracy_for(&task);
 
         Ok(Trainer {
             model,
@@ -485,6 +532,39 @@ impl HyperParameters {
             epoch_start: 0,
             seed: self.seed,
         })
+    }
+}
+
+/// The error [`HyperParameters::build`] raises when `model` is not compatible with the
+/// dataset or the task it is being trained for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BuildError {
+    /// `model`'s input shape does not match the dataset's.
+    InputShape(InputShapeMismatch),
+    /// `model`'s output shape does not match the task's.
+    OutputShape(OutputShapeMismatch),
+}
+
+impl fmt::Display for BuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BuildError::InputShape(e) => write!(f, "{e}"),
+            BuildError::OutputShape(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for BuildError {}
+
+impl From<InputShapeMismatch> for BuildError {
+    fn from(error: InputShapeMismatch) -> Self {
+        BuildError::InputShape(error)
+    }
+}
+
+impl From<OutputShapeMismatch> for BuildError {
+    fn from(error: OutputShapeMismatch) -> Self {
+        BuildError::OutputShape(error)
     }
 }
 
@@ -511,7 +591,7 @@ mod tests {
             OptimizerConfig::Adam,
             scheduler,
             GradientClipping::None,
-            LossConfig::CrossEntropy,
+            LossConfig::for_task(&Task::Binary),
             None,
             val_ratio,
             test_ratio,
@@ -525,19 +605,50 @@ mod tests {
     }
 
     #[test]
-    fn cross_entropy_resolves_to_binary_loss_for_two_classes() {
-        // A two-class output is a single sigmoid logit: cross-entropy resolves to the
-        // binary form. Mirrors accuracy_for's two-class selection.
-        let loss = LossConfig::CrossEntropy.instantiate(2);
-        assert_eq!(loss.name(), "Binary-Cross-Entropy");
+    fn for_task_picks_binary_cross_entropy_for_a_binary_task() {
+        // A binary task is a single logit: binary cross-entropy, mirroring accuracy_for.
+        let loss = LossConfig::for_task(&Task::Binary);
+        assert_eq!(loss.kind, LossKind::BinaryCrossEntropy);
+        assert_eq!(loss.instantiate().name(), "Binary-Cross-Entropy");
     }
 
     #[test]
-    fn cross_entropy_resolves_to_categorical_loss_for_more_than_two_classes() {
-        // Three or more classes are softmax logits: cross-entropy resolves to the
-        // categorical form.
-        let loss = LossConfig::CrossEntropy.instantiate(3);
-        assert_eq!(loss.name(), "Categorical-Cross-Entropy");
+    fn for_task_picks_categorical_cross_entropy_for_a_multi_class_task() {
+        let loss = LossConfig::for_task(&Task::MultiClass { n_classes: 3 });
+        assert_eq!(loss.kind, LossKind::CategoricalCrossEntropy);
+        assert_eq!(loss.instantiate().name(), "Categorical-Cross-Entropy");
+    }
+
+    #[test]
+    fn for_task_picks_mean_squared_error_for_a_regression_task() {
+        let loss = LossConfig::for_task(&Task::Regression { n_outputs: 1 });
+        assert_eq!(loss.kind, LossKind::MeanSquaredError);
+        assert_eq!(loss.instantiate().name(), "Mean-Squared-Error");
+    }
+
+    #[test]
+    fn accuracy_for_selects_binary_and_categorical_by_task() {
+        // The two reachable classification task pick the matching metric; the selection
+        // mirrors the loss resolution above.
+        use ndarray::array;
+
+        let binary = accuracy_for(&Task::Binary);
+        assert_eq!(
+            binary.compute(
+                array![[0.5_f32, -0.5]].into_dyn().view(),
+                array![[1.0_f32, 0.0]].into_dyn().view()
+            ),
+            100.0
+        );
+
+        let categorical = accuracy_for(&Task::MultiClass { n_classes: 3 });
+        assert_eq!(
+            categorical.compute(
+                array![[2.0_f32], [1.0], [0.0]].into_dyn().view(),
+                array![[1.0_f32], [0.0], [0.0]].into_dyn().view()
+            ),
+            100.0
+        );
     }
 
     #[test]
@@ -626,7 +737,7 @@ mod tests {
             OptimizerConfig::Adam,
             SchedulerConfig::Constant,
             GradientClipping::None,
-            LossConfig::CrossEntropy,
+            LossConfig::for_task(&Task::Binary),
             None,
             0.1,
             0.1,
@@ -759,11 +870,11 @@ mod tests {
 
     /// A two-feature dataset whose values grow with the sample index, so MinMax
     /// scaling has a non-trivial effect.
-    fn ramp_dataset() -> crate::data::Dataset {
+    fn ramp_dataset() -> Dataset {
         use ndarray::{Array1, Array2};
         let features = Array2::from_shape_fn((10, 2), |(i, _)| i as f32);
         let labels = Array1::from_shape_fn(10, |i| (i % 2) as f32);
-        crate::data::Dataset::new(features, labels, None).unwrap()
+        Dataset::tabular(features, labels, None).unwrap()
     }
 
     fn spec_with_scaler(scaler: Option<ScalerKind>) -> HyperParameters {
@@ -776,7 +887,7 @@ mod tests {
             OptimizerConfig::Adam,
             SchedulerConfig::Constant,
             GradientClipping::None,
-            LossConfig::CrossEntropy,
+            LossConfig::for_task(&Task::Binary),
             None,
             0.2,
             0.2,
@@ -819,5 +930,71 @@ mod tests {
         let data = hp.prepare(ramp_dataset(), Some(supplied)).unwrap();
 
         assert!(data.split.train.inputs().iter().all(|&v| v < 0.5));
+    }
+
+    #[test]
+    fn build_rejects_a_model_output_shape_that_does_not_match_the_task() {
+        use crate::activations::SIGMOID;
+        use crate::layers::Dense;
+        use ndarray::{Array1, Array2};
+
+        let hp = spec_with_scaler(None);
+        let data = hp.prepare(ramp_dataset(), None).unwrap();
+
+        // Task::Binary needs a single output; this model produces 3.
+        let model = NeuralNetwork::single(Dense::new(
+            Array2::from_elem((3, 2), 0.1),
+            Array1::zeros(3),
+            SIGMOID.clone(),
+        ));
+
+        let err = hp
+            .build(model, Task::Binary, data, Callbacks::empty())
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(
+            err,
+            BuildError::OutputShape(OutputShapeMismatch {
+                expected: vec![1],
+                found: vec![3],
+            })
+        );
+        assert_eq!(
+            err.to_string(),
+            "model outputs shape [3] but shape [1] was expected"
+        );
+    }
+
+    #[test]
+    fn build_rejects_a_model_input_shape_that_does_not_match_the_dataset() {
+        use crate::activations::SIGMOID;
+        use crate::layers::Dense;
+        use ndarray::{Array1, Array2};
+
+        let hp = spec_with_scaler(None);
+        let data = hp.prepare(ramp_dataset(), None).unwrap();
+
+        // ramp_dataset carries 2 features; this model expects 3.
+        let model = NeuralNetwork::single(Dense::new(
+            Array2::from_elem((1, 3), 0.1),
+            Array1::zeros(1),
+            SIGMOID.clone(),
+        ));
+
+        let err = hp
+            .build(model, Task::Binary, data, Callbacks::empty())
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(
+            err,
+            BuildError::InputShape(InputShapeMismatch {
+                expected: vec![3],
+                found: vec![2],
+            })
+        );
+        assert_eq!(
+            err.to_string(),
+            "instance has shape [2] but the model expects [3]"
+        );
     }
 }

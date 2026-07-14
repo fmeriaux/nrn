@@ -8,8 +8,9 @@
 //! within the path-safety boundary (paths outside the cwd are rejected).
 
 use assert_cmd::Command;
-use nrn::activations::RELU;
-use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec, Predictor};
+use nrn::activations::{IDENTITY, RELU};
+use nrn::model::{NetworkConfig, NeuralNetwork, Predictor};
+use nrn::task::Task;
 use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use std::path::Path;
@@ -22,9 +23,12 @@ fn workspace() -> TempDir {
 
 /// Writes a binary two-input predictor to `dir/model`.
 fn write_predictor(dir: &Path) {
-    let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![4]), 2, &*RELU).unwrap();
-    let network = NeuralNetwork::initialization(2, &specs, 7);
-    Predictor::new(network, None)
+    let config = NetworkConfig::builder(vec![2])
+        .dense(4, &RELU)
+        .dense(1, &IDENTITY)
+        .build();
+    let network = NeuralNetwork::from_config(config, 7).unwrap();
+    Predictor::new(network, Task::Binary, None)
         .save(dir.join("model"))
         .unwrap();
 }

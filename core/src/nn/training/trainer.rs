@@ -244,14 +244,16 @@ impl Trainer {
 mod tests {
     use super::super::early_stopping::EarlyStoppingConfig;
     use super::super::hyperparams::{
-        HyperParameters, LossConfig, OptimizerConfig, SchedulerConfig,
+        HyperParameters, LossConfig, LossKind, OptimizerConfig, SchedulerConfig,
     };
     use super::*;
     use crate::activations::SIGMOID;
     use crate::data::Dataset;
     use crate::layers::Dense;
+    use crate::loss_functions::Reduction;
     use crate::optimizers::Optimizer;
     use crate::schedulers::Scheduler;
+    use crate::task::Task;
     use crate::training::GradientClipping;
     use ndarray::array;
     use std::cell::RefCell;
@@ -261,7 +263,7 @@ mod tests {
     /// [`HyperParameters::build`] yields non-degenerate train/validation/test sets
     /// (e.g. `val_ratio = test_ratio = 0.1` gives 8/1/1).
     fn sample_dataset() -> Dataset {
-        Dataset::new(
+        Dataset::tabular(
             array![
                 [0.1, 0.2],
                 [0.9, 0.8],
@@ -306,7 +308,10 @@ mod tests {
             OptimizerConfig::Adam,
             SchedulerConfig::Constant,
             GradientClipping::None,
-            LossConfig::CrossEntropy,
+            LossConfig {
+                kind: LossKind::BinaryCrossEntropy,
+                reduction: Reduction::Mean,
+            },
             early_stopping,
             val_ratio,
             0.1,
@@ -462,6 +467,7 @@ mod tests {
         hyperparameters
             .build(
                 sample_model(),
+                Task::Binary,
                 data,
                 Callbacks::new(vec![Box::new(CountingCallback(counts))]),
             )
@@ -480,6 +486,7 @@ mod tests {
         hyperparameters
             .build(
                 sample_model(),
+                Task::Binary,
                 data,
                 Callbacks::new(vec![Box::new(callback)]),
             )
@@ -718,7 +725,10 @@ mod tests {
                 cycle_multiplier: 1,
             },
             GradientClipping::None,
-            LossConfig::CrossEntropy,
+            LossConfig {
+                kind: LossKind::BinaryCrossEntropy,
+                reduction: Reduction::Mean,
+            },
             None,
             0.1,
             0.1,
@@ -732,6 +742,7 @@ mod tests {
         let mut trainer = hyperparameters
             .build(
                 sample_model(),
+                Task::Binary,
                 data,
                 Callbacks::new(vec![Box::new(CountingCallback(counts.clone()))]),
             )
@@ -768,7 +779,10 @@ mod tests {
             OptimizerConfig::Sgd,
             SchedulerConfig::Constant,
             GradientClipping::None,
-            LossConfig::CrossEntropy,
+            LossConfig {
+                kind: LossKind::BinaryCrossEntropy,
+                reduction: Reduction::Mean,
+            },
             None,
             0.1,
             0.1,
@@ -779,7 +793,7 @@ mod tests {
 
         let data = hyperparameters.prepare(sample_dataset(), None).unwrap();
         let mut trainer = hyperparameters
-            .build(sample_model(), data, Callbacks::empty())
+            .build(sample_model(), Task::Binary, data, Callbacks::empty())
             .unwrap();
 
         // Stateless SGD / constant scheduler ignore the provided state (default no-ops).
@@ -812,7 +826,10 @@ mod tests {
                 cycle_multiplier: 1,
             },
             GradientClipping::None,
-            LossConfig::CrossEntropy,
+            LossConfig {
+                kind: LossKind::BinaryCrossEntropy,
+                reduction: Reduction::Mean,
+            },
             None,
             0.1,
             0.1,
@@ -823,7 +840,7 @@ mod tests {
 
         let data = hyperparameters.prepare(sample_dataset(), None).unwrap();
         let mut trainer = hyperparameters
-            .build(sample_model(), data, Callbacks::empty())
+            .build(sample_model(), Task::Binary, data, Callbacks::empty())
             .unwrap();
 
         trainer
@@ -842,7 +859,7 @@ mod tests {
         let hyperparameters = sample_hyperparameters(1, 0, 0.01, None, 0.0);
         let data = hyperparameters.prepare(sample_dataset(), None).unwrap();
         let mut trainer = hyperparameters
-            .build(sample_model(), data, Callbacks::empty())
+            .build(sample_model(), Task::Binary, data, Callbacks::empty())
             .unwrap();
 
         // Missing `time_step` metadata makes Adam's restore fail; the trainer

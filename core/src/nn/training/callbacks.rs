@@ -155,10 +155,10 @@ impl TrainerCallback for Callbacks {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activations::RELU;
+    use crate::activations::{IDENTITY, RELU};
     use crate::data::ModelDataset;
     use crate::evaluation::Evaluation;
-    use crate::model::NeuronLayerSpec;
+    use crate::model::NetworkConfig;
     use crate::optimizers::Adam;
     use crate::schedulers::ConstantScheduler;
     use crate::weight_decay::WeightDecay;
@@ -171,8 +171,11 @@ mod tests {
     impl TrainerCallback for DefaultCallback {}
 
     fn sample_model() -> NeuralNetwork {
-        let specs = NeuronLayerSpec::network_for(vec![3], &*RELU, 2);
-        NeuralNetwork::initialization(2, &specs, 0)
+        let config = NetworkConfig::builder(vec![2])
+            .dense(3, &RELU)
+            .dense(1, &IDENTITY)
+            .build();
+        NeuralNetwork::from_config(config, 0).unwrap()
     }
 
     fn sample_split() -> ModelSplit {

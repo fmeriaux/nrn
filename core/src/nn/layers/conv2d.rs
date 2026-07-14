@@ -1,11 +1,11 @@
 use crate::activations::Activation;
 use crate::affine::Affine;
 use crate::gradients::LayerGradients;
-use crate::layers::{BackwardPass, Layer, LayerConfigError, LayerKind, Parameter};
-use ndarray::{Array1, Array2, Array4, ArrayD, ArrayView2, ArrayView4, ArrayViewD, Ix1, Ix2, Ix4};
+use crate::layers::{BackwardPass, Layer, Parameter};
+use crate::model::LayerConfig;
+use crate::tensors::Tensors;
+use ndarray::{Array1, Array2, Array4, ArrayD, ArrayView2, ArrayView4, ArrayViewD, Ix2, Ix4};
 use ndarray_rand::rand::RngCore;
-use std::any::Any;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// A 2D convolution layer. It slides a set of small kernels across the height and width of
@@ -156,39 +156,6 @@ impl Conv2d {
     pub fn activation(&self) -> &Arc<dyn Activation> {
         &self.activation
     }
-
-    /// Builds a `Conv2d` layer from its configuration and tensors.
-    /// # Arguments
-    /// - `config`: Carries the `"activation"` name, the `"input_shape"` `(channels, height,
-    ///   width)`, the `"stride"`, and the `"padding"`.
-    /// - `tensors`: Carries the `"kernels"` (rank-4) and `"biases"` (rank-1) tensors.
-    pub(super) fn from_config(
-        config: &HashMap<String, String>,
-        mut tensors: HashMap<String, ArrayD<f32>>,
-    ) -> Result<Self, LayerConfigError> {
-        let kernels = super::take_tensor::<Ix4>(&mut tensors, "kernels")?;
-        let biases = super::take_tensor::<Ix1>(&mut tensors, "biases")?;
-
-        let dims = super::config_dims(config, "input_shape")?;
-        let [channels, height, width] = dims[..] else {
-            return Err(LayerConfigError::InvalidConfig {
-                key: "input_shape".to_string(),
-                reason: format!("expected 3 dimensions, got {}", dims.len()),
-            });
-        };
-        let stride = super::config_usize(config, "stride")?;
-        let padding = super::config_usize(config, "padding")?;
-        let activation = super::config_activation(config)?;
-
-        Ok(Conv2d::new(
-            kernels,
-            biases,
-            (channels, height, width),
-            stride,
-            padding,
-            activation,
-        ))
-    }
 }
 
 impl Layer for Conv2d {
@@ -251,8 +218,8 @@ impl Layer for Conv2d {
             .to_shape((out_channels, positions))
             .expect("output folds to (out_channels, positions)");
 
-        // The columns span spatial positions as well as samples, so the affine backward is told
-        // to average over the sample count alone; col2im then folds the input gradient back.
+        // The affine backward sums each kernel's gradient over every column — spatial positions
+        // and samples alike; col2im then folds the input gradient back.
         let dz = self
             .activation
             .vjp(da.view().into_dyn(), output.view().into_dyn())
@@ -260,12 +227,9 @@ impl Layer for Conv2d {
             .expect("the VJP preserves the rank-2 (outputs, columns) shape");
 
         let cols = im2col(input, kh, kw, self.stride, self.padding);
-        let (dw, db, dcols) = self.affine.backward(
-            dz.view(),
-            cols.view(),
-            samples as f32,
-            compute_input_gradient,
-        );
+        let (dw, db, dcols) = self
+            .affine
+            .backward(dz.view(), cols.view(), compute_input_gradient);
 
         let input_gradient = dcols.map(|dcols| {
             col2im(
@@ -318,48 +282,25 @@ impl Layer for Conv2d {
         self.affine.is_finite()
     }
 
-    fn kind(&self) -> LayerKind {
-        LayerKind::Conv2d
+    fn config(&self) -> LayerConfig {
+        let (out_channels, _, kh, kw) = self.kernels_shape;
+        LayerConfig::Conv2d {
+            out_channels,
+            kernel: (kh, kw),
+            stride: self.stride,
+            padding: self.padding,
+            activation: self.activation.clone(),
+        }
     }
 
-    fn config(&self) -> Vec<(String, String)> {
-        let (channels, height, width) = self.input_shape;
-        vec![
-            ("activation".to_string(), self.activation.name().to_string()),
-            (
-                "input_shape".to_string(),
-                format!("{channels},{height},{width}"),
-            ),
-            ("stride".to_string(), self.stride.to_string()),
-            ("padding".to_string(), self.padding.to_string()),
-        ]
-    }
-
-    fn named_tensors(&self) -> Vec<(String, ArrayD<f32>)> {
-        vec![
-            ("kernels".to_string(), self.kernels().into_dyn()),
-            (
-                "biases".to_string(),
-                self.affine.biases().to_owned().into_dyn(),
-            ),
-        ]
+    fn tensors(&self) -> Tensors {
+        Tensors::empty()
+            .with_weight(self.kernels())
+            .with_bias(self.affine.biases().to_owned())
     }
 
     fn activation_name(&self) -> Option<&str> {
         Some(self.activation.name())
-    }
-
-    fn weight_matrix(&self) -> Option<ArrayView2<'_, f32>> {
-        // A convolution has no single (output_size, input_size) weight matrix.
-        None
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
     }
 }
 
@@ -482,16 +423,12 @@ mod tests {
         assert_eq!(layer.output_shape(), vec![3, 3, 3]);
         assert_eq!(layer.input_size(), 2 * 5 * 5);
         assert_eq!(layer.output_size(), 3 * 3 * 3);
-        assert_eq!(layer.kind(), LayerKind::Conv2d);
         assert_eq!(layer.activation_name(), Some("relu"));
-        assert!(layer.weight_matrix().is_none());
         assert!(layer.is_finite());
 
-        let tensors = layer.named_tensors();
-        assert_eq!(tensors[0].0, "kernels");
-        assert_eq!(tensors[0].1.shape(), &[3, 2, 3, 3]);
-        assert_eq!(tensors[1].0, "biases");
-        assert_eq!(tensors[1].1.shape(), &[3]);
+        let mut tensors = layer.tensors();
+        assert_eq!(tensors.take_weight::<Ix4>().unwrap().shape(), &[3, 2, 3, 3]);
+        assert_eq!(tensors.take_bias().unwrap().shape(), &[3]);
 
         let params = layer.parameters_mut();
         assert_eq!(params.len(), 2);
@@ -538,8 +475,7 @@ mod tests {
         // input — the configuration that stresses the im2col/col2im index arithmetic
         // (out_h = out_w = (4 + 2 - 3) / 2 + 1 = 2). With an upstream gradient of all ones,
         // the loss is L = sum(output); finite differences of that sum recover the analytical
-        // gradients. backward divides the parameter gradients by the sample count, so the
-        // numerical estimate (which does not) is compared against `grad * m`.
+        // gradients directly — backward is a pure VJP that applies no reduction.
         let mut rng = StdRng::seed_from_u64(7);
         let layer = Conv2d::initialization((2, 4, 4), 3, (3, 3), 2, 1, SIGMOID.clone(), &mut rng);
         let input = Array::from_shape_fn(IxDyn(&[2, 4, 4, 2]), |idx| {
@@ -547,7 +483,6 @@ mod tests {
             let flat = idx[0] * 100 + idx[1] * 10 + idx[2] + idx[3];
             ((flat % 13) as f32 - 6.0) * 0.1
         });
-        let m = input.shape()[3] as f32;
 
         let output = layer.forward(input.view());
         let da = ArrayD::<f32>::ones(output.raw_dim());
@@ -570,7 +505,7 @@ mod tests {
         };
 
         // Weight gradients: perturb each entry of the flat affine matrix (out_channels, in·kh·kw),
-        // central-difference the loss, compare to `grad * m`.
+        // central-difference the loss, compare to the analytical gradient directly.
         let (out_c, fan_in) = layer.affine.weights().dim();
         for o in 0..out_c {
             for j in 0..fan_in {
@@ -579,14 +514,14 @@ mod tests {
                 let mut minus = layer.clone();
                 minus.affine.weights_mut()[[o, j]] -= eps;
                 let numerical = (loss(&plus) - loss(&minus)) / (2.0 * eps);
-                check(grads[0][[o, j]] * m, numerical, format!("dw[{o},{j}]"));
+                check(grads[0][[o, j]], numerical, format!("dw[{o},{j}]"));
             }
             let mut plus = layer.clone();
             plus.affine.biases_mut()[o] += eps;
             let mut minus = layer.clone();
             minus.affine.biases_mut()[o] -= eps;
             let numerical = (loss(&plus) - loss(&minus)) / (2.0 * eps);
-            check(grads[1][o] * m, numerical, format!("db[{o}]"));
+            check(grads[1][o], numerical, format!("db[{o}]"));
         }
 
         // Input gradient: perturb each input entry (no `* m` — it chains straight upstream).
@@ -676,60 +611,6 @@ mod tests {
             1,
             0,
             RELU.clone(),
-        );
-    }
-
-    #[test]
-    fn config_and_tensors_round_trip_through_from_config() {
-        // 3 filters over a 2-channel 5×5 input, 3×3 kernel, stride 2, padding 1.
-        let mut rng = StdRng::seed_from_u64(7);
-        let layer = Conv2d::initialization((2, 5, 5), 3, (3, 3), 2, 1, RELU.clone(), &mut rng);
-
-        let config: HashMap<String, String> = layer.config().into_iter().collect();
-        let tensors: HashMap<String, ArrayD<f32>> = layer.named_tensors().into_iter().collect();
-        let rebuilt = Conv2d::from_config(&config, tensors).unwrap();
-
-        // Same geometry and parameters: forward on an arbitrary batch matches bit-for-bit.
-        let input = Array::from_shape_fn(IxDyn(&[2, 5, 5, 4]), |d| {
-            (d[0] + d[1] + d[2] + d[3]) as f32 * 0.1
-        });
-        assert_eq!(layer.forward(input.view()), rebuilt.forward(input.view()));
-        assert_eq!(layer.config(), rebuilt.config());
-    }
-
-    #[test]
-    fn from_config_rejects_missing_input_shape() {
-        let mut rng = StdRng::seed_from_u64(1);
-        let layer = Conv2d::initialization((1, 4, 4), 2, (3, 3), 1, 0, RELU.clone(), &mut rng);
-        let tensors: HashMap<String, ArrayD<f32>> = layer.named_tensors().into_iter().collect();
-        // Drop "input_shape" from an otherwise valid config.
-        let config: HashMap<String, String> = layer
-            .config()
-            .into_iter()
-            .filter(|(key, _)| key != "input_shape")
-            .collect();
-
-        assert_eq!(
-            Conv2d::from_config(&config, tensors).unwrap_err(),
-            LayerConfigError::MissingConfig("input_shape".to_string())
-        );
-    }
-
-    #[test]
-    fn from_config_rejects_input_shape_without_three_dimensions() {
-        let mut rng = StdRng::seed_from_u64(2);
-        let layer = Conv2d::initialization((1, 4, 4), 2, (3, 3), 1, 0, RELU.clone(), &mut rng);
-        let tensors: HashMap<String, ArrayD<f32>> = layer.named_tensors().into_iter().collect();
-        // A 2-dimension input_shape where a convolution needs (channels, height, width).
-        let mut config: HashMap<String, String> = layer.config().into_iter().collect();
-        config.insert("input_shape".to_string(), "4,4".to_string());
-
-        assert_eq!(
-            Conv2d::from_config(&config, tensors).unwrap_err(),
-            LayerConfigError::InvalidConfig {
-                key: "input_shape".to_string(),
-                reason: "expected 3 dimensions, got 2".to_string(),
-            }
         );
     }
 }

@@ -1,13 +1,12 @@
-//! safetensors helpers shared by the model, dataset and checkpoint serializers.
+//! safetensors helpers shared by the model and optimizer serializers.
 //!
-//! Tensors are stored as little-endian `f32`; auxiliary scalars and strings
-//! (activation names, intervals, evaluations) travel in the `__metadata__`
-//! string map. The format carries no `ndarray` types, so it is unaffected by
-//! `ndarray` version bumps.
+//! Tensors are stored as little-endian `f32`; the optimizer's scalar state
+//! (e.g. Adam's time step) travels in the `__metadata__` string map. The format
+//! carries no `ndarray` types, so it is unaffected by `ndarray` version bumps.
 
 use crate::io::bytes::secure_read;
 use crate::io::path::PathExt;
-use ndarray::{Array, Array1, Array2, ArrayD, Dimension, IxDyn};
+use ndarray::{Array, ArrayD, Dimension, IxDyn};
 use safetensors::{Dtype, SafeTensors, View, serialize};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -61,44 +60,6 @@ pub fn tensor<D: Dimension>(array: &Array<f32, D>) -> F32Tensor {
     F32Tensor { shape, bytes }
 }
 
-fn read_f32(
-    name: &str,
-    tensors: &SafeTensors,
-    expected_rank: usize,
-) -> Result<(Vec<usize>, Vec<f32>)> {
-    let view = tensors.tensor(name).map_err(invalid)?;
-
-    if view.dtype() != Dtype::F32 {
-        return Err(invalid(format!("tensor `{name}` is not f32")));
-    }
-    if view.shape().len() != expected_rank {
-        return Err(invalid(format!(
-            "tensor `{name}` has rank {}, expected {expected_rank}",
-            view.shape().len()
-        )));
-    }
-
-    let data = view
-        .data()
-        .chunks_exact(4)
-        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-        .collect();
-
-    Ok((view.shape().to_vec(), data))
-}
-
-/// Reads a 1D `f32` tensor by name.
-pub fn read_array1(name: &str, tensors: &SafeTensors) -> Result<Array1<f32>> {
-    let (shape, data) = read_f32(name, tensors, 1)?;
-    Array1::from_shape_vec(shape[0], data).map_err(invalid)
-}
-
-/// Reads a 2D `f32` tensor by name.
-pub fn read_array2(name: &str, tensors: &SafeTensors) -> Result<Array2<f32>> {
-    let (shape, data) = read_f32(name, tensors, 2)?;
-    Array2::from_shape_vec((shape[0], shape[1]), data).map_err(invalid)
-}
-
 /// Reads a tensor of arbitrary rank as an `ArrayD<f32>`, e.g. for optimizer
 /// state tensors whose rank depends on the layer they belong to.
 pub fn read_arrayd<V: View>(view: &V) -> Result<ArrayD<f32>> {
@@ -113,14 +74,6 @@ pub fn read_arrayd<V: View>(view: &V) -> Result<ArrayD<f32>> {
         .collect();
 
     ArrayD::from_shape_vec(IxDyn(view.shape()), data).map_err(invalid)
-}
-
-/// Looks up a required entry in the `__metadata__` map.
-pub fn meta<'a>(metadata: &'a HashMap<String, String>, key: &str) -> Result<&'a str> {
-    metadata
-        .get(key)
-        .map(String::as_str)
-        .ok_or_else(|| invalid(format!("missing metadata key `{key}`")))
 }
 
 /// Serializes named tensors and a metadata map to a `.safetensors` file,
@@ -157,12 +110,9 @@ pub fn read_metadata(bytes: &[u8]) -> Result<HashMap<String, String>> {
 mod tests {
     use super::*;
 
-    // The read guards (`read_f32` missing-tensor / wrong-rank / non-f32, `meta`
-    // missing-key, `read_arrayd` non-f32) are exercised through their higher-level
-    // callers — `model::load` and `optimizer::load` — rather than here, so the
-    // failure modes are tested at the API boundary that owns them. Only
-    // `read_metadata`'s own guard has no such caller (every caller reaches it after
-    // a successful `deserialize` of the same bytes), so it is tested directly.
+    // `read_metadata`'s guard has no caller that reaches it on corrupt bytes
+    // (every caller gets here after a successful `deserialize`), so it is tested
+    // directly here.
     #[test]
     fn read_metadata_rejects_corrupt_bytes() {
         assert!(read_metadata(b"not a safetensors header").is_err());

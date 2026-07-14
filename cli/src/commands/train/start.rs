@@ -1,15 +1,19 @@
 use super::DivergedRun;
 use super::args::TrainArgs;
 use super::callbacks::{ConsoleMonitor, ModelSaver};
-use crate::display::{Spinner, initialized, loaded, recording};
+use crate::display::{Spinner, initialized, loaded, recording, show};
 use crate::path::PathExt;
 use clap::Args;
-use nrn::activations::RELU;
+use nrn::activations::{IDENTITY, RELU};
 use nrn::data::Dataset;
-use nrn::io::hyperparams::HyperParametersRecord;
-use nrn::io::run::{TrainingMeta, TrainingRun};
-use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec};
-use nrn::training::{Callbacks, HyperParameters};
+use nrn::io::model::config::ModelConfigRecord;
+use nrn::io::model::hyperparams::HyperParametersRecord;
+use nrn::io::model::network::NetworkConfigRecord;
+use nrn::io::model::run::{TrainingMeta, TrainingRun};
+use nrn::io::model::scalers::ScalerRecord;
+use nrn::model::{NetworkConfig, NeuralNetwork, Predictor};
+use nrn::task::Task;
+use nrn::training::Callbacks;
 use std::error::Error;
 use std::io::{Error as IoError, ErrorKind};
 use std::path::Path;
@@ -20,16 +24,12 @@ pub struct StartArgs {
     dataset: String,
 
     /// Load a pre-trained model to continue training (checkpoint count resets to 0)
-    #[arg(short, long, conflicts_with_all = &["layers", "auto_layers"])]
+    #[arg(short, long, conflicts_with = "layers")]
     model: Option<String>,
 
     /// Hidden layer sizes (comma-separated)
-    #[arg(long, value_delimiter = ',', conflicts_with_all = &["auto_layers", "model"])]
+    #[arg(long, value_delimiter = ',', conflicts_with = "model")]
     layers: Option<Vec<usize>>,
-
-    /// Infer hidden layers from dataset characteristics
-    #[arg(long, conflicts_with_all = &["layers", "model"], default_value_t = false)]
-    auto_layers: bool,
 
     /// Overwrite an existing training run directory
     #[arg(long, default_value_t = false)]
@@ -49,29 +49,25 @@ impl StartArgs {
         let dataset = Dataset::load(&self.dataset)?;
         loaded(&dataset);
 
-        let hyperparameters = HyperParameters::try_from(&self.hp)?;
+        let task = Task::from_dataset(&dataset);
+        task.validate_dataset(&dataset)?;
+        show(&task);
+
+        let hyperparameters = self.hp.to_hyperparameters(&task)?;
 
         let model = match &self.model {
             Some(path) => {
-                let model = NeuralNetwork::load(path)?;
+                let model = Predictor::load(path)?.network;
                 loaded(&model);
                 model
             }
             None => {
-                let plan = if self.auto_layers {
-                    LayerPlan::Auto {
-                        n_features: dataset.n_features(),
-                        n_samples: dataset.n_samples(),
-                    }
-                } else {
-                    LayerPlan::Explicit(self.layers.clone().unwrap_or_default())
-                };
-                let layer_specs = NeuronLayerSpec::plan(plan, dataset.n_classes(), &*RELU)?;
-                let model = NeuralNetwork::initialization(
-                    dataset.n_features(),
-                    &layer_specs,
-                    hyperparameters.seed(),
-                );
+                let mut builder = NetworkConfig::builder(vec![dataset.n_features()]);
+                for hidden in self.layers.clone().unwrap_or_default() {
+                    builder = builder.dense(hidden, &RELU);
+                }
+                let config = builder.dense(task.output_size(), &IDENTITY).build();
+                let model = NeuralNetwork::from_config(config, hyperparameters.seed())?;
                 initialized(&model);
                 model
             }
@@ -86,11 +82,16 @@ impl StartArgs {
                 dataset: dataset_name,
                 model: model_name.clone(),
                 hyperparams: HyperParametersRecord::from(&hyperparameters),
-                scaler: data.scaler().cloned().map(Into::into),
             };
-            let recorder = TrainingRun::create(&run_dir, &meta, self.overwrite)
-                .map_err(overwrite_hint)?
-                .recorder();
+            let config = ModelConfigRecord {
+                network: NetworkConfigRecord::from(&model),
+                task: task.into(),
+            };
+            let scaler = data.scaler().cloned().map(ScalerRecord::from);
+            let recorder =
+                TrainingRun::create(&run_dir, &meta, &config, scaler.as_ref(), self.overwrite)
+                    .map_err(overwrite_hint)?
+                    .recorder();
             recording(&recorder);
             Some(recorder)
         } else {
@@ -102,12 +103,13 @@ impl StartArgs {
             .with(ModelSaver::new(
                 &run_dir,
                 &model_name,
+                task,
                 data.scaler().cloned(),
             ))
             .with_opt(recorder);
 
         hyperparameters
-            .build(model, data, callbacks)?
+            .build(model, task, data, callbacks)?
             .train()?
             .into_result()
             .map_err(DivergedRun::from)?;

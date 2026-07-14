@@ -1,9 +1,11 @@
-//! Binary accuracy metric, for a single-logit output.
+//! Binary accuracy metric, for a single-logit or multi-label output.
 //!
-//! Predictions and targets share a shape whose leading axis (axis 0) is a single logit row;
-//! every trailing axis — the samples, plus any spatial axes — is a position scored
-//! independently. Each logit is thresholded at 0 (>= 0 → class 1) and matched against its
-//! `0.0`/`1.0` target. The metric is the ratio of correctly classified positions to the total.
+//! Predictions and targets share a shape whose leading axis (axis 0) is one logit row per label
+//! (a single row for binary, one row per label for multi-label); every trailing axis — the
+//! samples, plus any spatial axes — is a position scored independently. Each logit is
+//! thresholded at 0 (>= 0 → class 1) and matched against its `0.0`/`1.0` target. The metric is
+//! the ratio of correctly classified positions to the total — a Hamming accuracy when there are
+//! multiple labels.
 
 use crate::accuracies::Accuracy;
 use ndarray::{ArrayViewD, Zip};
@@ -13,11 +15,11 @@ use std::sync::Arc;
 pub struct BinaryAccuracy;
 
 impl Accuracy for BinaryAccuracy {
-    /// Computes the binary accuracy over every position of a batch.
+    /// Computes the binary (or multi-label Hamming) accuracy over every position of a batch.
     ///
     /// # Arguments
-    /// - `outputs`: the network's single-logit scores; every trailing axis — the samples, plus
-    ///   any spatial axes — is a position scored independently.
+    /// - `outputs`: the network's logit scores, one row per label; every trailing axis — the
+    ///   samples, plus any spatial axes — is a position scored independently.
     /// - `targets`: the ground-truth labels (`0.0`/`1.0`), the same shape as `outputs`.
     ///
     /// # Returns
@@ -78,5 +80,18 @@ mod tests {
         let targets = array![[[1.0_f32, 0.0], [1.0, 0.0]]].into_dyn();
         let acc = BINARY_ACCURACY.compute(outputs.view(), targets.view());
         assert!((acc - 50.0).abs() < 1e-5, "Expected 50%, got {acc}");
+    }
+
+    #[test]
+    fn scores_multi_label_rows_as_hamming_accuracy() {
+        // (n_labels=3, samples=2): 6 label/sample positions, each thresholded independently.
+        // Four match: (label0, s0), (label0, s1), (label1, s0), (label2, s1).
+        let outputs = array![[0.1_f32, -0.1], [1.0, 1.0], [-1.0, -1.0]].into_dyn();
+        let targets = array![[1.0_f32, 0.0], [1.0, 0.0], [1.0, 0.0]].into_dyn();
+        let acc = BINARY_ACCURACY.compute(outputs.view(), targets.view());
+        assert!(
+            (acc - (4.0 / 6.0 * 100.0)).abs() < 1e-5,
+            "Expected 66.67%, got {acc}"
+        );
     }
 }

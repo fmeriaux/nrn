@@ -1,9 +1,10 @@
 use clap::*;
 use ndarray_rand::rand::random;
 use nrn::data::scalers::ScalerKind;
-use nrn::io::hyperparams::{
+use nrn::io::model::hyperparams::{
     ClippingRecord, EarlyStoppingRecord, HyperParametersRecord, SchedulerRecord,
 };
+use nrn::task::Task;
 use nrn::training::{
     EarlyStoppingConfig, GradientClipping, GradientClippingError, HyperParameters,
     HyperParametersError, LossConfig, OptimizerConfig, SchedulerConfig,
@@ -176,32 +177,29 @@ impl TrainArgs {
     fn early_stopping(&self) -> Option<EarlyStoppingConfig> {
         EarlyStoppingConfig::new(self.early_stopping, !self.no_restore_best_model).ok()
     }
-}
-
-impl TryFrom<&TrainArgs> for HyperParameters {
-    type Error = HyperParametersError;
 
     /// Assembles the CLI arguments into a validated domain spec, surfacing any
     /// invalid value (non-positive learning rate, bad clipping bounds,
     /// cross-field invariant violations) as a single [`HyperParametersError`].
     /// The caller-specific clipping and early-stopping components are built from
-    /// the arg shapes here, their errors folding into the same type via `?`.
-    fn try_from(args: &TrainArgs) -> Result<Self, Self::Error> {
+    /// the arg shapes here, their errors folding into the same type via `?`. The
+    /// loss is derived from `task`.
+    pub fn to_hyperparameters(&self, task: &Task) -> Result<HyperParameters, HyperParametersError> {
         HyperParameters::from_values(
-            args.epochs,
-            args.checkpoint_interval,
-            args.batch_size,
-            args.lr,
-            args.weight_decay,
-            args.optimizer.into(),
-            SchedulerConfig::from(args),
-            GradientClipping::try_from(args)?,
-            LossConfig::CrossEntropy,
-            args.early_stopping(),
-            args.val_ratio,
-            args.test_ratio,
-            args.seed.unwrap_or_else(random),
-            args.scale.map(Into::into),
+            self.epochs,
+            self.checkpoint_interval,
+            self.batch_size,
+            self.lr,
+            self.weight_decay,
+            self.optimizer.into(),
+            SchedulerConfig::from(self),
+            GradientClipping::try_from(self)?,
+            LossConfig::for_task(task),
+            self.early_stopping(),
+            self.val_ratio,
+            self.test_ratio,
+            self.seed.unwrap_or_else(random),
+            self.scale.map(Into::into),
         )
     }
 }
@@ -345,6 +343,9 @@ impl ResumeOverrides {
 mod tests {
     use super::*;
     use clap::Parser;
+    use nrn::io::model::hyperparams::{
+        LossKindRecord, LossRecord, OptimizerRecord, ReductionRecord,
+    };
 
     // ─── TrainArgs conversions ─────────────────────────────────────────────────
 
@@ -499,7 +500,9 @@ mod tests {
     #[test]
     fn hyperparameters_assembled_from_args() {
         let args = train_args(&["--lr", "0.01", "--batch-size", "32", "--seed", "42"]);
-        let hp = HyperParameters::try_from(&args).expect("valid hyperparameters");
+        let hp = args
+            .to_hyperparameters(&Task::Binary)
+            .expect("valid hyperparameters");
         assert_eq!(hp.epochs(), 100);
         assert_eq!(hp.lr().value(), 0.01);
         assert_eq!(hp.batch_size(), Some(32));
@@ -510,14 +513,16 @@ mod tests {
     #[test]
     fn weight_decay_defaults_to_zero_and_is_parsed() {
         assert_eq!(
-            HyperParameters::try_from(&train_args(&[]))
+            train_args(&[])
+                .to_hyperparameters(&Task::Binary)
                 .unwrap()
                 .weight_decay()
                 .value(),
             0.0
         );
         assert_eq!(
-            HyperParameters::try_from(&train_args(&["--weight-decay", "0.0001"]))
+            train_args(&["--weight-decay", "0.0001"])
+                .to_hyperparameters(&Task::Binary)
                 .unwrap()
                 .weight_decay()
                 .value(),
@@ -528,19 +533,22 @@ mod tests {
     #[test]
     fn scale_maps_to_the_matching_scaler_kind() {
         assert_eq!(
-            HyperParameters::try_from(&train_args(&[]))
+            train_args(&[])
+                .to_hyperparameters(&Task::Binary)
                 .unwrap()
                 .scaler(),
             None
         );
         assert_eq!(
-            HyperParameters::try_from(&train_args(&["--scale", "min-max"]))
+            train_args(&["--scale", "min-max"])
+                .to_hyperparameters(&Task::Binary)
                 .unwrap()
                 .scaler(),
             Some(ScalerKind::MinMax)
         );
         assert_eq!(
-            HyperParameters::try_from(&train_args(&["--scale", "z-score"]))
+            train_args(&["--scale", "z-score"])
+                .to_hyperparameters(&Task::Binary)
                 .unwrap()
                 .scaler(),
             Some(ScalerKind::ZScore)
@@ -551,7 +559,7 @@ mod tests {
     fn hyperparameters_surface_validation_errors() {
         // Validation/test ratios summing past 1.0 is a cross-field invariant violation.
         let args = train_args(&["--val-ratio", "0.8", "--test-ratio", "0.8"]);
-        assert!(HyperParameters::try_from(&args).is_err());
+        assert!(args.to_hyperparameters(&Task::Binary).is_err());
     }
 
     // ─── ResumeOverrides ───────────────────────────────────────────────────────
@@ -575,13 +583,16 @@ mod tests {
             batch_size: Some(32),
             lr: 0.001,
             weight_decay: 0.0,
-            optimizer: nrn::io::hyperparams::OptimizerRecord::Adam,
+            optimizer: OptimizerRecord::Adam,
             scheduler: SchedulerRecord::Constant,
             clipping: ClippingRecord::Norm { max_norm: 1.0 },
             early_stopping: None,
             val_ratio: 0.1,
             test_ratio: 0.1,
-            loss: nrn::io::hyperparams::LossRecord::CrossEntropy,
+            loss: LossRecord {
+                kind: LossKindRecord::BinaryCrossEntropy,
+                reduction: ReductionRecord::Mean,
+            },
             seed: 42,
             scaler: None,
         }

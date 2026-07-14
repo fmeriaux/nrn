@@ -4,24 +4,21 @@ use ndarray::{Array, Array1, Array2, ArrayD, ArrayViewD, Axis, Dimension, Ix2};
 use ndarray_rand::rand::Rng;
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::prelude::{SliceRandom, StdRng};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 
-/// A dataset containing features and labels for classification tasks.
+/// A dataset pairing per-sample inputs with per-sample targets.
 ///
-/// Construction goes exclusively through [`Dataset::new`], the single boundary
-/// where structural and label invariants are enforced. The fields are private so
-/// an invalid `Dataset` cannot be represented: every value of this type is
-/// guaranteed non-empty, shape-consistent, and labelled with contiguous
-/// 0-indexed class ids over at least two classes.
+/// Both axes are samples-major (axis 0 indexes samples). Construction goes
+/// through [`Dataset::new`] (structural validation) or its tabular companion
+/// [`Dataset::tabular`].
 #[derive(Clone)]
 pub struct Dataset {
-    /// A 2D array where each row is a sample and each column is a feature
-    features: Array2<f32>,
-    /// A 1D array where each element is the label for the corresponding sample
-    labels: Array1<f32>,
-    /// Where the dataset came from, when known. Optional provenance that travels
-    /// with the data but plays no part in its validity.
+    /// A samples-major array: axis 0 indexes samples, the trailing axes the features.
+    inputs: ArrayD<f32>,
+    /// A samples-major array: axis 0 indexes samples, any trailing axis the targets.
+    targets: ArrayD<f32>,
+    /// Where the dataset came from, when known.
     origin: Option<DatasetOrigin>,
 }
 
@@ -45,19 +42,15 @@ pub struct ModelSplit {
     pub test: ModelDataset,
 }
 
-/// Errors returned when features and labels cannot form a valid [`Dataset`].
+/// Errors returned when inputs and targets cannot form a valid [`Dataset`].
 #[derive(Debug, PartialEq, Eq)]
 pub enum DatasetError {
     /// The dataset has no features.
     NoFeatures,
     /// The dataset has no samples.
     NoSamples,
-    /// Features and labels disagree on the sample count.
-    ShapeMismatch { features: usize, labels: usize },
-    /// Fewer than two distinct classes are present (carries the count found).
-    TooFewClasses(usize),
-    /// Labels are not contiguous 0-indexed class ids in `[0, n_classes)`.
-    InvalidLabels,
+    /// Inputs and targets disagree on the sample count.
+    ShapeMismatch { inputs: usize, targets: usize },
 }
 
 impl std::fmt::Display for DatasetError {
@@ -65,16 +58,9 @@ impl std::fmt::Display for DatasetError {
         match self {
             DatasetError::NoFeatures => write!(f, "dataset has no features"),
             DatasetError::NoSamples => write!(f, "dataset has no samples"),
-            DatasetError::ShapeMismatch { features, labels } => write!(
+            DatasetError::ShapeMismatch { inputs, targets } => write!(
                 f,
-                "features and labels disagree on sample count: {features} rows vs {labels} labels"
-            ),
-            DatasetError::TooFewClasses(n) => {
-                write!(f, "a classifier needs at least 2 classes, but found {n}")
-            }
-            DatasetError::InvalidLabels => write!(
-                f,
-                "labels must be contiguous 0-indexed class ids in [0, n_classes)"
+                "inputs and targets disagree on sample count: {inputs} vs {targets}"
             ),
         }
     }
@@ -83,63 +69,53 @@ impl std::fmt::Display for DatasetError {
 impl Error for DatasetError {}
 
 impl Dataset {
-    /// Builds a validated dataset from raw `features` (rows = samples, columns =
-    /// features) and `labels`.
-    ///
-    /// This is the single boundary where dataset invariants are enforced, so every
-    /// downstream consumer — the layer-spec constructors
-    /// ([`crate::model::NeuronLayerSpec::output_for`],
-    /// [`crate::model::NeuronLayerSpec::infer_from`]) and [`Self::to_model_dataset`] —
-    /// can assume valid input and stay infallible.
+    /// Builds a dataset from samples-major `inputs` and `targets`, validating their
+    /// structure: the sample axes align and neither is empty.
     ///
     /// # Errors
-    /// - [`DatasetError::ShapeMismatch`] when the feature rows and labels disagree
-    ///   on the sample count.
-    /// - [`DatasetError::NoFeatures`] when the dataset has zero features.
+    /// - [`DatasetError::ShapeMismatch`] when inputs and targets disagree on the
+    ///   sample count (their leading axis).
     /// - [`DatasetError::NoSamples`] when the dataset has zero samples.
-    /// - [`DatasetError::TooFewClasses`] when fewer than two classes are present.
-    /// - [`DatasetError::InvalidLabels`] when labels are not contiguous 0-indexed
-    ///   class ids in `[0, n_classes)` (this also rejects non-integer labels).
+    /// - [`DatasetError::NoFeatures`] when the dataset has zero features.
     pub fn new(
-        features: Array2<f32>,
-        labels: Array1<f32>,
+        inputs: ArrayD<f32>,
+        targets: ArrayD<f32>,
         origin: Option<DatasetOrigin>,
     ) -> Result<Self, DatasetError> {
-        if features.nrows() != labels.len() {
+        let n_inputs = inputs.len_of(Axis(0));
+        let n_targets = targets.len_of(Axis(0));
+        if n_inputs != n_targets {
             return Err(DatasetError::ShapeMismatch {
-                features: features.nrows(),
-                labels: labels.len(),
+                inputs: n_inputs,
+                targets: n_targets,
             });
         }
-        if features.ncols() == 0 {
-            return Err(DatasetError::NoFeatures);
-        }
-        if labels.is_empty() {
+        if n_inputs == 0 {
             return Err(DatasetError::NoSamples);
         }
+        if inputs.is_empty() {
+            return Err(DatasetError::NoFeatures);
+        }
 
-        let dataset = Self {
-            features,
-            labels,
+        Ok(Self {
+            inputs,
+            targets,
             origin,
-        };
+        })
+    }
 
-        let n_classes = dataset.n_classes();
-        if n_classes < 2 {
-            return Err(DatasetError::TooFewClasses(n_classes));
-        }
-        // Contiguous 0-indexed ids: with exactly `n_classes` distinct values, every
-        // label lying in `[0, n_classes)` (and integral) forces the set to be
-        // {0, 1, …, n_classes-1}. This subsumes the binary {0, 1} requirement.
-        let valid_labels = dataset
-            .labels
-            .iter()
-            .all(|&l| l >= 0.0 && l.fract() == 0.0 && (l as usize) < n_classes);
-        if !valid_labels {
-            return Err(DatasetError::InvalidLabels);
-        }
-
-        Ok(dataset)
+    /// Builds a tabular dataset from rank-2 `inputs` (rows = samples, columns =
+    /// features) and rank-1 `targets`, dynamising both and delegating to
+    /// [`Dataset::new`].
+    ///
+    /// # Errors
+    /// The same structural errors as [`Dataset::new`].
+    pub fn tabular(
+        inputs: Array2<f32>,
+        targets: Array1<f32>,
+        origin: Option<DatasetOrigin>,
+    ) -> Result<Self, DatasetError> {
+        Self::new(inputs.into_dyn(), targets.into_dyn(), origin)
     }
 
     /// Returns the dataset's recorded origin, if any.
@@ -165,24 +141,34 @@ impl Dataset {
         )
     }
 
-    /// Returns the features, with one row per sample and one column per feature.
-    pub fn features(&self) -> &Array2<f32> {
-        &self.features
+    /// Returns the inputs, samples-major (axis 0 indexes samples).
+    pub fn inputs(&self) -> &ArrayD<f32> {
+        &self.inputs
     }
 
-    /// Returns the per-sample labels.
-    pub fn labels(&self) -> &Array1<f32> {
-        &self.labels
+    /// Returns the targets, samples-major (axis 0 indexes samples).
+    pub fn targets(&self) -> &ArrayD<f32> {
+        &self.targets
     }
 
     /// Returns the number of samples in the dataset.
     pub fn n_samples(&self) -> usize {
-        self.labels.len()
+        self.inputs.len_of(Axis(0))
     }
 
-    /// Returns the number of features in the dataset.
+    /// Returns the number of features per sample.
+    ///
+    /// # Panics
+    /// When the inputs are not rank-2 tabular.
     pub fn n_features(&self) -> usize {
-        self.features.ncols()
+        assert_eq!(self.inputs.ndim(), 2, "Inputs must be rank-2 tabular.");
+        self.inputs.len_of(Axis(1))
+    }
+
+    /// The per-sample input shape, sample axis excluded — e.g. `[features]` for tabular data,
+    /// `[channels, height, width]` for spatial data.
+    pub fn sample_shape(&self) -> &[usize] {
+        &self.inputs.shape()[1..]
     }
 
     /// Returns the number of unique classes (labels) in the dataset.
@@ -190,48 +176,48 @@ impl Dataset {
         self.unique_labels().len()
     }
 
-    /// Returns a vector of unique labels present in the dataset.
-    /// # Returns
-    /// A vector containing all unique label values found in the `labels` array.
-    /// # Notes
-    /// - The order of labels in the returned vector is not guaranteed.
+    /// Returns the unique target values present in the dataset, in no particular order.
     pub fn unique_labels(&self) -> Vec<f32> {
-        let set: HashSet<u32> = self.labels.iter().map(|&label| label.to_bits()).collect();
+        let set: HashSet<u32> = self.targets.iter().map(|&label| label.to_bits()).collect();
 
         set.into_iter().map(f32::from_bits).collect()
     }
 
-    /// Returns all feature rows corresponding to a specific label.
-    /// # Arguments
-    /// - `label`: The label value for which to retrieve the feature rows.
-    /// # Returns
-    /// A 2D array containing all feature rows where the corresponding label matches the input.
+    /// Returns the feature rows whose target equals `label`, as a rank-2 array.
+    ///
+    /// # Panics
+    /// When the inputs are not rank-2 tabular.
     pub fn get_features_for_label(&self, label: f32) -> Array2<f32> {
+        assert_eq!(self.inputs.ndim(), 2, "Inputs must be rank-2 tabular.");
         let indices: Vec<usize> = self
-            .labels
+            .targets
             .iter()
             .enumerate()
             .filter_map(|(i, &l)| if l == label { Some(i) } else { None })
             .collect();
 
-        self.features.select(Axis(0), &indices).to_owned()
+        self.inputs
+            .select(Axis(0), &indices)
+            .into_dimensionality::<Ix2>()
+            .expect("rank-2 inputs stay rank-2 after selecting sample rows")
     }
 
     /// Computes the minimum and maximum values for each feature in the dataset.
     ///
-    /// A [`Dataset`] always has at least one sample (enforced by [`Dataset::new`]),
-    /// so the range is always defined.
     /// # Returns
     /// A tuple of two vectors:
     /// - The first vector contains the minimum values for each feature.
     /// - The second vector contains the maximum values for each feature.
+    ///
+    /// # Panics
+    /// When the inputs are not rank-2 tabular.
     pub fn feature_range(&self) -> (Vec<f32>, Vec<f32>) {
         let n_features = self.n_features();
 
         let mut mins = vec![f32::INFINITY; n_features];
         let mut maxs = vec![f32::NEG_INFINITY; n_features];
 
-        for (i, feature) in self.features.axis_iter(Axis(1)).enumerate() {
+        for (i, feature) in self.inputs.axis_iter(Axis(1)).enumerate() {
             for &value in feature.iter() {
                 mins[i] = mins[i].min(value);
                 maxs[i] = maxs[i].max(value);
@@ -241,37 +227,52 @@ impl Dataset {
         (mins, maxs)
     }
 
-    /// Transforms the dataset into a shape suitable for model input and output.
-    ///
-    /// # Returns
-    /// A `ModelDataset` struct containing:
-    /// - `inputs` is a 2D array view of shape `(n_features, n_samples)`.
-    /// - `targets` is a 2D array owned of shape `(n_classes, n_samples)` for multi-class (one-hot encoded labels),
-    ///   or `(1, n_samples)` for binary labels.
-    ///
-    /// # Details
-    /// - If the labels are not binary (i.e., `max_label > 1`), the function one-hot encodes the labels.
-    /// - For binary labels, it simply adds an axis to match the expected shape.
-    ///
+    /// Transforms the dataset into a samples-last [`ModelDataset`]: inputs are
+    /// rotated so the sample axis trails, and rank-1 class-id targets are remapped
+    /// through a sorted vocabulary, then one-hot encoded (multi-class) or kept as a
+    /// single 0/1 row (binary), while rank-2 targets are rotated samples-last
+    /// unchanged.
     pub fn to_model_dataset(&self) -> ModelDataset {
-        let inputs = self.features.t().to_owned();
+        let inputs = self
+            .inputs
+            .view()
+            .permuted_axes(rotate_axis0_last(self.inputs.ndim()));
 
-        let n_classes = self.n_classes();
+        let targets: ArrayD<f32> = if self.targets.ndim() == 1 {
+            // A sorted vocabulary maps arbitrary label values to dense 0-indexed rows,
+            // so gaps (e.g. {1, 2}) neither misalign the one-hot rows nor panic.
+            let mut sorted_labels = self.unique_labels();
+            sorted_labels.sort_by(f32::total_cmp);
+            let vocab: HashMap<u32, usize> = sorted_labels
+                .iter()
+                .enumerate()
+                .map(|(index, label)| (label.to_bits(), index))
+                .collect();
+            let n_classes = vocab.len();
 
-        // Label validity (contiguous 0-indexed ids, binary ⊆ {0, 1}) is guaranteed
-        // by [`Self::new`], so no re-check is needed here.
-        let targets: Array2<f32> = if n_classes > 2 {
-            let mut one_hot = Array2::zeros((n_classes, self.n_samples()));
-            for (i, &label) in self.labels.iter().enumerate() {
-                one_hot[[label as usize, i]] = 1.0;
+            if n_classes > 2 {
+                let mut one_hot = Array2::zeros((n_classes, self.n_samples()));
+                for (i, &label) in self.targets.iter().enumerate() {
+                    one_hot[[vocab[&label.to_bits()], i]] = 1.0;
+                }
+                one_hot.into_dyn()
+            } else {
+                Array1::from_iter(
+                    self.targets
+                        .iter()
+                        .map(|&label| vocab[&label.to_bits()] as f32),
+                )
+                .insert_axis(Axis(0))
+                .into_dyn()
             }
-            one_hot
         } else {
-            // Binary labels (0.0 / 1.0) are used directly as a single target row.
-            self.labels.to_owned().insert_axis(Axis(0))
+            self.targets
+                .view()
+                .permuted_axes(rotate_axis0_last(self.targets.ndim()))
+                .to_owned()
         };
 
-        ModelDataset::new(inputs, targets)
+        ModelDataset::new(inputs.to_owned(), targets)
     }
 
     /// Builds a dataset from encoded `images` and their `labels`, stamped with
@@ -303,7 +304,7 @@ impl Dataset {
             source: source.into(),
         };
 
-        Ok(Dataset::new(features, labels, Some(origin))?)
+        Ok(Dataset::tabular(features, labels, Some(origin))?)
     }
 
     /// Shuffles the samples (seeded by `seed`) and partitions them into training,
@@ -357,6 +358,14 @@ impl Dataset {
             test: model.select(&indices[train_size + val_size..]),
         }
     }
+}
+
+/// The axis permutation rotating a samples-major array to samples-last: axis 0 moves to the
+/// back, the remaining axes shift forward. Generalizes the rank-2 transpose to any rank.
+fn rotate_axis0_last(ndim: usize) -> Vec<usize> {
+    let mut axes: Vec<usize> = (1..ndim).collect();
+    axes.push(0);
+    axes
 }
 
 /// Gathers the samples at `indices` along the trailing sample axis into a fresh owned array.
@@ -494,21 +503,10 @@ mod tests {
     use ndarray::{Array1, Array2, array};
 
     #[test]
-    fn new_rejects_out_of_range_multiclass_label() {
-        // labels = [0, 1, 2, 5]: n_classes=4, but label 5 >= n_classes=4
-        let features = Array2::zeros((4, 2));
-        let labels = array![0.0f32, 1.0, 2.0, 5.0];
-        assert_eq!(
-            Dataset::new(features, labels, None).err(),
-            Some(DatasetError::InvalidLabels)
-        );
-    }
-
-    #[test]
     fn valid_multiclass_labels_produce_correct_one_hot() {
         let features = Array2::zeros((3, 2));
         let labels = array![0.0f32, 1.0, 2.0];
-        let dataset = Dataset::new(features, labels, None).unwrap();
+        let dataset = Dataset::tabular(features, labels, None).unwrap();
         let model_dataset = dataset.to_model_dataset();
         // targets shape: (n_classes=3, n_samples=3)
         assert_eq!(model_dataset.targets.shape(), &[3, 3]);
@@ -516,6 +514,42 @@ mod tests {
         for i in 0..3 {
             assert_eq!(model_dataset.targets[[i, i]], 1.0);
         }
+    }
+
+    #[test]
+    fn gapped_multiclass_labels_one_hot_via_sorted_vocab() {
+        // Labels {1, 2, 5} are non-contiguous: the sorted vocabulary maps them to
+        // rows 0, 1, 2 in ascending order rather than by raw value.
+        let features = Array2::zeros((3, 2));
+        let labels = array![1.0f32, 2.0, 5.0];
+        let model_dataset = Dataset::tabular(features, labels, None)
+            .unwrap()
+            .to_model_dataset();
+        assert_eq!(model_dataset.targets.shape(), &[3, 3]);
+        for i in 0..3 {
+            assert_eq!(model_dataset.targets[[i, i]], 1.0);
+        }
+    }
+
+    #[test]
+    fn gapped_binary_labels_remap_to_zero_one() {
+        // Labels {1, 2}: the sorted vocabulary remaps the smaller value to 0 and
+        // the larger to 1, rather than passing the raw values through.
+        let features = Array2::zeros((3, 2));
+        let labels = array![1.0f32, 2.0, 1.0];
+        let model_dataset = Dataset::tabular(features, labels, None)
+            .unwrap()
+            .to_model_dataset();
+        assert_eq!(model_dataset.targets.shape(), &[1, 3]);
+        assert_eq!(
+            model_dataset
+                .targets
+                .index_axis(Axis(0), 0)
+                .iter()
+                .copied()
+                .collect::<Vec<f32>>(),
+            vec![0.0, 1.0, 0.0]
+        );
     }
 
     #[test]
@@ -536,7 +570,7 @@ mod tests {
     fn binary_labels_produce_single_row_targets() {
         let features = Array2::zeros((3, 2));
         let labels = array![0.0f32, 1.0, 0.0];
-        let model_dataset = Dataset::new(features, labels, None)
+        let model_dataset = Dataset::tabular(features, labels, None)
             .unwrap()
             .to_model_dataset();
         // Binary labels stay as a single (1, n_samples) row, not one-hot encoded.
@@ -553,21 +587,45 @@ mod tests {
     }
 
     #[test]
-    fn new_rejects_non_contiguous_binary_labels() {
-        // labels = [1, 2]: two classes, but not the contiguous {0, 1} set.
-        let features = Array2::zeros((2, 2));
-        let labels = array![1.0f32, 2.0];
-        assert_eq!(
-            Dataset::new(features, labels, None).err(),
-            Some(DatasetError::InvalidLabels)
-        );
+    fn to_model_dataset_rotates_rank4_inputs_samples_last() {
+        // (samples=6, channels=1, height=2, width=2) → samples-last (1, 2, 2, 6).
+        let inputs =
+            Array::from_shape_fn((6, 1, 2, 2), |(s, _, h, w)| (h + w + s) as f32).into_dyn();
+        let targets = Array1::from_shape_fn(6, |s| (s % 2) as f32).into_dyn();
+        let model = Dataset::new(inputs, targets, None)
+            .unwrap()
+            .to_model_dataset();
+        assert_eq!(model.inputs().shape(), &[1, 2, 2, 6]);
+        assert_eq!(model.targets().shape(), &[1, 6]);
     }
 
     #[test]
-    fn new_accepts_a_well_formed_dataset() {
-        let features = Array2::zeros((4, 2));
-        let labels = array![0.0f32, 1.0, 0.0, 1.0];
-        assert!(Dataset::new(features, labels, None).is_ok());
+    fn to_model_dataset_rotates_rank2_targets_samples_last() {
+        // A rank-2 target (samples=4, width=2) is rotated to (2, 4), not one-hot re-encoded.
+        let inputs = Array2::zeros((4, 3)).into_dyn();
+        let targets = Array2::from_shape_fn((4, 2), |(s, k)| (s + k) as f32).into_dyn();
+        let model = Dataset::new(inputs, targets, None)
+            .unwrap()
+            .to_model_dataset();
+        assert_eq!(model.inputs().shape(), &[3, 4]);
+        assert_eq!(model.targets().shape(), &[2, 4]);
+    }
+
+    #[test]
+    fn new_accepts_non_contiguous_class_ids() {
+        // Structural validation no longer rejects class-id gaps; {1, 2} is accepted.
+        let features = Array2::zeros((2, 2)).into_dyn();
+        let labels = array![1.0f32, 2.0].into_dyn();
+        let dataset = Dataset::new(features, labels, None).unwrap();
+        assert_eq!(dataset.n_classes(), 2);
+    }
+
+    #[test]
+    fn tabular_dynamises_a_single_column_target() {
+        let dataset =
+            Dataset::tabular(Array2::zeros((3, 2)), array![0.0f32, 1.0, 0.0], None).unwrap();
+        assert_eq!(dataset.inputs().ndim(), 2);
+        assert_eq!(dataset.targets().shape(), &[3]);
     }
 
     #[test]
@@ -578,7 +636,7 @@ mod tests {
             distribution: "spiral".to_string(),
             seed: 42,
         };
-        let dataset = Dataset::new(features, labels, Some(origin)).unwrap();
+        let dataset = Dataset::tabular(features, labels, Some(origin)).unwrap();
         assert_eq!(dataset.id(), "spiral-seed42-c2-f2-n4");
     }
 
@@ -586,18 +644,8 @@ mod tests {
     fn id_falls_back_to_a_neutral_prefix_without_origin() {
         let features = Array2::zeros((4, 2));
         let labels = array![0.0f32, 1.0, 0.0, 1.0];
-        let dataset = Dataset::new(features, labels, None).unwrap();
+        let dataset = Dataset::tabular(features, labels, None).unwrap();
         assert_eq!(dataset.id(), "dataset-c2-f2-n4");
-    }
-
-    #[test]
-    fn new_rejects_single_class_dataset() {
-        let features = Array2::zeros((3, 2));
-        let labels = array![1.0f32, 1.0, 1.0];
-        assert_eq!(
-            Dataset::new(features, labels, None).err(),
-            Some(DatasetError::TooFewClasses(1))
-        );
     }
 
     #[test]
@@ -605,7 +653,7 @@ mod tests {
         let features = Array2::zeros((3, 0));
         let labels = array![0.0f32, 1.0, 0.0];
         assert_eq!(
-            Dataset::new(features, labels, None).err(),
+            Dataset::tabular(features, labels, None).err(),
             Some(DatasetError::NoFeatures)
         );
     }
@@ -615,7 +663,7 @@ mod tests {
         let features = Array2::zeros((0, 2));
         let labels = Array1::zeros(0);
         assert_eq!(
-            Dataset::new(features, labels, None).err(),
+            Dataset::tabular(features, labels, None).err(),
             Some(DatasetError::NoSamples)
         );
     }
@@ -626,10 +674,10 @@ mod tests {
         let features = Array2::zeros((3, 2));
         let labels = array![0.0f32, 1.0];
         assert_eq!(
-            Dataset::new(features, labels, None).err(),
+            Dataset::tabular(features, labels, None).err(),
             Some(DatasetError::ShapeMismatch {
-                features: 3,
-                labels: 2
+                inputs: 3,
+                targets: 2
             })
         );
     }
@@ -639,7 +687,7 @@ mod tests {
         // 100 samples, 20% test, 10% val → 70 train / 10 val / 20 test
         let features = Array2::zeros((100, 2));
         let labels = Array1::from_shape_fn(100, |i| (i % 2) as f32);
-        let dataset = Dataset::new(features, labels, None).unwrap();
+        let dataset = Dataset::tabular(features, labels, None).unwrap();
         let split = dataset.split(0.1, 0.2, 0);
         assert_eq!(split.train_size(), 70);
         assert_eq!(split.validation_size(), 10);
@@ -651,7 +699,7 @@ mod tests {
         // val_ratio 0.0 → the validation split is None.
         let features = Array2::from_shape_fn((100, 2), |(i, _)| i as f32);
         let labels = Array1::from_shape_fn(100, |i| (i % 2) as f32);
-        let mut split = Dataset::new(features, labels, None)
+        let mut split = Dataset::tabular(features, labels, None)
             .unwrap()
             .split(0.0, 0.2, 0);
         assert!(split.validation.is_none());
@@ -683,7 +731,7 @@ mod tests {
     fn from_encoded_propagates_dataset_validation_error() {
         // The images form a valid rectangular matrix, but `from_encoded` does not
         // check that there are as many labels as images — it delegates to
-        // `Dataset::new`, which rejects the count mismatch.
+        // `Dataset::tabular`, which rejects the count mismatch.
         let images = vec![array![0.0f32, 1.0], array![2.0, 3.0]];
         let labels = vec![0usize]; // one label for two images
         let err = Dataset::from_encoded("test", images, labels).err().unwrap();
@@ -696,7 +744,7 @@ mod tests {
     #[test]
     fn unique_labels_deduplicates_values() {
         let dataset =
-            Dataset::new(Array2::zeros((4, 1)), array![0.0f32, 1.0, 1.0, 2.0], None).unwrap();
+            Dataset::tabular(Array2::zeros((4, 1)), array![0.0f32, 1.0, 1.0, 2.0], None).unwrap();
         let mut unique = dataset.unique_labels();
         unique.sort_by(f32::total_cmp);
         assert_eq!(unique, vec![0.0, 1.0, 2.0]);
@@ -704,8 +752,8 @@ mod tests {
 
     #[test]
     fn get_features_for_label_selects_matching_rows() {
-        let dataset = Dataset::new(
-            array![[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]],
+        let dataset = Dataset::tabular(
+            array![[1.0f32, 1.0], [2.0, 2.0], [3.0, 3.0]],
             array![0.0f32, 1.0, 0.0],
             None,
         )
@@ -718,8 +766,8 @@ mod tests {
 
     #[test]
     fn feature_range_returns_per_feature_min_max() {
-        let dataset = Dataset::new(
-            array![[1.0, 10.0], [3.0, 5.0], [-2.0, 8.0]],
+        let dataset = Dataset::tabular(
+            array![[1.0f32, 10.0], [3.0, 5.0], [-2.0, 8.0]],
             array![0.0f32, 1.0, 0.0],
             None,
         )
@@ -731,8 +779,12 @@ mod tests {
 
     #[test]
     fn fit_scaler_then_scale_inplace_normalizes_model_inputs() {
-        let dataset =
-            Dataset::new(array![[0.0, 0.0], [10.0, 20.0]], array![0.0f32, 1.0], None).unwrap();
+        let dataset = Dataset::tabular(
+            array![[0.0f32, 0.0], [10.0, 20.0]],
+            array![0.0f32, 1.0],
+            None,
+        )
+        .unwrap();
         let mut model = dataset.to_model_dataset();
 
         // Fit on the column-major inputs and apply back in place.
@@ -755,7 +807,7 @@ mod tests {
             (i as f32) * if j == 0 { 1.0 } else { 5.0 }
         });
         let labels = Array1::from_shape_fn(10, |i| (i % 2) as f32);
-        let dataset = Dataset::new(features, labels, None).unwrap();
+        let dataset = Dataset::tabular(features, labels, None).unwrap();
 
         let mut split = dataset.split(0.2, 0.2, 0);
         let scaler = split.train.fit_scaler(ScalerKind::MinMax);
@@ -831,8 +883,8 @@ mod tests {
         let labels = vec![0usize, 1, 2];
 
         let dataset = Dataset::from_encoded("digits", images, labels).unwrap();
-        assert_eq!(dataset.features().shape(), &[3, 2]);
-        assert_eq!(dataset.labels().len(), 3);
+        assert_eq!(dataset.inputs().shape(), &[3, 2]);
+        assert_eq!(dataset.targets().len(), 3);
         let mut unique = dataset.unique_labels();
         unique.sort_by(f32::total_cmp);
         assert_eq!(unique, vec![0.0, 1.0, 2.0]);
@@ -858,19 +910,11 @@ mod tests {
         );
         assert_eq!(
             DatasetError::ShapeMismatch {
-                features: 3,
-                labels: 2
+                inputs: 3,
+                targets: 2
             }
             .to_string(),
-            "features and labels disagree on sample count: 3 rows vs 2 labels"
-        );
-        assert_eq!(
-            DatasetError::TooFewClasses(1).to_string(),
-            "a classifier needs at least 2 classes, but found 1"
-        );
-        assert_eq!(
-            DatasetError::InvalidLabels.to_string(),
-            "labels must be contiguous 0-indexed class ids in [0, n_classes)"
+            "inputs and targets disagree on sample count: 3 vs 2"
         );
     }
 }

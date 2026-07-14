@@ -8,10 +8,11 @@
 
 use assert_cmd::Command;
 use ndarray::{Array1, array};
-use nrn::activations::RELU;
+use nrn::activations::{IDENTITY, RELU};
 use nrn::data::Instance;
 use nrn::data::scalers::{MinMaxScaler, ScalerMethod};
-use nrn::model::{LayerPlan, NeuralNetwork, NeuronLayerSpec, Predictor};
+use nrn::model::{NetworkConfig, NeuralNetwork, Predictor};
+use nrn::task::Task;
 use predicates::str::contains;
 use std::path::Path;
 use tempfile::TempDir;
@@ -24,9 +25,12 @@ fn workspace() -> TempDir {
 /// Writes a binary `n_features`-input predictor to `dir/model`, with an optional
 /// fitted scaler sidecar.
 fn write_predictor(dir: &Path, n_features: usize, scaler: Option<ScalerMethod>) {
-    let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![4]), 2, &*RELU).unwrap();
-    let network = NeuralNetwork::initialization(n_features, &specs, 7);
-    Predictor::new(network, scaler)
+    let config = NetworkConfig::builder(vec![n_features])
+        .dense(4, &RELU)
+        .dense(1, &IDENTITY)
+        .build();
+    let network = NeuralNetwork::from_config(config, 7).unwrap();
+    Predictor::new(network, Task::Binary, scaler)
         .save(dir.join("model"))
         .unwrap();
 }

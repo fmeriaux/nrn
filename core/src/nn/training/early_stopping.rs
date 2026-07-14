@@ -118,39 +118,43 @@ impl EarlyStopping {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activations::SIGMOID;
-    use crate::layers::Dense;
-    use crate::model::NeuronLayerSpec;
+    use crate::activations::{IDENTITY, SIGMOID};
+    use crate::model::NetworkConfig;
     use ndarray::Array1;
 
-    /// Downcasts a network's layer to the concrete [`Dense`] for reading or perturbing it.
-    fn dense(model: &NeuralNetwork, index: usize) -> &Dense {
-        model.layers()[index]
-            .as_any()
-            .downcast_ref::<Dense>()
-            .unwrap()
+    fn sample_model() -> NeuralNetwork {
+        let config = NetworkConfig::builder(vec![2])
+            .dense(2, &SIGMOID)
+            .dense(1, &IDENTITY)
+            .build();
+        NeuralNetwork::from_config(config, 0).unwrap()
     }
 
-    fn dense_mut(model: &mut NeuralNetwork, index: usize) -> &mut Dense {
-        model.layers_mut()[index]
-            .as_any_mut()
-            .downcast_mut::<Dense>()
-            .unwrap()
+    /// A layer's biases, read through the [`Layer`] trait's named tensors.
+    fn biases(model: &NeuralNetwork, index: usize) -> Array1<f32> {
+        model.layers()[index]
+            .tensors()
+            .take_bias()
+            .expect("a dense layer carries biases")
+    }
+
+    /// Overwrites a layer's biases (parameter 1) through the [`Layer`] trait.
+    fn set_biases(model: &mut NeuralNetwork, index: usize, biases: Array1<f32>) {
+        model.layers_mut()[index].parameters_mut()[1]
+            .value
+            .assign(&biases.into_dyn());
     }
 
     #[test]
     fn early_stopping_restores_best_model() {
         // Sequence: loss 1.0 → 0.5 (best, saved) → 0.8 → 0.9 (patience=2 exhausted)
         // After stop, best_model must reflect the state at loss=0.5, not the final state.
-        let specs = NeuronLayerSpec::network_for(vec![2], &*SIGMOID, 2);
-
-        let model_initial = NeuralNetwork::initialization(2, &specs, 0);
+        let model_initial = sample_model();
         let mut es = EarlyStopping::new(EarlyStoppingConfig::new(2, true).unwrap(), &model_initial);
 
         let mut model_at_best = model_initial.clone();
         // Give model_at_best a distinctive bias so we can tell it apart
-        *dense_mut(&mut model_at_best, 0).affine_mut().biases_mut() =
-            Array1::from_vec(vec![42.0, 42.0]);
+        set_biases(&mut model_at_best, 0, Array1::from_vec(vec![42.0, 42.0]));
 
         assert!(!es.observe(1.0, &model_initial)); // improvement: saved
         assert!(!es.observe(0.5, &model_at_best)); // new best: overwrites saved
@@ -161,8 +165,8 @@ mod tests {
             .best_model
             .expect("best_model should be Some after early stopping");
         assert_eq!(
-            dense(&best, 0).biases(),
-            dense(&model_at_best, 0).biases(),
+            biases(&best, 0),
+            biases(&model_at_best, 0),
             "best_model should be the epoch with loss=0.5, not the final state"
         );
     }
@@ -170,8 +174,7 @@ mod tests {
     #[test]
     fn early_stopping_skips_snapshot_when_restore_disabled() {
         // With restore_best_model = false, an improvement must NOT clone the model.
-        let specs = NeuronLayerSpec::network_for(vec![2], &*SIGMOID, 2);
-        let model = NeuralNetwork::initialization(2, &specs, 0);
+        let model = sample_model();
         let mut es = EarlyStopping::new(EarlyStoppingConfig::new(2, false).unwrap(), &model);
 
         assert!(!es.observe(1.0, &model)); // improvement, but no snapshot is taken
@@ -180,8 +183,7 @@ mod tests {
 
     #[test]
     fn new_seeds_best_model_when_restore_enabled() {
-        let specs = NeuronLayerSpec::network_for(vec![2], &*SIGMOID, 2);
-        let model = NeuralNetwork::initialization(2, &specs, 0);
+        let model = sample_model();
         let es = EarlyStopping::new(EarlyStoppingConfig::new(2, true).unwrap(), &model);
 
         assert!(es.best_model.is_some());
@@ -189,8 +191,7 @@ mod tests {
 
     #[test]
     fn new_does_not_seed_best_model_when_restore_disabled() {
-        let specs = NeuronLayerSpec::network_for(vec![2], &*SIGMOID, 2);
-        let model = NeuralNetwork::initialization(2, &specs, 0);
+        let model = sample_model();
         let es = EarlyStopping::new(EarlyStoppingConfig::new(2, false).unwrap(), &model);
 
         assert!(es.best_model.is_none());

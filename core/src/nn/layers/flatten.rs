@@ -1,8 +1,8 @@
 use crate::gradients::LayerGradients;
-use crate::layers::{BackwardPass, Layer, LayerConfigError, LayerKind, Parameter};
-use ndarray::{ArrayD, ArrayView2, ArrayViewD};
-use std::any::Any;
-use std::collections::HashMap;
+use crate::layers::{BackwardPass, Layer, Parameter};
+use crate::model::LayerConfig;
+use crate::tensors::Tensors;
+use ndarray::{ArrayD, ArrayViewD};
 
 /// A reshape layer collapsing each sample's feature dimensions into a single axis,
 /// mapping a spatial batch `(feature dims…, samples)` to the flat `(features, samples)`
@@ -43,17 +43,6 @@ impl Flatten {
     /// The number of features produced by flattening one sample.
     fn features(&self) -> usize {
         self.shape.iter().product()
-    }
-
-    /// Builds a `Flatten` layer from its configuration.
-    /// # Arguments
-    /// - `config`: Carries the `"shape"`, the per-sample feature dimensions.
-    /// - `_tensors`: Unused — a `Flatten` holds no tensors.
-    pub(super) fn from_config(
-        config: &HashMap<String, String>,
-        _tensors: HashMap<String, ArrayD<f32>>,
-    ) -> Result<Self, LayerConfigError> {
-        Ok(Flatten::new(super::config_dims(config, "shape")?))
     }
 }
 
@@ -117,38 +106,16 @@ impl Layer for Flatten {
         true
     }
 
-    fn kind(&self) -> LayerKind {
-        LayerKind::Flatten
+    fn config(&self) -> LayerConfig {
+        LayerConfig::Flatten
     }
 
-    fn config(&self) -> Vec<(String, String)> {
-        let shape = self
-            .shape
-            .iter()
-            .map(usize::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
-        vec![("shape".to_string(), shape)]
-    }
-
-    fn named_tensors(&self) -> Vec<(String, ArrayD<f32>)> {
-        vec![]
+    fn tensors(&self) -> Tensors {
+        Tensors::empty()
     }
 
     fn activation_name(&self) -> Option<&str> {
         None
-    }
-
-    fn weight_matrix(&self) -> Option<ArrayView2<'_, f32>> {
-        None
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
     }
 }
 
@@ -179,10 +146,8 @@ mod tests {
         let mut flatten = Flatten::new(vec![3, 4, 5]);
         assert_eq!(flatten.input_size(), 60);
         assert_eq!(flatten.output_size(), 60);
-        assert_eq!(flatten.kind(), LayerKind::Flatten);
         assert_eq!(flatten.activation_name(), None);
-        assert!(flatten.weight_matrix().is_none());
-        assert!(flatten.named_tensors().is_empty());
+        assert!(flatten.tensors().is_empty());
         assert!(flatten.parameters_mut().is_empty());
         assert!(flatten.is_finite());
     }
@@ -236,15 +201,5 @@ mod tests {
         // Rank 2 where rank 3 (two feature dims + samples) is expected.
         let input = ArrayD::<f32>::zeros(IxDyn(&[6, 5]));
         flatten.forward(input.view());
-    }
-
-    #[test]
-    fn config_round_trips_through_from_config() {
-        let flatten = Flatten::new(vec![2, 3, 4]);
-        let config: HashMap<String, String> = flatten.config().into_iter().collect();
-        let rebuilt = Flatten::from_config(&config, HashMap::new()).unwrap();
-
-        assert_eq!(flatten.input_shape(), rebuilt.input_shape());
-        assert_eq!(flatten.config(), rebuilt.config());
     }
 }

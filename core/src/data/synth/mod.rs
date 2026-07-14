@@ -248,7 +248,7 @@ impl SynthDataset {
             seed,
         };
 
-        Dataset::new(features, labels, Some(origin))
+        Dataset::tabular(features, labels, Some(origin))
             .expect("synthetic parameters guarantee a valid dataset")
     }
 }
@@ -406,7 +406,7 @@ mod tests {
     #[test]
     fn features_within_bounds() {
         for distribution in [Distribution::Uniform, RING, SPIRAL] {
-            for &val in generate(distribution, params(200, 2)).features().iter() {
+            for &val in generate(distribution, params(200, 2)).inputs().iter() {
                 assert!(
                     (0.0..=10.0).contains(&val),
                     "{distribution}: feature {val} out of [0, 10]"

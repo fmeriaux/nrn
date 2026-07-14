@@ -1,42 +1,8 @@
-//! The outcome of running a trained classifier on a single instance: the class
-//! probabilities, ranked most likely first.
+//! The ranked [`Classification`] decision read from a trained classifier's final outputs.
 
-use crate::activations::{Activation, SIGMOID, SOFTMAX};
-use crate::data::scalers::Scaler;
-use crate::model::{Activations, PredictionError, Predictor};
-use ndarray::{ArrayD, ArrayView, ArrayView1, Axis, Dimension, Ix2};
+use crate::model::Activations;
+use ndarray::{ArrayView1, Ix2};
 use std::cmp::Ordering::Equal;
-
-/// Reads a forward pass's captured [`Activations`] through the classifier head, interpreting the
-/// output stage's logits as class probabilities.
-pub trait ClassifierActivations {
-    /// The output stage read as class probabilities: sigmoid for a single logit (binary), softmax
-    /// otherwise. The leading axis holds the classes; any trailing axes (samples, positions) are
-    /// preserved.
-    fn probabilities(&self) -> ArrayD<f32>;
-
-    /// The activations with the output stage materialized to class probabilities, the earlier
-    /// stages untouched.
-    fn with_probabilities(self) -> Activations;
-}
-
-impl ClassifierActivations for Activations {
-    fn probabilities(&self) -> ArrayD<f32> {
-        let logits = self.output();
-        if logits.shape()[0] == 1 {
-            SIGMOID.apply(logits)
-        } else {
-            SOFTMAX.apply(logits)
-        }
-    }
-
-    fn with_probabilities(self) -> Activations {
-        let output = self.probabilities();
-        let mut stages = self.into_stages();
-        *stages.last_mut().expect("Activations is never empty") = output;
-        Activations::new(stages)
-    }
-}
 
 /// Class probabilities for one instance, ordered by descending probability.
 ///
@@ -63,6 +29,16 @@ impl Classification {
         Self(ranking)
     }
 
+    /// Builds the ranking from a single instance's finalized [`Activations`]: the output stage,
+    /// read as one flat class vector.
+    pub fn from_activations(activations: &Activations) -> Self {
+        let outputs = activations
+            .output()
+            .into_dimensionality::<Ix2>()
+            .expect("Classification ranks a flat class vector, not a spatial output");
+        Self::from_probabilities(outputs.column(0))
+    }
+
     /// The most likely class and its probability.
     pub fn top(&self) -> (usize, f32) {
         self.ranking()[0]
@@ -74,73 +50,29 @@ impl Classification {
     }
 }
 
-impl Predictor {
-    /// Classifies a single raw instance of a flat classifier, returning its class
-    /// probabilities ranked most likely first. The scaler is applied first when present.
-    ///
-    /// A [`Classification`] is a single ranking, so it applies to a flat class vector:
-    /// a spatial per-position output has no single ranking.
-    ///
-    /// # Errors
-    /// [`PredictionError`](crate::model::PredictionError) when the instance does not match
-    /// the scaler's fitted feature count or the network's input shape.
-    pub fn classify_instance<D: Dimension>(
-        &self,
-        input: ArrayView<f32, D>,
-    ) -> Result<Classification, PredictionError> {
-        let sample_axis = input.ndim();
-        let inputs = input.insert_axis(Axis(sample_axis));
-        let probabilities = self
-            .class_probabilities(inputs)?
-            .into_dimensionality::<Ix2>()
-            .expect("Classification ranks a flat class vector, not a spatial output");
-        Ok(Classification::from_probabilities(probabilities.column(0)))
-    }
-
-    /// Predicts class probabilities for a batch of raw inputs of any rank (samples on the
-    /// trailing axis): applies the scaler first when present, then maps the network's logits
-    /// through the inferred output activation: sigmoid for a single output (binary), softmax
-    /// otherwise.
-    ///
-    /// # Errors
-    /// [`PredictionError::Scaling`] when a scaler is present and the inputs do not match
-    /// its fitted feature count, or [`PredictionError::Network`] when they do not match the
-    /// network's input shape.
-    pub fn class_probabilities<D: Dimension>(
-        &self,
-        inputs: ArrayView<f32, D>,
-    ) -> Result<ArrayD<f32>, PredictionError> {
-        let activations = match &self.scaler {
-            Some(scaler) => {
-                let scaled = scaler.apply(inputs.into_dyn())?;
-                self.network.forward(scaled.view())?
-            }
-            None => self.network.forward(inputs)?,
-        };
-
-        Ok(activations.probabilities())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activations::{RELU, SIGMOID};
-    use crate::data::scalers::ScalerKind;
-    use crate::layers::{Conv2d, Dense, Flatten};
-    use crate::model::{InputShapeMismatch, LayerPlan, NeuralNetwork, NeuronLayerSpec};
-    use ndarray::{Array, Array4, IxDyn, array, s};
-    use ndarray_rand::rand::SeedableRng;
-    use ndarray_rand::rand::rngs::StdRng;
+    use crate::activations::{IDENTITY, RELU};
+    use crate::data::scalers::{Scaler, ScalerKind};
+    use crate::model::{NetworkConfig, NeuralNetwork, PredictionError, Predictor};
+    use crate::task::Task;
+    use ndarray::{Array, Array4, ArrayD, IxDyn, array, s};
 
     #[test]
-    fn classify_single_ranks_the_networks_outputs() {
-        let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![4]), 2, &*RELU).unwrap();
-        let predictor = Predictor::new(NeuralNetwork::initialization(2, &specs, 0), None);
+    fn from_activations_ranks_a_binary_networks_outputs() {
+        let config = NetworkConfig::builder(vec![2])
+            .dense(4, &RELU)
+            .dense(1, &IDENTITY)
+            .build();
+        let predictor = Predictor::new(
+            NeuralNetwork::from_config(config, 0).unwrap(),
+            Task::Binary,
+            None,
+        );
 
-        let classification = predictor
-            .classify_instance(array![0.3, 0.7].view())
-            .unwrap();
+        let activations = predictor.infer_instance(array![0.3, 0.7].view()).unwrap();
+        let classification = Classification::from_activations(&activations);
 
         // A binary network yields the two complementary class probabilities,
         // ranked by descending probability and summing to one.
@@ -149,25 +81,6 @@ mod tests {
         assert!(ranking[0].1 >= ranking[1].1);
         let sum: f32 = ranking.iter().map(|(_, p)| p).sum();
         assert!((sum - 1.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn classify_single_rejects_an_instance_of_the_wrong_size() {
-        let specs = NeuronLayerSpec::plan(LayerPlan::Explicit(vec![4]), 2, &*RELU).unwrap();
-        let predictor = Predictor::new(NeuralNetwork::initialization(2, &specs, 0), None);
-
-        // The network expects two features; a three-feature instance is rejected.
-        // Without a scaler the mismatch surfaces from the network.
-        let error = predictor
-            .classify_instance(array![0.1, 0.2, 0.3].view())
-            .unwrap_err();
-        assert_eq!(
-            error,
-            PredictionError::Network(InputShapeMismatch {
-                expected: vec![2],
-                found: vec![3]
-            })
-        );
     }
 
     #[test]
@@ -207,31 +120,20 @@ mod tests {
     fn convolutional_network_predicts_end_to_end_on_a_spatial_batch() {
         // Conv2d (1×4×4 → 2×2×2) → Flatten (8) → Dense (1 identity logit, binary). The rank-4
         // spatial batch threads through the network unchanged; the Flatten collapses it to the
-        // rank-2 the Dense head consumes, and class_probabilities yields (classes, samples).
-        let conv = Conv2d::initialization(
-            (1, 4, 4),
-            2,
-            (3, 3),
-            1,
-            0,
-            RELU.clone(),
-            &mut StdRng::seed_from_u64(0),
-        );
-        let head = Dense::initialization(
-            8,
-            &NeuronLayerSpec::output_for(2),
-            &mut StdRng::seed_from_u64(1),
-        );
-        let model = NeuralNetwork::single(conv)
-            .with_layer(Flatten::new(vec![2, 2, 2]))
-            .with_layer(head);
+        // rank-2 the Dense head consumes, and infer yields (classes, samples) outputs.
+        let config = NetworkConfig::builder(vec![1, 4, 4])
+            .conv2d(2, (3, 3), 1, 0, &RELU)
+            .flatten()
+            .dense(1, &IDENTITY)
+            .build();
+        let model = NeuralNetwork::from_config(config, 0).unwrap();
 
         // A spatial input the dense path could never accept: (channels, height, width, samples).
         let inputs = Array::from_shape_fn(IxDyn(&[1, 4, 4, 3]), |idx| {
             ((idx[1] + idx[2] + idx[3]) as f32).sin()
         });
-        let output = Predictor::new(model, None)
-            .class_probabilities(inputs.view())
+        let output = Predictor::new(model, Task::Binary, None)
+            .output(inputs.view())
             .unwrap();
         assert_eq!(output.shape(), &[1, 3]); // (classes, samples)
         assert!(output.iter().all(|&v| (0.0..=1.0).contains(&v)));
@@ -243,11 +145,11 @@ mod tests {
         // rank-4 spatial batch. Two identical builds (same seed) let one go into the
         // predictor and the other check the bare network on manually scaled inputs.
         let network = |seed| {
-            NeuralNetwork::single(Flatten::new(vec![2, 2, 2])).with_layer(Dense::initialization(
-                8,
-                &NeuronLayerSpec::output_for(2),
-                &mut StdRng::seed_from_u64(seed),
-            ))
+            let config = NetworkConfig::builder(vec![2, 2, 2])
+                .flatten()
+                .dense(1, &IDENTITY)
+                .build();
+            NeuralNetwork::from_config(config, seed).unwrap()
         };
 
         // (features=2, height=2, width=2, samples=4), the two features on different scales.
@@ -255,43 +157,43 @@ mod tests {
             (f as f32 + 1.0) * 10.0 * (h + w + s) as f32
         });
         let scaler = ScalerKind::MinMax.fit(inputs.view());
-        let predictor = Predictor::new(network(1), Some(scaler.clone()));
+        let predictor = Predictor::new(network(1), Task::Binary, Some(scaler.clone()));
 
         // The predictor scales the rank-4 batch per feature before the network: its
         // output matches the bare network run on the manually scaled inputs.
-        let via_predictor = predictor.class_probabilities(inputs.view()).unwrap();
+        let via_predictor = predictor.output(inputs.view()).unwrap();
         let mut scaled = inputs.clone().into_dyn();
         scaler.apply_inplace(scaled.view_mut()).unwrap();
-        let via_network = Predictor::new(network(1), None)
-            .class_probabilities(scaled.view())
+        let via_network = Predictor::new(network(1), Task::Binary, None)
+            .output(scaled.view())
             .unwrap();
         assert_eq!(via_predictor, via_network);
 
         // A single rank-3 instance is scaled with the same parameters, so its classification
         // matches the first column of the batch probabilities.
         let instance = inputs.slice(s![.., .., .., 0]).to_owned();
-        let single = predictor.classify_instance(instance.view()).unwrap();
+        let activations = predictor.infer_instance(instance.view()).unwrap();
+        let single = Classification::from_activations(&activations);
         let batch = via_predictor.into_dimensionality::<Ix2>().unwrap();
         let expected = Classification::from_probabilities(batch.column(0));
         assert_eq!(single, expected);
     }
 
     #[test]
-    fn class_probabilities_surfaces_a_scaler_feature_mismatch_as_a_scaling_error() {
+    fn output_surfaces_a_scaler_feature_mismatch_as_a_scaling_error() {
         // A scaler fitted on 2 leading-axis features, then applied to a batch with 3:
         // the scaler's mismatch surfaces through `?` as PredictionError::Scaling.
-        let network =
-            NeuralNetwork::single(Flatten::new(vec![2, 2, 2])).with_layer(Dense::initialization(
-                8,
-                &NeuronLayerSpec::output_for(2),
-                &mut StdRng::seed_from_u64(0),
-            ));
+        let config = NetworkConfig::builder(vec![2, 2, 2])
+            .flatten()
+            .dense(1, &IDENTITY)
+            .build();
+        let network = NeuralNetwork::from_config(config, 0).unwrap();
         let fit_batch = Array::from_shape_fn(IxDyn(&[2, 4]), |d| (d[0] + d[1]) as f32);
         let scaler = ScalerKind::MinMax.fit(fit_batch.view());
-        let predictor = Predictor::new(network, Some(scaler));
+        let predictor = Predictor::new(network, Task::Binary, Some(scaler));
 
         let wrong = ArrayD::<f32>::ones(IxDyn(&[3, 2, 2, 5]));
-        let error = predictor.class_probabilities(wrong.view()).unwrap_err();
+        let error = predictor.output(wrong.view()).unwrap_err();
 
         assert!(
             matches!(error, PredictionError::Scaling(_)),
@@ -303,8 +205,8 @@ mod tests {
 
     #[test]
     fn probabilities_always_in_zero_one() {
-        let specs = NeuronLayerSpec::network_for(vec![], &*SIGMOID, 2);
-        let model = NeuralNetwork::initialization(4, &specs, 0);
+        let config = NetworkConfig::builder(vec![4]).dense(1, &IDENTITY).build();
+        let model = NeuralNetwork::from_config(config, 0).unwrap();
         // f32 saturates to exactly 0.0 or 1.0 for large logits, so use closed interval
         let inputs = array![
             [100.0, -100.0],
@@ -312,8 +214,8 @@ mod tests {
             [100.0, -100.0],
             [100.0, -100.0]
         ];
-        let output = Predictor::new(model, None)
-            .class_probabilities(inputs.view())
+        let output = Predictor::new(model, Task::Binary, None)
+            .output(inputs.view())
             .unwrap();
         for &v in output.iter() {
             assert!(

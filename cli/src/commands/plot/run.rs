@@ -4,11 +4,12 @@ use crate::path::PathExt;
 use clap::Args;
 use nrn::data::Dataset;
 use nrn::data::scalers::ScalerMethod;
-use nrn::io::checkpoint::CheckpointArchive;
-use nrn::io::gif::GifWriter;
-use nrn::io::run::TrainingRun;
+use nrn::io::model::checkpoint::CheckpointArchive;
+use nrn::io::model::run::TrainingRun;
+use nrn::io::raster::gif::GifWriter;
 use nrn::model::Predictor;
 use nrn::plot::{ConsoleConfig, Figure};
+use nrn::task::Task;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
@@ -51,6 +52,7 @@ impl RunArgs {
         // Load everything up front so the status lines stay grouped above the
         // rendered output rather than interrupting it (console format).
         let meta = run.meta();
+        let config = run.config();
         let dataset = Dataset::load(self.dataset_path(&meta.dataset))?;
         loaded(&dataset);
 
@@ -63,8 +65,9 @@ impl RunArgs {
         }
 
         if dataset.n_features() == 2 {
-            let scaler: Option<ScalerMethod> = meta.scaler.clone().map(Into::into);
-            if let Some(path) = self.boundary(&archive, &dataset, &scaler)? {
+            let task = Task::from(config.task.clone());
+            let scaler: Option<ScalerMethod> = run.scaler().cloned().map(Into::into);
+            if let Some(path) = self.boundary(&archive, &dataset, task, &scaler)? {
                 artifacts.add("Decision Boundary", path);
             }
         } else if self.animate {
@@ -85,15 +88,16 @@ impl RunArgs {
         &self,
         archive: &CheckpointArchive,
         dataset: &Dataset,
+        task: Task,
         scaler: &Option<ScalerMethod>,
     ) -> Result<Option<PathBuf>, Box<dyn Error>> {
         if self.animate {
             let indices = archive.sample(self.frames.into());
-            return self.animation(archive, dataset, scaler, &indices);
+            return self.animation(archive, dataset, task, scaler, &indices);
         }
 
         let last = archive.len() - 1;
-        let figure = boundary_at(archive, last, dataset, scaler, self.resolution())?;
+        let figure = boundary_at(archive, last, dataset, task, scaler, self.resolution())?;
         render(&figure, self.format, self.size, self.artifact("boundary"))
     }
 
@@ -103,6 +107,7 @@ impl RunArgs {
         &self,
         archive: &CheckpointArchive,
         dataset: &Dataset,
+        task: Task,
         scaler: &Option<ScalerMethod>,
         indices: &[usize],
     ) -> Result<Option<PathBuf>, Box<dyn Error>> {
@@ -113,7 +118,9 @@ impl RunArgs {
                 let progress = Frames::new(indices.len(), "Rendering frames");
                 let mut figures = Vec::with_capacity(indices.len());
                 for &index in indices {
-                    figures.push(boundary_at(archive, index, dataset, scaler, resolution)?);
+                    figures.push(boundary_at(
+                        archive, index, dataset, task, scaler, resolution,
+                    )?);
                     progress.advance();
                 }
                 progress.finish();
@@ -134,7 +141,7 @@ impl RunArgs {
 
                 let progress = Frames::new(indices.len(), "Rendering GIF");
                 for &index in indices {
-                    let figure = boundary_at(archive, index, dataset, scaler, resolution)?;
+                    let figure = boundary_at(archive, index, dataset, task, scaler, resolution)?;
                     writer.write_frame(&figure.to_image(&cfg)?)?;
                     progress.advance();
                 }
@@ -175,11 +182,12 @@ fn boundary_at(
     archive: &CheckpointArchive,
     index: usize,
     dataset: &Dataset,
+    task: Task,
     scaler: &Option<ScalerMethod>,
     resolution: usize,
 ) -> Result<Figure, Box<dyn Error>> {
     let model = archive.model_at(index)?;
-    let predictor = Predictor::new(model, scaler.clone());
+    let predictor = Predictor::new(model, task, scaler.clone());
     predictor.boundary_figure(dataset, resolution)
 }
 
@@ -265,8 +273,8 @@ mod tests {
     fn dataset_path_is_a_sibling_of_the_run_directory() {
         let args = parse(&[]);
         assert_eq!(
-            args.dataset_path("data.safetensors"),
-            Path::new("runs/data.safetensors")
+            args.dataset_path("data.parquet"),
+            Path::new("runs/data.parquet")
         );
     }
 }
