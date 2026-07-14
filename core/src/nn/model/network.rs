@@ -4,6 +4,7 @@
 use crate::activations::Activation;
 use crate::layers::{Layer, format_shape};
 use crate::model::{LayerConfig, LayerConfigError, NetworkConfig};
+use crate::task::Task;
 use crate::tensors::Tensors;
 use ndarray::{ArrayD, ArrayView, ArrayViewD, Dimension};
 use ndarray_rand::rand::SeedableRng;
@@ -227,34 +228,6 @@ impl NeuralNetwork {
         self.layers.iter().all(|layer| layer.is_finite())
     }
 
-    /// Validates that `shape` matches this network's input shape.
-    ///
-    /// # Errors
-    /// [`InputShapeMismatch`] when `shape` differs from the network's input shape.
-    pub fn validate_input_shape(&self, shape: &[usize]) -> Result<(), InputShapeMismatch> {
-        let expected = self.input_shape();
-        (shape == expected)
-            .then_some(())
-            .ok_or_else(|| InputShapeMismatch {
-                expected,
-                found: shape.to_vec(),
-            })
-    }
-
-    /// Validates that this network's output shape matches `expected`.
-    ///
-    /// # Errors
-    /// [`OutputShapeMismatch`] when the network's output shape differs from `expected`.
-    pub fn validate_output_shape(&self, expected: &[usize]) -> Result<(), OutputShapeMismatch> {
-        let found = self.output_shape();
-        (found == expected)
-            .then_some(())
-            .ok_or_else(|| OutputShapeMismatch {
-                expected: expected.to_vec(),
-                found,
-            })
-    }
-
     /// Validates that `inputs` carry the per-sample shape this network expects: the sample axis
     /// is last, so the leading axes are the per-sample features.
     ///
@@ -264,9 +237,27 @@ impl NeuralNetwork {
         &self,
         inputs: ArrayView<f32, D>,
     ) -> Result<(), InputShapeMismatch> {
+        let expected = self.input_shape();
         let shape = inputs.shape();
         let found = &shape[..shape.len().saturating_sub(1)];
-        self.validate_input_shape(found)
+        (found == expected)
+            .then_some(())
+            .ok_or_else(|| InputShapeMismatch {
+                expected,
+                found: found.to_vec(),
+            })
+    }
+
+    /// Validates that this network's output shape matches what `task` expects.
+    ///
+    /// # Errors
+    /// [`OutputShapeMismatch`] when the network's output shape differs from `task`'s.
+    pub fn validate_task(&self, task: &Task) -> Result<(), OutputShapeMismatch> {
+        let expected = task.output_shape();
+        let found = self.output_shape();
+        (found == expected)
+            .then_some(())
+            .ok_or(OutputShapeMismatch { expected, found })
     }
 
     /// Computes the forward pass of the network and returns the output layer's activations.
@@ -376,11 +367,11 @@ mod tests {
     }
 
     #[test]
-    fn validate_output_shape_rejects_a_matching_count_but_wrong_rank() {
+    fn validate_task_rejects_a_matching_count_but_wrong_rank() {
         use crate::layers::Conv2d;
 
         // A Conv2d-only network produces a rank-3 (2, 2, 2) output = 8 features; a flat
-        // 8-wide expectation matches on count but not on shape.
+        // 8-wide regression shape matches on count but not on rank.
         let conv = Conv2d::initialization(
             (1, 4, 4),
             2,
@@ -392,7 +383,9 @@ mod tests {
         );
         let model = NeuralNetwork::single(conv);
 
-        let err = model.validate_output_shape(&[8]).unwrap_err();
+        let err = model
+            .validate_task(&Task::Regression { shape: vec![8] })
+            .unwrap_err();
         assert_eq!(err.expected, vec![8]);
         assert_eq!(err.found, vec![2, 2, 2]);
         assert_eq!(
@@ -402,22 +395,30 @@ mod tests {
     }
 
     #[test]
-    fn validate_output_shape_accepts_a_matching_flat_width() {
+    fn validate_task_accepts_a_matching_shape() {
         let config = NetworkConfig::builder(vec![3])
             .dense(4, &RELU)
             .dense(2, &IDENTITY)
             .build();
         let model = NeuralNetwork::from_config(config, 0).unwrap();
-        assert!(model.validate_output_shape(&[2]).is_ok());
-        assert!(model.validate_output_shape(&[3]).is_err());
+        assert!(
+            model
+                .validate_task(&Task::MultiClass { n_classes: 2 })
+                .is_ok()
+        );
+        assert!(
+            model
+                .validate_task(&Task::MultiClass { n_classes: 3 })
+                .is_err()
+        );
     }
 
     #[test]
-    fn validate_input_shape_rejects_a_matching_count_but_wrong_rank() {
+    fn validate_task_accepts_a_conv2d_terminated_network_for_a_matching_regression_shape() {
         use crate::layers::Conv2d;
 
-        // A Conv2d-first network expects a per-sample shape of (1, 4, 4) = 16 features; a flat
-        // 16-wide shape matches on count but not on shape.
+        // A bare Conv2d head is a legal regression output once the task declares the same
+        // per-sample shape — no trailing Dense/Flatten required.
         let conv = Conv2d::initialization(
             (1, 4, 4),
             2,
@@ -429,20 +430,30 @@ mod tests {
         );
         let model = NeuralNetwork::single(conv);
 
-        let err = model.validate_input_shape(&[16]).unwrap_err();
-        assert_eq!(err.expected, vec![1, 4, 4]);
-        assert_eq!(err.found, vec![16]);
+        assert!(
+            model
+                .validate_task(&Task::Regression {
+                    shape: vec![2, 2, 2]
+                })
+                .is_ok()
+        );
     }
 
     #[test]
-    fn validate_input_shape_accepts_a_matching_shape() {
+    fn validate_inputs_accepts_and_rejects_a_flat_shape() {
         let config = NetworkConfig::builder(vec![3])
             .dense(4, &RELU)
             .dense(2, &IDENTITY)
             .build();
         let model = NeuralNetwork::from_config(config, 0).unwrap();
-        assert!(model.validate_input_shape(&[3]).is_ok());
-        assert!(model.validate_input_shape(&[4]).is_err());
+
+        let matching = Array2::<f32>::zeros((3, 5)); // 3 features, 5 samples.
+        assert!(model.validate_inputs(matching.view()).is_ok());
+
+        let mismatching = Array2::<f32>::zeros((4, 5)); // 4 features, 5 samples.
+        let err = model.validate_inputs(mismatching.view()).unwrap_err();
+        assert_eq!(err.expected, vec![3]);
+        assert_eq!(err.found, vec![4]);
     }
 
     #[test]

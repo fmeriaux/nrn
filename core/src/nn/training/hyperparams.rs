@@ -506,7 +506,7 @@ impl HyperParameters {
         callbacks: Callbacks,
     ) -> Result<Trainer, BuildError> {
         model.validate_inputs(data.split.train.inputs().view())?;
-        model.validate_output_shape(&[task.output_size()])?;
+        model.validate_task(&task)?;
 
         let optimizer = self.optimizer.instantiate(self.lr, self.weight_decay);
         let scheduler = self
@@ -621,7 +621,7 @@ mod tests {
 
     #[test]
     fn for_task_picks_mean_squared_error_for_a_regression_task() {
-        let loss = LossConfig::for_task(&Task::Regression { n_outputs: 1 });
+        let loss = LossConfig::for_task(&Task::Regression { shape: vec![1] });
         assert_eq!(loss.kind, LossKind::MeanSquaredError);
         assert_eq!(loss.instantiate().name(), "Mean-Squared-Error");
     }

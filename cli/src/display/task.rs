@@ -11,7 +11,7 @@ impl Describe for Task {
             Task::Binary => "classification (binary)".to_string(),
             Task::MultiClass { n_classes } => format!("classification ({n_classes} classes)"),
             Task::MultiLabel { n_labels } => format!("classification ({n_labels} labels)"),
-            Task::Regression { n_outputs } => format!("regression ({n_outputs} outputs)"),
+            Task::Regression { shape } => format!("regression (shape {shape:?})"),
         };
         theme::value(detail)
     }

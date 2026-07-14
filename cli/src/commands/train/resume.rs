@@ -78,7 +78,7 @@ impl ResumeArgs {
             .with(ModelSaver::new(
                 run_dir,
                 &meta.model,
-                task,
+                task.clone(),
                 data.scaler().cloned(),
             ))
             .with_opt(recorder);
