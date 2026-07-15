@@ -57,14 +57,19 @@ fn render_block(panel: &Panel, cfg: &ConsoleConfig) -> String {
 /// A one-line `x: <label>   y: <label>` caption, omitting either axis missing
 /// a label, or `None` when neither axis carries one.
 fn axis_label_line(panel: &Panel) -> Option<String> {
-    let entries: Vec<String> = [
-        panel.x_label.as_deref().map(|label| format!("x: {label}")),
-        panel.y_label.as_deref().map(|label| format!("y: {label}")),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
+    joined_line(
+        [
+            panel.x_label.as_deref().map(|label| format!("x: {label}")),
+            panel.y_label.as_deref().map(|label| format!("y: {label}")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
+    )
+}
 
+/// `entries` joined with a triple-space gutter, or `None` when empty.
+fn joined_line(entries: Vec<String>) -> Option<String> {
     (!entries.is_empty()).then(|| entries.join("   "))
 }
 
@@ -129,20 +134,20 @@ fn display_width(line: &str) -> usize {
 /// A one-line color key for a panel's labeled series — a swatch in each series'
 /// own color followed by its label — or `None` when no series carries a label.
 fn legend_line(panel: &Panel) -> Option<String> {
-    let entries: Vec<String> = panel
-        .series
-        .iter()
-        .filter_map(|series| {
-            let (color, label) = match series {
-                Series::Line { color, label, .. } | Series::Points { color, label, .. } => {
-                    (color, label.as_deref()?)
-                }
-            };
-            Some(format!("{} {label}", swatch(*color)))
-        })
-        .collect();
-
-    (!entries.is_empty()).then(|| entries.join("   "))
+    joined_line(
+        panel
+            .series
+            .iter()
+            .filter_map(|series| {
+                let (color, label) = match series {
+                    Series::Line { color, label, .. } | Series::Points { color, label, .. } => {
+                        (color, label.as_deref()?)
+                    }
+                };
+                Some(format!("{} {label}", swatch(*color)))
+            })
+            .collect(),
+    )
 }
 
 /// The `textplots` color for a scene color.
