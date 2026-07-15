@@ -90,6 +90,8 @@ pub struct Panel {
     pub title: String,
     pub x_range: (f32, f32),
     pub y_range: (f32, f32),
+    pub x_label: Option<String>,
+    pub y_label: Option<String>,
     pub show_legend: bool,
     pub series: Vec<Series>,
 }
@@ -210,6 +212,8 @@ mod tests {
             title: String::new(),
             x_range,
             y_range,
+            x_label: None,
+            y_label: None,
             show_legend: false,
             series: Vec::new(),
         }
