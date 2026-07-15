@@ -49,7 +49,14 @@ fn draw_panel(
         .y_label_area_size(cfg.area_size)
         .build_cartesian_2d(x_min..x_max, y_min..y_max)?;
 
-    chart.configure_mesh().draw()?;
+    let mut mesh = chart.configure_mesh();
+    if let Some(x_label) = &panel.x_label {
+        mesh.x_desc(x_label.as_str());
+    }
+    if let Some(y_label) = &panel.y_label {
+        mesh.y_desc(y_label.as_str());
+    }
+    mesh.draw()?;
 
     for series in &panel.series {
         draw_series(&mut chart, series)?;
@@ -126,6 +133,8 @@ mod tests {
             title: "Lines".to_string(),
             x_range: (0.0, 10.0),
             y_range: (0.0, 1.0),
+            x_label: Some("X".to_string()),
+            y_label: Some("Y".to_string()),
             show_legend: true,
             series: vec![
                 Series::Line {
@@ -154,6 +163,8 @@ mod tests {
             title: "Scatter".to_string(),
             x_range: (0.0, 1.0),
             y_range: (0.0, 1.0),
+            x_label: None,
+            y_label: None,
             show_legend: false,
             series: vec![
                 Series::Line {
@@ -187,6 +198,8 @@ mod tests {
             title: "Panel".to_string(),
             x_range: (0.0, 1.0),
             y_range: (0.0, 1.0),
+            x_label: None,
+            y_label: None,
             show_legend: false,
             series: Vec::new(),
         };

@@ -104,6 +104,8 @@ impl EvaluationHistory {
             title: "Training Loss Over Epochs".to_string(),
             x_range,
             y_range: (mins[0], maxs[0]),
+            x_label: Some("Epoch".to_string()),
+            y_label: Some("Loss".to_string()),
             show_legend: true,
             series: line_series(
                 &epochs,
@@ -119,6 +121,8 @@ impl EvaluationHistory {
             title: "Training and Test Accuracy Over Epochs".to_string(),
             x_range,
             y_range: (mins[1], maxs[1]),
+            x_label: Some("Epoch".to_string()),
+            y_label: Some("Accuracy".to_string()),
             show_legend: true,
             series: line_series(
                 &epochs,
@@ -184,6 +188,8 @@ fn scatter_panel(
         title: "Scatter Plot of Dataset Features".to_string(),
         x_range: (mins[0], maxs[0]),
         y_range: (mins[1], maxs[1]),
+        x_label: Some("Feature 0".to_string()),
+        y_label: Some("Feature 1".to_string()),
         show_legend,
         series,
     })
@@ -285,6 +291,23 @@ mod tests {
                 .iter()
                 .all(|series| matches!(series, Series::Points { label: Some(_), .. }))
         );
+    }
+
+    #[test]
+    fn scatter_panel_labels_axes_by_feature_index() {
+        let panel = &two_feature_dataset().figure().unwrap().panels[0];
+        assert_eq!(panel.x_label.as_deref(), Some("Feature 0"));
+        assert_eq!(panel.y_label.as_deref(), Some("Feature 1"));
+    }
+
+    #[test]
+    fn history_panels_label_epoch_against_their_own_metric() {
+        let history = EvaluationHistory::new(vec![checkpoint(0), checkpoint(1)]);
+        let figure = history.figure().unwrap();
+        assert_eq!(figure.panels[0].x_label.as_deref(), Some("Epoch"));
+        assert_eq!(figure.panels[0].y_label.as_deref(), Some("Loss"));
+        assert_eq!(figure.panels[1].x_label.as_deref(), Some("Epoch"));
+        assert_eq!(figure.panels[1].y_label.as_deref(), Some("Accuracy"));
     }
 
     #[test]

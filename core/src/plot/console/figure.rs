@@ -33,13 +33,18 @@ impl Figure {
     }
 }
 
-/// Renders one panel as a titled block: its title, the plotted canvas, and —
-/// when the panel carries a legend — a colored key beneath it.
+/// Renders one panel as a titled block: its title, the plotted canvas, the
+/// axis labels (when either axis carries one), and — when the panel carries a
+/// legend — a colored key beneath it.
 fn render_block(panel: &Panel, cfg: &ConsoleConfig) -> String {
     let mut block = String::new();
     block.push_str(&panel.title);
     block.push('\n');
     block.push_str(&render_panel(panel, cfg));
+    if let Some(axis_labels) = axis_label_line(panel) {
+        block.push_str(&axis_labels);
+        block.push('\n');
+    }
     if panel.show_legend
         && let Some(legend) = legend_line(panel)
     {
@@ -47,6 +52,25 @@ fn render_block(panel: &Panel, cfg: &ConsoleConfig) -> String {
         block.push('\n');
     }
     block
+}
+
+/// A one-line `x: <label>   y: <label>` caption, omitting either axis missing
+/// a label, or `None` when neither axis carries one.
+fn axis_label_line(panel: &Panel) -> Option<String> {
+    joined_line(
+        [
+            panel.x_label.as_deref().map(|label| format!("x: {label}")),
+            panel.y_label.as_deref().map(|label| format!("y: {label}")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
+    )
+}
+
+/// `entries` joined with a triple-space gutter, or `None` when empty.
+fn joined_line(entries: Vec<String>) -> Option<String> {
+    (!entries.is_empty()).then(|| entries.join("   "))
 }
 
 /// Joins panel blocks side by side, padding each to its own visible width and
@@ -110,20 +134,20 @@ fn display_width(line: &str) -> usize {
 /// A one-line color key for a panel's labeled series — a swatch in each series'
 /// own color followed by its label — or `None` when no series carries a label.
 fn legend_line(panel: &Panel) -> Option<String> {
-    let entries: Vec<String> = panel
-        .series
-        .iter()
-        .filter_map(|series| {
-            let (color, label) = match series {
-                Series::Line { color, label, .. } | Series::Points { color, label, .. } => {
-                    (color, label.as_deref()?)
-                }
-            };
-            Some(format!("{} {label}", swatch(*color)))
-        })
-        .collect();
-
-    (!entries.is_empty()).then(|| entries.join("   "))
+    joined_line(
+        panel
+            .series
+            .iter()
+            .filter_map(|series| {
+                let (color, label) = match series {
+                    Series::Line { color, label, .. } | Series::Points { color, label, .. } => {
+                        (color, label.as_deref()?)
+                    }
+                };
+                Some(format!("{} {label}", swatch(*color)))
+            })
+            .collect(),
+    )
 }
 
 /// The `textplots` color for a scene color.
@@ -165,6 +189,8 @@ mod tests {
             title: "Loss".to_string(),
             x_range: (0.0, 10.0),
             y_range: (0.0, 1.0),
+            x_label: Some("Epoch".to_string()),
+            y_label: Some("Loss".to_string()),
             show_legend: true,
             series: vec![
                 Series::Line {
@@ -200,6 +226,25 @@ mod tests {
         let text = figure.to_console(&ConsoleConfig::new(64, 32).unwrap());
         // The labeled line shows up in the key, in its own truecolor swatch.
         assert!(text.contains("\u{1b}[38;2;214;39;40m\u{25cf}\u{1b}[0m Train"));
+    }
+
+    #[test]
+    fn to_console_appends_an_axis_label_line_beneath_the_canvas() {
+        let figure = Figure::chart(vec![line_panel()]);
+        let text = figure.to_console(&ConsoleConfig::new(64, 32).unwrap());
+        assert!(text.contains("x: Epoch   y: Loss\n"));
+    }
+
+    #[test]
+    fn axis_label_line_omits_a_missing_axis_and_is_none_without_either() {
+        let mut x_only = line_panel();
+        x_only.y_label = None;
+        assert_eq!(axis_label_line(&x_only), Some("x: Epoch".to_string()));
+
+        let mut neither = line_panel();
+        neither.x_label = None;
+        neither.y_label = None;
+        assert_eq!(axis_label_line(&neither), None);
     }
 
     #[test]
