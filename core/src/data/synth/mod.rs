@@ -2,8 +2,8 @@ mod ring;
 mod spiral;
 mod uniform;
 
-use crate::data::DatasetOrigin;
-use crate::data::dataset::Dataset;
+use crate::data::dataset::{Dataset, DatasetInfo};
+use crate::data::targets::Targets;
 use ndarray::{Array1, Array2, ArrayViewMut1, Axis};
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand::prelude::StdRng;
@@ -219,15 +219,15 @@ impl SynthDataset {
         })
     }
 
-    /// Generates a dataset using a specific seed for reproducibility, stamped with
-    /// its [`DatasetOrigin::Synthetic`] provenance. The parameters were validated
-    /// at construction, so the result is always well-formed.
+    /// Generates a dataset using a specific seed for reproducibility, describing
+    /// its distribution and seed. The parameters were validated at construction,
+    /// so the result is always well-formed.
     /// # Arguments
     /// - `seed`: A seed for the random number generator to ensure reproducibility.
     pub fn generate(&self, seed: u64) -> Dataset {
         let mut rng = StdRng::seed_from_u64(seed);
 
-        let (mut features, labels) = init_features_and_labels(
+        let (mut features, ids) = init_features_and_labels(
             self.params.n_features,
             self.params.n_clusters,
             self.params.samples_per_cluster(),
@@ -243,22 +243,23 @@ impl SynthDataset {
             }
         }
 
-        let origin = DatasetOrigin::Synthetic {
-            distribution: self.distribution.to_string(),
-            seed,
+        let targets =
+            Targets::class_label(ids, None).expect("synthetic ids are contiguous by construction");
+        let info = DatasetInfo {
+            description: Some(format!("Synthetic ({}, seed {seed})", self.distribution)),
         };
 
-        Dataset::tabular(features, labels, Some(origin))
+        Dataset::tabular(features, targets, Some(info))
             .expect("synthetic parameters guarantee a valid dataset")
     }
 }
 
-/// Initializes the features and labels for a dataset.
+/// Initializes the features and class ids for a dataset.
 fn init_features_and_labels(
     n_features: usize,
     n_clusters: usize,
     samples_per_cluster: usize,
-) -> (Array2<f32>, Array1<f32>) {
+) -> (Array2<f32>, Array1<u32>) {
     assert!(n_features > 0, "n_features must be greater than zero.");
     assert!(n_clusters > 0, "n_clusters must be greater than zero.");
     assert!(
@@ -267,10 +268,10 @@ fn init_features_and_labels(
     );
 
     let total_samples = samples_per_cluster * n_clusters;
-    let labels = Array1::from_shape_fn(total_samples, |i| (i / samples_per_cluster) as f32);
+    let ids = Array1::from_shape_fn(total_samples, |i| (i / samples_per_cluster) as u32);
     let features = Array2::<f32>::zeros((total_samples, n_features));
 
-    (features, labels)
+    (features, ids)
 }
 
 /// Calculates the maximum radius from a list of radius ranges.
@@ -383,9 +384,11 @@ mod tests {
     #[test]
     fn labels_are_zero_indexed() {
         for distribution in [Distribution::Uniform, RING, SPIRAL] {
-            let mut labels = generate(distribution, params(90, 3)).unique_labels();
-            labels.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            assert_eq!(labels, vec![0.0, 1.0, 2.0], "{distribution}");
+            let dataset = generate(distribution, params(90, 3));
+            let Targets::ClassLabel(label) = dataset.targets() else {
+                panic!("expected ClassLabel targets");
+            };
+            assert_eq!(label.n_classes(), 3, "{distribution}");
         }
     }
 

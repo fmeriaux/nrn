@@ -1,7 +1,7 @@
 use crate::data::Classes;
 use crate::io::path::PathExt;
 use fs::read_dir;
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fs;
 use std::path::Path;
@@ -11,19 +11,17 @@ impl Classes {
     /// contiguous 0-indexed label assigned in sorted name order. Stray files are
     /// ignored: only subdirectories become classes.
     pub fn scan<P: AsRef<Path>>(root: P) -> Result<Self, Box<dyn Error>> {
-        let mut directories = read_dir(Path::combine_safe_with_cwd(root)?)?
+        let names: BTreeSet<String> = read_dir(Path::combine_safe_with_cwd(root)?)?
             .filter_map(Result::ok)
             .filter(|e| e.path().is_dir())
-            .collect::<Vec<_>>();
+            .filter_map(|e| e.file_name().to_str().map(str::to_string))
+            .collect();
 
-        directories.sort_by_key(|e| e.file_name());
-
-        let mut classes = BTreeMap::new();
-        for (index, entry) in directories.into_iter().enumerate() {
-            if let Some(name) = entry.file_name().to_str() {
-                classes.insert(name.to_string(), index);
-            }
-        }
+        let classes = names
+            .into_iter()
+            .enumerate()
+            .map(|(index, name)| (name, index))
+            .collect();
 
         Ok(Classes::new(classes))
     }
@@ -32,6 +30,7 @@ impl Classes {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     fn temp_dir(tag: &str) -> PathBuf {

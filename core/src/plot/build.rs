@@ -4,9 +4,11 @@
 //! leaving rasterization to a renderer.
 
 use crate::data::Dataset;
+use crate::data::Targets;
 use crate::evaluation_history::EvaluationHistory;
 use crate::model::Predictor;
 use crate::plot::scene::{Color, Figure, Panel, Series, add_padding};
+use ndarray::{Axis, Ix2};
 use std::error::Error;
 
 /// Fraction of each axis range added as whitespace around a figure's axes.
@@ -153,21 +155,36 @@ fn scatter_panel(
         return Err("Scatter plot requires a dataset with exactly two features".into());
     }
 
+    let Targets::ClassLabel(label) = dataset.targets() else {
+        return Err("Scatter plot requires a dataset with class-label targets".into());
+    };
+    let names = label.names();
+    let n_classes = label.n_classes();
+
     let (raw_mins, raw_maxs) = dataset.feature_range();
     let (mins, maxs) = add_padding(&raw_mins, &raw_maxs, padding_factor);
 
-    let mut series: Vec<Series> = dataset
-        .unique_labels()
-        .into_iter()
-        .map(|label| Series::Points {
-            points: dataset
-                .get_features_for_label(label)
-                .outer_iter()
-                .map(|point| (point[0], point[1]))
-                .collect(),
-            color: Color::category(label as usize),
-            label: Some(format!("Class {label}")),
-            radius: 2,
+    let mut series: Vec<Series> = (0..n_classes as u32)
+        .map(|id| {
+            let rows = dataset
+                .inputs()
+                .select(Axis(0), &label.indices_for(id))
+                .into_dimensionality::<Ix2>()
+                .expect("rank-2 inputs stay rank-2 after selecting sample rows");
+            Series::Points {
+                points: rows
+                    .outer_iter()
+                    .map(|point| (point[0], point[1]))
+                    .collect(),
+                color: Color::category(id as usize),
+                label: Some(
+                    names
+                        .and_then(|names| names.name_of(id as usize))
+                        .map(str::to_string)
+                        .unwrap_or_else(|| format!("Class {id}")),
+                ),
+                radius: 2,
+            }
         })
         .collect();
 
@@ -228,7 +245,7 @@ mod tests {
     fn two_feature_dataset() -> Dataset {
         Dataset::tabular(
             array![[0.0, 0.0], [1.0, 1.0], [0.0, 1.0], [1.0, 0.0]],
-            array![0.0, 1.0, 0.0, 1.0],
+            Targets::class_label(array![0u32, 1, 0, 1], None).unwrap(),
             None,
         )
         .unwrap()
@@ -238,7 +255,7 @@ mod tests {
     fn one_feature_dataset() -> Dataset {
         Dataset::tabular(
             array![[0.0], [1.0], [0.0], [1.0]],
-            array![0.0, 1.0, 0.0, 1.0],
+            Targets::class_label(array![0u32, 1, 0, 1], None).unwrap(),
             None,
         )
         .unwrap()

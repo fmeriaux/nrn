@@ -103,17 +103,26 @@ impl DatasetArgs {
 
                 if let Ok(img) = encoder.encode(&img) {
                     data.push(img);
-                    labels.push(*label);
+                    labels.push(*label as u32);
                 }
             }
         }
         progress.finish();
 
-        let dataset = Dataset::from_encoded(self.input.file_stem_string(), data, labels)?;
+        let source = self.input.file_stem_string();
+        let n_classes = classes.len();
+        let dataset = Dataset::from_encoded(&source, data, labels, Some(classes))?;
 
         completed!("Encoding completed");
 
-        let filename = self.output.clone().unwrap_or_else(|| dataset.id().into());
+        let filename = self.output.clone().unwrap_or_else(|| {
+            format!(
+                "{source}-c{n_classes}-f{}-n{}",
+                dataset.n_features(),
+                dataset.n_samples()
+            )
+            .into()
+        });
         saved(&Artifacts::single(
             "Image Dataset",
             dataset.save(&filename)?,

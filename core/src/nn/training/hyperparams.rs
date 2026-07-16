@@ -871,10 +871,11 @@ mod tests {
     /// A two-feature dataset whose values grow with the sample index, so MinMax
     /// scaling has a non-trivial effect.
     fn ramp_dataset() -> Dataset {
+        use crate::data::Targets;
         use ndarray::{Array1, Array2};
         let features = Array2::from_shape_fn((10, 2), |(i, _)| i as f32);
-        let labels = Array1::from_shape_fn(10, |i| (i % 2) as f32);
-        Dataset::tabular(features, labels, None).unwrap()
+        let labels = Array1::from_shape_fn(10, |i| i as u32 % 2);
+        Dataset::tabular(features, Targets::class_label(labels, None).unwrap(), None).unwrap()
     }
 
     fn spec_with_scaler(scaler: Option<ScalerKind>) -> HyperParameters {

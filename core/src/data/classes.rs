@@ -28,6 +28,14 @@ impl Classes {
     pub fn iter(&self) -> impl Iterator<Item = (&String, &usize)> {
         self.0.iter()
     }
+
+    /// The name mapped to `label`.
+    pub fn name_of(&self, id: usize) -> Option<&str> {
+        self.0
+            .iter()
+            .find(|&(_, &l)| l == id)
+            .map(|(name, _)| name.as_str())
+    }
 }
 
 #[cfg(test)]
@@ -55,5 +63,16 @@ mod tests {
             .map(|(name, &label)| (name.clone(), label))
             .collect();
         assert_eq!(pairs, vec![("bird".to_string(), 0), ("cat".to_string(), 1)]);
+    }
+
+    #[test]
+    fn name_of_finds_the_matching_label() {
+        assert_eq!(sample().name_of(0), Some("bird"));
+        assert_eq!(sample().name_of(1), Some("cat"));
+    }
+
+    #[test]
+    fn name_of_is_none_for_an_unmapped_label() {
+        assert_eq!(sample().name_of(2), None);
     }
 }

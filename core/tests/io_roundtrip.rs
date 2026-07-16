@@ -6,7 +6,7 @@
 use ndarray::array;
 use nrn::activations::{IDENTITY, RELU};
 use nrn::data::scalers::{MinMaxScaler, Scaler, ScalerMethod};
-use nrn::data::{Dataset, Instance};
+use nrn::data::{Dataset, Instance, Targets};
 use nrn::evaluation::{Evaluation, EvaluationSet};
 use nrn::io::model::config::ModelConfigRecord;
 use nrn::io::model::hyperparams::{
@@ -61,7 +61,7 @@ fn full_pipeline_roundtrips_every_artifact() {
     // --- Dataset --------------------------------------------------------
     let dataset = Dataset::tabular(
         array![[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]],
-        array![0.0, 1.0, 1.0, 0.0],
+        Targets::class_label(array![0u32, 1, 1, 0], None).unwrap(),
         None,
     )
     .unwrap();

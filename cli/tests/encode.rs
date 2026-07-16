@@ -9,7 +9,7 @@
 
 use assert_cmd::Command;
 use image::{Rgb, RgbImage};
-use nrn::data::{Dataset, Instance};
+use nrn::data::{Dataset, Instance, Targets};
 use predicates::str::contains;
 use std::fs;
 use std::path::Path;
@@ -61,9 +61,14 @@ fn encodes_a_directory_into_a_dataset() {
         .success()
         .stdout(contains("Encoding completed"));
 
-    // RGB 4x4 = 48 features, 3 samples, 2 classes, origin label "imgs".
+    // RGB 4x4 = 48 features, 3 samples, 2 classes.
     let dataset = Dataset::load(tmp.path().join("out")).unwrap();
-    assert_eq!(dataset.id(), "imgs-c2-f48-n3");
+    assert_eq!(dataset.n_features(), 48);
+    assert_eq!(dataset.n_samples(), 3);
+    let Targets::ClassLabel(label) = dataset.targets() else {
+        panic!("expected ClassLabel targets");
+    };
+    assert_eq!(label.n_classes(), 2);
 }
 
 #[test]
@@ -90,7 +95,8 @@ fn skips_non_image_files_when_encoding_a_dataset() {
 
     // Grayscale 2x2 = 4 features, only the 2 PNGs counted (the .txt is dropped).
     let dataset = Dataset::load(tmp.path().join("out")).unwrap();
-    assert_eq!(dataset.id(), "imgs-c2-f4-n2");
+    assert_eq!(dataset.n_features(), 4);
+    assert_eq!(dataset.n_samples(), 2);
 }
 
 #[test]
@@ -106,7 +112,7 @@ fn ds_alias_defaults_the_output_name_to_the_dataset_id() {
         .assert()
         .success();
 
-    // No `-o`: the dataset is saved under its id.
+    // No `-o`: the dataset is saved under its default name.
     assert!(tmp.path().join("imgs-c2-f4-n2.parquet").exists());
 }
 

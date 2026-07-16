@@ -91,9 +91,11 @@ impl TryFrom<&SynthArgs> for SynthParams {
 
 impl SynthArgs {
     pub fn run(&self) -> Result<(), Box<dyn Error>> {
-        let generator = SynthDataset::new(SynthParams::try_from(self)?, Distribution::from(self))?;
+        let distribution = Distribution::from(self);
+        let generator = SynthDataset::new(SynthParams::try_from(self)?, distribution)?;
 
-        let dataset = generator.generate(self.seed.unwrap_or_else(random));
+        let seed = self.seed.unwrap_or_else(random);
+        let dataset = generator.generate(seed);
 
         if dataset.n_samples() != self.samples {
             warning!(
@@ -111,7 +113,14 @@ impl SynthArgs {
             preview(&dataset.figure()?);
         }
 
-        let filename = self.output.clone().unwrap_or_else(|| dataset.id());
+        let filename = self.output.clone().unwrap_or_else(|| {
+            format!(
+                "{distribution}-seed{seed}-c{}-f{}-n{}",
+                self.clusters,
+                dataset.n_features(),
+                dataset.n_samples()
+            )
+        });
         let artifacts = Artifacts::single("Dataset", dataset.save(&filename)?);
 
         saved(&artifacts);
