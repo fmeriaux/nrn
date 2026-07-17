@@ -67,6 +67,7 @@ fn loss_value(loss: &LossConfig) -> String {
     match loss.kind {
         LossKind::BinaryCrossEntropy => "Binary Cross-Entropy".to_string(),
         LossKind::CategoricalCrossEntropy => "Categorical Cross-Entropy".to_string(),
+        LossKind::SparseCategoricalCrossEntropy => "Sparse Categorical Cross-Entropy".to_string(),
         LossKind::MeanSquaredError => "Mean Squared Error".to_string(),
     }
 }

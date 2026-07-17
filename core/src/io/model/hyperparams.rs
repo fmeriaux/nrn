@@ -146,6 +146,7 @@ pub struct LossRecord {
 pub enum LossKindRecord {
     BinaryCrossEntropy,
     CategoricalCrossEntropy,
+    SparseCategoricalCrossEntropy,
     MeanSquaredError,
 }
 
@@ -178,6 +179,9 @@ impl From<&LossKind> for LossKindRecord {
         match kind {
             LossKind::BinaryCrossEntropy => LossKindRecord::BinaryCrossEntropy,
             LossKind::CategoricalCrossEntropy => LossKindRecord::CategoricalCrossEntropy,
+            LossKind::SparseCategoricalCrossEntropy => {
+                LossKindRecord::SparseCategoricalCrossEntropy
+            }
             LossKind::MeanSquaredError => LossKindRecord::MeanSquaredError,
         }
     }
@@ -188,6 +192,9 @@ impl From<&LossKindRecord> for LossKind {
         match record {
             LossKindRecord::BinaryCrossEntropy => LossKind::BinaryCrossEntropy,
             LossKindRecord::CategoricalCrossEntropy => LossKind::CategoricalCrossEntropy,
+            LossKindRecord::SparseCategoricalCrossEntropy => {
+                LossKind::SparseCategoricalCrossEntropy
+            }
             LossKindRecord::MeanSquaredError => LossKind::MeanSquaredError,
         }
     }

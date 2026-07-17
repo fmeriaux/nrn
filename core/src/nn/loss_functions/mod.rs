@@ -7,10 +7,12 @@
 mod binary_cross_entropy;
 mod categorical_cross_entropy;
 mod mean_squared_error;
+mod sparse_categorical_cross_entropy;
 
 pub use binary_cross_entropy::BinaryCrossEntropy;
 pub use categorical_cross_entropy::CategoricalCrossEntropy;
 pub use mean_squared_error::MeanSquaredError;
+pub use sparse_categorical_cross_entropy::SparseCategoricalCrossEntropy;
 
 use ndarray::{ArrayD, ArrayViewD};
 
