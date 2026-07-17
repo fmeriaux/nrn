@@ -38,7 +38,23 @@ impl LossFunction for SparseCategoricalCrossEntropy {
     /// * `inputs` - N-D array view where Axis(0) is `classes`.
     /// * `targets` - N-D array view whose Axis(0) is a single class-id row, matching `inputs`
     ///   on every other axis.
+    ///
+    /// # Panics
+    /// When `targets`' leading axis does not have length one, when `inputs` and `targets` do
+    /// not agree on every other axis, or when a target id is out of bounds for `inputs`'
+    /// leading axis.
     fn terms(&self, inputs: ArrayViewD<f32>, targets: ArrayViewD<f32>) -> ArrayD<f32> {
+        assert_eq!(
+            targets.shape()[0],
+            1,
+            "Sparse targets must carry a single class-id row."
+        );
+        assert_eq!(
+            inputs.shape()[1..],
+            targets.shape()[1..],
+            "Inputs and targets must agree on every axis but the class axis."
+        );
+
         // Per-position log-sum-exp over the class lane, max-shifted for numerical stability.
         let logsumexp = inputs.map_axis(Axis(0), |lane| {
             let max = lane.iter().copied().fold(f32::NEG_INFINITY, f32::max);
@@ -57,7 +73,23 @@ impl LossFunction for SparseCategoricalCrossEntropy {
     /// Computes ∂L/∂z — the gradient of the loss with respect to the logits: the per-position
     /// residual `softmax(z) − onehot(y)`, scaled by the [`Reduction`] over the positions (the
     /// class lane is a single term). Works out-of-the-box for N-Dimensional tensors.
+    ///
+    /// # Panics
+    /// When `targets`' leading axis does not have length one, when `inputs` and `targets` do
+    /// not agree on every other axis, or when a target id is out of bounds for `inputs`'
+    /// leading axis.
     fn gradient(&self, inputs: ArrayViewD<f32>, targets: ArrayViewD<f32>) -> ArrayD<f32> {
+        assert_eq!(
+            targets.shape()[0],
+            1,
+            "Sparse targets must carry a single class-id row."
+        );
+        assert_eq!(
+            inputs.shape()[1..],
+            targets.shape()[1..],
+            "Inputs and targets must agree on every axis but the class axis."
+        );
+
         let positions = inputs.len() / inputs.shape()[0];
         let mut residual = SOFTMAX.apply(inputs);
         let ids = targets.index_axis(Axis(0), 0);
@@ -203,5 +235,30 @@ mod tests {
     #[test]
     fn name_is_stable() {
         assert_eq!(sparse_cce().name(), "Sparse-Categorical-Cross-Entropy");
+    }
+
+    #[test]
+    #[should_panic(expected = "single class-id row")]
+    fn terms_panics_on_a_one_hot_target() {
+        // A stale one-hot target instead of a class-id row: must panic, not silently misread row 0.
+        let inputs = array![[0.0_f32, 0.0], [0.0, 0.0], [0.0, 0.0]].into_dyn();
+        let targets = array![[1.0_f32, 0.0], [0.0, 1.0], [0.0, 0.0]].into_dyn();
+        let _ = sparse_cce().terms(inputs.view(), targets.view());
+    }
+
+    #[test]
+    #[should_panic(expected = "single class-id row")]
+    fn gradient_panics_on_a_one_hot_target() {
+        let inputs = array![[0.0_f32, 0.0], [0.0, 0.0], [0.0, 0.0]].into_dyn();
+        let targets = array![[1.0_f32, 0.0], [0.0, 1.0], [0.0, 0.0]].into_dyn();
+        let _ = sparse_cce().gradient(inputs.view(), targets.view());
+    }
+
+    #[test]
+    #[should_panic(expected = "agree on every axis")]
+    fn terms_panics_on_a_trailing_axis_mismatch() {
+        let inputs = array![[0.0_f32, 0.0], [0.0, 0.0], [0.0, 0.0]].into_dyn();
+        let targets = array![[0.0_f32]].into_dyn();
+        let _ = sparse_cce().terms(inputs.view(), targets.view());
     }
 }

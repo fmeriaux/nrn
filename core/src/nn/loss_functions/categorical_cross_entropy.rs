@@ -35,7 +35,16 @@ impl LossFunction for CategoricalCrossEntropy {
     /// # Arguments
     /// * `inputs` - N-D array view where Axis(0) is `classes`.
     /// * `targets` - N-D array view of matching shape with true labels (one-hot or soft targets).
+    ///
+    /// # Panics
+    /// When `inputs` and `targets` do not have the same shape.
     fn terms(&self, inputs: ArrayViewD<f32>, targets: ArrayViewD<f32>) -> ArrayD<f32> {
+        assert_eq!(
+            inputs.shape(),
+            targets.shape(),
+            "Inputs and targets must have the same shape."
+        );
+
         // Per-position log-sum-exp over the class lane, max-shifted for numerical stability.
         let logsumexp = inputs.map_axis(Axis(0), |lane| {
             let max = lane.iter().copied().fold(f32::NEG_INFINITY, f32::max);
@@ -50,7 +59,16 @@ impl LossFunction for CategoricalCrossEntropy {
     /// Computes ∂L/∂z — the gradient of the loss with respect to the logits: the per-position
     /// residual `softmax(z) − y`, scaled by the [`Reduction`] over the positions (the class lane
     /// is a single term). Works out-of-the-box for N-Dimensional tensors.
+    ///
+    /// # Panics
+    /// When `inputs` and `targets` do not have the same shape.
     fn gradient(&self, inputs: ArrayViewD<f32>, targets: ArrayViewD<f32>) -> ArrayD<f32> {
+        assert_eq!(
+            inputs.shape(),
+            targets.shape(),
+            "Inputs and targets must have the same shape."
+        );
+
         let positions = inputs.len() / inputs.shape()[0];
         let residual = SOFTMAX.apply(inputs) - targets;
         self.reduction.scale_gradient(residual, positions)
@@ -150,5 +168,22 @@ mod tests {
     #[test]
     fn name_is_stable() {
         assert_eq!(cce().name(), "Categorical-Cross-Entropy");
+    }
+
+    #[test]
+    #[should_panic(expected = "must have the same shape")]
+    fn terms_panics_on_a_shape_mismatch() {
+        // A single class-id row instead of a one-hot target: must panic, not silently broadcast.
+        let inputs = array![[0.0_f32, 0.0], [0.0, 0.0], [0.0, 0.0]].into_dyn();
+        let targets = array![[1.0_f32, 2.0]].into_dyn();
+        let _ = cce().terms(inputs.view(), targets.view());
+    }
+
+    #[test]
+    #[should_panic(expected = "must have the same shape")]
+    fn gradient_panics_on_a_shape_mismatch() {
+        let inputs = array![[0.0_f32, 0.0], [0.0, 0.0], [0.0, 0.0]].into_dyn();
+        let targets = array![[1.0_f32, 2.0]].into_dyn();
+        let _ = cce().gradient(inputs.view(), targets.view());
     }
 }
