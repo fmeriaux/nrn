@@ -1,8 +1,8 @@
 use super::{DiagramArgs, Format, ImageSize};
 use crate::actions::acquire_instance;
 use crate::display::{Artifacts, loaded, saved};
-use crate::path::PathExt;
 use clap::Args;
+use nrn::io::path::PathExt;
 use nrn::model::Predictor;
 use nrn::plot::ActivationDiagram;
 use std::error::Error;

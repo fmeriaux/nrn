@@ -388,28 +388,28 @@ mod tests {
             let Targets::ClassLabel(label) = dataset.targets() else {
                 panic!("expected ClassLabel targets");
             };
-            assert_eq!(label.n_classes(), 3, "{distribution}");
+            assert_eq!(label.class_count(), 3, "{distribution}");
         }
     }
 
     #[test]
     fn sample_count_exact_when_divisible() {
         for distribution in [Distribution::Uniform, RING, SPIRAL] {
-            assert_eq!(generate(distribution, params(100, 5)).n_samples(), 100);
+            assert_eq!(generate(distribution, params(100, 5)).sample_size(), 100);
         }
     }
 
     #[test]
     fn sample_count_truncated_when_not_divisible() {
         for distribution in [Distribution::Uniform, RING, SPIRAL] {
-            assert_eq!(generate(distribution, params(100, 3)).n_samples(), 99);
+            assert_eq!(generate(distribution, params(100, 3)).sample_size(), 99);
         }
     }
 
     #[test]
     fn features_within_bounds() {
         for distribution in [Distribution::Uniform, RING, SPIRAL] {
-            for &val in generate(distribution, params(200, 2)).inputs().iter() {
+            for &val in generate(distribution, params(200, 2)).features().iter() {
                 assert!(
                     (0.0..=10.0).contains(&val),
                     "{distribution}: feature {val} out of [0, 10]"

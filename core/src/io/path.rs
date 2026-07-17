@@ -1,9 +1,10 @@
+use std::collections::BTreeSet;
 use std::io::ErrorKind::PermissionDenied;
 use std::io::{Error, Result};
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
-/// Extension trait for adding secure path manipulation methods to `Path`.
+/// Extension trait adding path manipulation conveniences to `Path`.
 pub trait PathExt {
     /// Combines `self` with `user_path`, resolving the absolute path,
     /// normalizing, and validating no directory traversal outside `self`.
@@ -22,6 +23,23 @@ pub trait PathExt {
     /// Returns `self` if a sidecar file exists at `self` with `ext` appended, `None` otherwise —
     /// for optional files whose presence gates whether they get loaded at all.
     fn optional_sidecar(&self, ext: &str) -> Option<PathBuf>;
+
+    /// The file stem as an owned `String`.
+    ///
+    /// # Panics
+    /// Panics if the path has no stem.
+    fn file_stem_string(&self) -> String;
+
+    /// A sibling path in the same directory, named `{prefix}-{stem}` from this
+    /// path's file stem.
+    ///
+    /// # Panics
+    /// Panics if the path has no stem.
+    fn sibling(&self, prefix: &str) -> PathBuf;
+
+    /// Scans `self` for its immediate subdirectories, returning their names
+    /// sorted alphabetically. Files are ignored.
+    fn scan_dir(&self) -> Result<Vec<String>>;
 }
 
 impl PathExt for Path {
@@ -78,6 +96,27 @@ impl PathExt for Path {
             .exists()
             .then(|| self.to_path_buf())
     }
+
+    fn file_stem_string(&self) -> String {
+        self.file_stem()
+            .unwrap_or_else(|| panic!("Failed to get file stem from path: {}.", self.display()))
+            .to_string_lossy()
+            .to_string()
+    }
+
+    fn sibling(&self, prefix: &str) -> PathBuf {
+        self.with_file_name(format!("{prefix}-{}", self.file_stem_string()))
+    }
+
+    fn scan_dir(&self) -> Result<Vec<String>> {
+        let names: BTreeSet<String> = fs::read_dir(Path::combine_safe_with_cwd(self)?)?
+            .filter_map(std::result::Result::ok)
+            .filter(|entry| entry.path().is_dir())
+            .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+            .collect();
+
+        Ok(names.into_iter().collect())
+    }
 }
 
 #[cfg(test)]
@@ -113,5 +152,62 @@ mod tests {
         fs::remove_dir_all(&dir).ok();
 
         assert_eq!(found, None);
+    }
+
+    #[test]
+    fn file_stem_string_drops_the_directory_and_extension() {
+        assert_eq!(Path::new("runs/data.parquet").file_stem_string(), "data");
+        assert_eq!(Path::new("model").file_stem_string(), "model");
+    }
+
+    #[test]
+    fn sibling_prefixes_the_stem_in_the_same_directory() {
+        assert_eq!(
+            Path::new("runs/data.parquet").sibling("curves"),
+            Path::new("runs/curves-data")
+        );
+    }
+
+    #[test]
+    fn sibling_of_a_bare_name_has_no_directory() {
+        assert_eq!(
+            Path::new("run").sibling("boundary"),
+            Path::new("boundary-run")
+        );
+    }
+
+    // `scan_dir` resolves its argument against the current working directory
+    // (`combine_safe_with_cwd`), so these use a relative path under `target/`
+    // rather than the `temp_dir` helper's absolute, out-of-tree paths.
+    fn relative_temp_dir(tag: &str) -> PathBuf {
+        PathBuf::from(format!("target/nrn_path_{tag}_{}", std::process::id()))
+    }
+
+    #[test]
+    fn scan_dir_returns_subdirectories_as_sorted_names() {
+        let dir = relative_temp_dir("scan_sorted");
+        fs::create_dir_all(&dir).unwrap();
+        for name in ["dog", "bird", "cat"] {
+            fs::create_dir_all(dir.join(name)).unwrap();
+        }
+        // A stray file is ignored: only directories are returned.
+        fs::write(dir.join("notes.txt"), b"ignored").unwrap();
+
+        let names = dir.scan_dir().unwrap();
+
+        fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(
+            names,
+            vec!["bird".to_string(), "cat".to_string(), "dog".to_string()]
+        );
+    }
+
+    #[test]
+    fn scan_dir_errors_when_the_root_is_missing() {
+        let missing = relative_temp_dir("scan_missing");
+        fs::remove_dir_all(&missing).ok();
+
+        assert!(missing.scan_dir().is_err());
     }
 }

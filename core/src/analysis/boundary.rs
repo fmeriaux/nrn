@@ -296,7 +296,7 @@ mod tests {
                 array![0.0, 0.0, -10.0],
                 IDENTITY.clone(),
             )),
-            Task::MultiClass { n_classes: 3 },
+            Task::MultiClass { class_count: 3 },
             None,
         )
     }

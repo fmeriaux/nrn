@@ -7,13 +7,13 @@ impl Named for Dataset {
 
 impl Describe for Dataset {
     fn describe(&self) -> String {
-        let mut entries = vec![("Features", self.n_features().to_string())];
+        let mut entries = vec![("Features", self.feature_size().to_string())];
 
         if let Targets::ClassLabel(label) = self.targets() {
-            entries.push(("Classes", label.n_classes().to_string()));
+            entries.push(("Classes", label.class_count().to_string()));
         }
 
-        entries.push(("Samples", self.n_samples().to_string()));
+        entries.push(("Samples", self.sample_size().to_string()));
 
         if let Some(description) = self.info().and_then(|info| info.description.as_ref()) {
             entries.push(("Description", description.clone()));

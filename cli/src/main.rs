@@ -6,7 +6,6 @@ mod actions;
 mod cli;
 mod commands;
 mod display;
-mod path;
 
 fn main() {
     CliArgs::parse().command.run().unwrap_or_else(|e| {

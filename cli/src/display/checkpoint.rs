@@ -1,5 +1,4 @@
-use super::{Describe, Named, rows, theme};
-use crate::path::PathExt;
+use super::{Describe, Named, path::PathExt, rows, theme};
 use nrn::io::model::checkpoint::{CheckpointArchive, CheckpointRecorder};
 
 impl Named for CheckpointArchive {

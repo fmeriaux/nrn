@@ -1,11 +1,11 @@
 use super::{Format, ImageSize, render};
 use crate::display::{Artifacts, Frames, loaded, play_frames, saved, warning};
-use crate::path::PathExt;
 use clap::Args;
 use nrn::data::Dataset;
 use nrn::data::scalers::ScalerMethod;
 use nrn::io::model::checkpoint::CheckpointArchive;
 use nrn::io::model::run::TrainingRun;
+use nrn::io::path::PathExt;
 use nrn::io::raster::gif::GifWriter;
 use nrn::model::Predictor;
 use nrn::plot::{ConsoleConfig, Figure};
@@ -64,7 +64,7 @@ impl RunArgs {
             artifacts.add("Training Curves", path);
         }
 
-        if dataset.n_features() == 2 {
+        if dataset.feature_size() == 2 {
             let task = Task::from(config.task.clone());
             let scaler: Option<ScalerMethod> = run.scaler().cloned().map(Into::into);
             if let Some(path) = self.boundary(&archive, &dataset, task, &scaler)? {

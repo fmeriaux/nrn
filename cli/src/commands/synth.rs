@@ -97,30 +97,26 @@ impl SynthArgs {
         let seed = self.seed.unwrap_or_else(random);
         let dataset = generator.generate(seed);
 
-        if dataset.n_samples() != self.samples {
+        if dataset.sample_size() != self.samples {
             warning!(
                 "Requested {} samples but generated {} ({} dropped due to uneven cluster division)",
                 self.samples,
-                dataset.n_samples(),
-                self.samples - dataset.n_samples()
+                dataset.sample_size(),
+                self.samples - dataset.sample_size()
             );
         }
 
         generated(&dataset);
 
         // A two-feature dataset gets an inline scatter preview in the terminal.
-        if dataset.n_features() == 2 {
+        if dataset.feature_size() == 2 {
             preview(&dataset.figure()?);
         }
 
-        let filename = self.output.clone().unwrap_or_else(|| {
-            format!(
-                "{distribution}-seed{seed}-c{}-f{}-n{}",
-                self.clusters,
-                dataset.n_features(),
-                dataset.n_samples()
-            )
-        });
+        let filename = self
+            .output
+            .clone()
+            .unwrap_or_else(|| format!("{distribution}-seed{seed}-{}", dataset.shape_tag()));
         let artifacts = Artifacts::single("Dataset", dataset.save(&filename)?);
 
         saved(&artifacts);

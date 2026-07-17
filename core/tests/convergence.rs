@@ -196,7 +196,7 @@ fn three_class_converges_to_low_loss() {
     let report = hyperparameters
         .build(
             NeuralNetwork::from_config(config, 42).unwrap(),
-            Task::MultiClass { n_classes: 3 },
+            Task::MultiClass { class_count: 3 },
             data,
             Callbacks::new(vec![]),
         )

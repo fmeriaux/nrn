@@ -69,7 +69,7 @@ fn full_pipeline_roundtrips_every_artifact() {
     let dataset_path = dir.join("dataset");
     dataset.save(&dataset_path).unwrap();
     let loaded = Dataset::load(&dataset_path).unwrap();
-    assert_eq!(dataset.inputs(), loaded.inputs());
+    assert_eq!(dataset.features(), loaded.features());
     assert_eq!(dataset.targets(), loaded.targets());
 
     // --- Scaler (serialized as JSON, not safetensors) -------------------

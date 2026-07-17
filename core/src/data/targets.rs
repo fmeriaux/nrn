@@ -1,51 +1,73 @@
 //! [`Targets`]: the dtype-carrying representation of a dataset's targets.
 
-use crate::data::Classes;
 use ndarray::{Array1, ArrayD, Axis};
 use std::collections::HashSet;
 use std::error::Error;
 
-/// Class ids, contiguous over `0..n_classes`, with their names when known.
+/// Class ids, contiguous over `0..class_count`, with their names when known
+/// (`names[id]` is that class's name).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassLabel {
     ids: Array1<u32>,
-    names: Option<Classes>,
+    class_count: usize,
+    names: Option<Vec<String>>,
 }
 
 impl ClassLabel {
-    /// Pairs class `ids` with their `names`, validating that the ids are
-    /// contiguous over `0..n_classes` with at least two classes, and that
-    /// `names`, when given, has exactly one name per class.
+    /// Pairs class `ids` with optional `names` (`names[id]` is that class's
+    /// name), validating that the ids are contiguous over `0..class_count`
+    /// with at least two classes, and that `names`, when given, has exactly
+    /// one name per class.
     ///
     /// # Errors
     /// - [`ClassLabelError::TooFewClasses`] when fewer than two distinct ids
     ///   are present.
     /// - [`ClassLabelError::NonContiguousIds`] when the ids are not
-    ///   contiguous over `0..n_classes`.
+    ///   contiguous over `0..class_count`.
     /// - [`ClassLabelError::NameCountMismatch`] when `names` is given but its
     ///   count differs from the number of classes.
-    pub fn new(ids: Array1<u32>, names: Option<Classes>) -> Result<Self, ClassLabelError> {
-        let n_classes = ids.iter().copied().collect::<HashSet<u32>>().len();
-        if n_classes < 2 {
-            return Err(ClassLabelError::TooFewClasses(n_classes));
+    pub fn new(ids: Array1<u32>, names: Option<Vec<String>>) -> Result<Self, ClassLabelError> {
+        let class_count = ids.iter().copied().collect::<HashSet<u32>>().len();
+        if class_count < 2 {
+            return Err(ClassLabelError::TooFewClasses(class_count));
         }
         let max_id = ids
             .iter()
             .copied()
             .max()
-            .expect("n_classes >= 2 guarantees at least one id");
-        if max_id as usize != n_classes - 1 {
+            .expect("class_count >= 2 guarantees at least one id");
+        if max_id as usize != class_count - 1 {
             return Err(ClassLabelError::NonContiguousIds);
         }
         if let Some(names) = &names
-            && names.len() != n_classes
+            && names.len() != class_count
         {
             return Err(ClassLabelError::NameCountMismatch {
-                classes: n_classes,
+                classes: class_count,
                 names: names.len(),
             });
         }
-        Ok(Self { ids, names })
+        Ok(Self {
+            ids,
+            class_count,
+            names,
+        })
+    }
+
+    /// Class `ids` without names.
+    ///
+    /// # Errors
+    /// The same as [`ClassLabel::new`].
+    pub fn unnamed(ids: Array1<u32>) -> Result<Self, ClassLabelError> {
+        Self::new(ids, None)
+    }
+
+    /// Class `ids` paired with `names` (`names[id]` is that class's name).
+    ///
+    /// # Errors
+    /// The same as [`ClassLabel::new`].
+    pub fn named(ids: Array1<u32>, names: Vec<String>) -> Result<Self, ClassLabelError> {
+        Self::new(ids, Some(names))
     }
 
     /// The class id of each sample.
@@ -53,14 +75,14 @@ impl ClassLabel {
         &self.ids
     }
 
-    /// The class names, when known.
-    pub fn names(&self) -> Option<&Classes> {
-        self.names.as_ref()
+    /// The class names, when known, indexed by label id.
+    pub fn names(&self) -> Option<&[String]> {
+        self.names.as_deref()
     }
 
     /// The number of distinct classes.
-    pub fn n_classes(&self) -> usize {
-        self.ids.iter().copied().collect::<HashSet<u32>>().len()
+    pub fn class_count(&self) -> usize {
+        self.class_count
     }
 
     /// The sample indices whose class id equals `id`.
@@ -76,7 +98,7 @@ impl ClassLabel {
 /// Errors returned when class ids and names cannot form a valid [`ClassLabel`].
 #[derive(Debug, PartialEq, Eq)]
 pub enum ClassLabelError {
-    /// Class ids are not contiguous over `0..n_classes`.
+    /// Class ids are not contiguous over `0..class_count`.
     NonContiguousIds,
     /// Fewer than two distinct classes are present (carries the count found).
     TooFewClasses(usize),
@@ -88,7 +110,7 @@ impl std::fmt::Display for ClassLabelError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ClassLabelError::NonContiguousIds => {
-                write!(f, "class ids must be contiguous over 0..n_classes")
+                write!(f, "class ids must be contiguous over 0..class_count")
             }
             ClassLabelError::TooFewClasses(n) => {
                 write!(
@@ -140,7 +162,7 @@ impl std::fmt::Display for NonFiniteValues {
 
 impl Error for NonFiniteValues {}
 
-/// A dataset's targets: either class ids or real-valued outputs.
+/// A dataset's targets: either class ids or numeric outputs.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Targets {
     ClassLabel(ClassLabel),
@@ -158,17 +180,21 @@ impl std::fmt::Display for TargetKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TargetKind::ClassLabel => write!(f, "class-label"),
-            TargetKind::Value => write!(f, "real-valued"),
+            TargetKind::Value => write!(f, "numeric"),
         }
     }
 }
 
 impl Targets {
-    /// Builds `ClassLabel` targets from `ids` and `names`.
+    /// Builds `ClassLabel` targets from `ids` and, optionally, their `names`
+    /// (`names[id]` is that class's name).
     ///
     /// # Errors
     /// The same errors as [`ClassLabel::new`].
-    pub fn class_label(ids: Array1<u32>, names: Option<Classes>) -> Result<Self, ClassLabelError> {
+    pub fn class_label(
+        ids: Array1<u32>,
+        names: Option<Vec<String>>,
+    ) -> Result<Self, ClassLabelError> {
         Ok(Targets::ClassLabel(ClassLabel::new(ids, names)?))
     }
 
@@ -181,16 +207,16 @@ impl Targets {
     }
 
     /// The number of samples (the leading axis).
-    pub fn n_samples(&self) -> usize {
+    pub fn size(&self) -> usize {
         match self {
             Targets::ClassLabel(label) => label.ids.len(),
             Targets::Value(values) => values.as_array().len_of(Axis(0)),
         }
     }
 
-    /// The per-sample shape, sample axis excluded: empty for `ClassLabel`, the
-    /// trailing axes for `Value`.
-    pub fn sample_shape(&self) -> &[usize] {
+    /// The shape of a single target, sample axis excluded: empty for
+    /// `ClassLabel`, the trailing axes for `Value`.
+    pub fn shape(&self) -> &[usize] {
         match self {
             Targets::ClassLabel(_) => &[],
             Targets::Value(values) => &values.as_array().shape()[1..],
@@ -210,26 +236,19 @@ impl Targets {
 mod tests {
     use super::*;
     use ndarray::{Array1, Array2, array};
-    use std::collections::BTreeMap;
-
-    fn classes(pairs: [(&str, usize); 2]) -> Classes {
-        Classes::new(BTreeMap::from(
-            pairs.map(|(name, id)| (name.to_string(), id)),
-        ))
-    }
 
     #[test]
     fn new_accepts_contiguous_ids_without_names() {
         let label = ClassLabel::new(array![0u32, 1, 2, 1], None).unwrap();
-        assert_eq!(label.n_classes(), 3);
+        assert_eq!(label.class_count(), 3);
         assert_eq!(label.names(), None);
     }
 
     #[test]
     fn new_accepts_contiguous_ids_with_matching_names() {
-        let names = classes([("cat", 0), ("dog", 1)]);
+        let names = vec!["cat".to_string(), "dog".to_string()];
         let label = ClassLabel::new(array![0u32, 1], Some(names.clone())).unwrap();
-        assert_eq!(label.names(), Some(&names));
+        assert_eq!(label.names(), Some(names.as_slice()));
     }
 
     #[test]
@@ -251,7 +270,7 @@ mod tests {
 
     #[test]
     fn new_rejects_a_name_count_mismatch() {
-        let names = Classes::new(BTreeMap::from([("cat".to_string(), 0)]));
+        let names = vec!["cat".to_string()];
         assert_eq!(
             ClassLabel::new(array![0u32, 1], Some(names)),
             Err(ClassLabelError::NameCountMismatch {
@@ -273,7 +292,7 @@ mod tests {
     fn class_label_error_messages_are_descriptive() {
         assert_eq!(
             ClassLabelError::NonContiguousIds.to_string(),
-            "class ids must be contiguous over 0..n_classes"
+            "class ids must be contiguous over 0..class_count"
         );
         assert_eq!(
             ClassLabelError::TooFewClasses(1).to_string(),
@@ -290,25 +309,25 @@ mod tests {
     }
 
     #[test]
-    fn class_label_reports_samples_and_sample_shape() {
+    fn class_label_reports_size_and_shape() {
         let targets = Targets::class_label(array![0u32, 1, 2, 1], None).unwrap();
-        assert_eq!(targets.n_samples(), 4);
-        assert_eq!(targets.sample_shape(), &[] as &[usize]);
+        assert_eq!(targets.size(), 4);
+        assert_eq!(targets.shape(), &[] as &[usize]);
         assert_eq!(targets.kind(), TargetKind::ClassLabel);
     }
 
     #[test]
-    fn value_reports_samples_and_sample_shape() {
+    fn value_reports_size_and_shape() {
         let targets = Targets::value(Array2::<f32>::zeros((5, 3)).into_dyn()).unwrap();
-        assert_eq!(targets.n_samples(), 5);
-        assert_eq!(targets.sample_shape(), &[3]);
+        assert_eq!(targets.size(), 5);
+        assert_eq!(targets.shape(), &[3]);
         assert_eq!(targets.kind(), TargetKind::Value);
     }
 
     #[test]
-    fn value_rank1_has_an_empty_sample_shape() {
+    fn value_rank1_has_an_empty_shape() {
         let targets = Targets::value(Array1::<f32>::zeros(4).into_dyn()).unwrap();
-        assert_eq!(targets.sample_shape(), &[] as &[usize]);
+        assert_eq!(targets.shape(), &[] as &[usize]);
     }
 
     #[test]
@@ -327,6 +346,6 @@ mod tests {
     #[test]
     fn kind_display_is_descriptive() {
         assert_eq!(TargetKind::ClassLabel.to_string(), "class-label");
-        assert_eq!(TargetKind::Value.to_string(), "real-valued");
+        assert_eq!(TargetKind::Value.to_string(), "numeric");
     }
 }

@@ -1,13 +1,12 @@
-use crate::data::classes::Classes;
 use crate::data::scalers::{Scaler, ScalerFeatureMismatch, ScalerKind, ScalerMethod};
-use crate::data::targets::Targets;
+use crate::data::targets::{ClassLabel, Targets};
 use ndarray::{Array, Array1, Array2, ArrayD, ArrayViewD, Axis, Dimension, Ix2};
 use ndarray_rand::rand::Rng;
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::prelude::{SliceRandom, StdRng};
 use std::error::Error;
 
-/// A dataset pairing per-sample inputs with per-sample targets.
+/// A dataset pairing per-sample features with per-sample targets.
 ///
 /// Both axes are samples-major (axis 0 indexes samples). Construction goes
 /// through [`Dataset::new`] (structural validation) or its tabular companion
@@ -15,7 +14,7 @@ use std::error::Error;
 #[derive(Clone)]
 pub struct Dataset {
     /// A samples-major array: axis 0 indexes samples, the trailing axes the features.
-    inputs: ArrayD<f32>,
+    features: ArrayD<f32>,
     /// The dataset's targets.
     targets: Targets,
     /// Free-text information about the dataset, when known.
@@ -49,15 +48,15 @@ pub struct ModelSplit {
     pub test: ModelDataset,
 }
 
-/// Errors returned when inputs and targets cannot form a valid [`Dataset`].
+/// Errors returned when features and targets cannot form a valid [`Dataset`].
 #[derive(Debug, PartialEq, Eq)]
 pub enum DatasetError {
     /// The dataset has no features.
     NoFeatures,
     /// The dataset has no samples.
     NoSamples,
-    /// Inputs and targets disagree on the sample count.
-    ShapeMismatch { inputs: usize, targets: usize },
+    /// Features and targets disagree on the sample count.
+    ShapeMismatch { features: usize, targets: usize },
 }
 
 impl std::fmt::Display for DatasetError {
@@ -65,9 +64,9 @@ impl std::fmt::Display for DatasetError {
         match self {
             DatasetError::NoFeatures => write!(f, "dataset has no features"),
             DatasetError::NoSamples => write!(f, "dataset has no samples"),
-            DatasetError::ShapeMismatch { inputs, targets } => write!(
+            DatasetError::ShapeMismatch { features, targets } => write!(
                 f,
-                "inputs and targets disagree on sample count: {inputs} vs {targets}"
+                "features and targets disagree on sample count: {features} vs {targets}"
             ),
         }
     }
@@ -76,52 +75,52 @@ impl std::fmt::Display for DatasetError {
 impl Error for DatasetError {}
 
 impl Dataset {
-    /// Builds a dataset from samples-major `inputs` and `targets`, validating that
+    /// Builds a dataset from samples-major `features` and `targets`, validating that
     /// the sample axes align and neither is empty.
     ///
     /// # Errors
-    /// - [`DatasetError::ShapeMismatch`] when inputs and targets disagree on the
+    /// - [`DatasetError::ShapeMismatch`] when features and targets disagree on the
     ///   sample count (their leading axis).
     /// - [`DatasetError::NoSamples`] when the dataset has zero samples.
     /// - [`DatasetError::NoFeatures`] when the dataset has zero features.
     pub fn new(
-        inputs: ArrayD<f32>,
+        features: ArrayD<f32>,
         targets: Targets,
         info: Option<DatasetInfo>,
     ) -> Result<Self, DatasetError> {
-        let n_inputs = inputs.len_of(Axis(0));
-        let n_targets = targets.n_samples();
-        if n_inputs != n_targets {
+        let sample_size = features.len_of(Axis(0));
+        let target_size = targets.size();
+        if sample_size != target_size {
             return Err(DatasetError::ShapeMismatch {
-                inputs: n_inputs,
-                targets: n_targets,
+                features: sample_size,
+                targets: target_size,
             });
         }
-        if n_inputs == 0 {
+        if sample_size == 0 {
             return Err(DatasetError::NoSamples);
         }
-        if inputs.is_empty() {
+        if features.is_empty() {
             return Err(DatasetError::NoFeatures);
         }
 
         Ok(Self {
-            inputs,
+            features,
             targets,
             info,
         })
     }
 
-    /// Builds a tabular dataset from rank-2 `inputs` (rows = samples, columns =
+    /// Builds a tabular dataset from rank-2 `features` (rows = samples, columns =
     /// features), dynamising them and delegating to [`Dataset::new`].
     ///
     /// # Errors
     /// The same structural errors as [`Dataset::new`].
     pub fn tabular(
-        inputs: Array2<f32>,
+        features: Array2<f32>,
         targets: Targets,
         info: Option<DatasetInfo>,
     ) -> Result<Self, DatasetError> {
-        Self::new(inputs.into_dyn(), targets, info)
+        Self::new(features.into_dyn(), targets, info)
     }
 
     /// Returns the dataset's recorded information, if any.
@@ -129,9 +128,9 @@ impl Dataset {
         self.info.as_ref()
     }
 
-    /// Returns the inputs, samples-major (axis 0 indexes samples).
-    pub fn inputs(&self) -> &ArrayD<f32> {
-        &self.inputs
+    /// Returns the features, samples-major (axis 0 indexes samples).
+    pub fn features(&self) -> &ArrayD<f32> {
+        &self.features
     }
 
     /// Returns the targets, samples-major (axis 0 indexes samples).
@@ -140,23 +139,44 @@ impl Dataset {
     }
 
     /// Returns the number of samples in the dataset.
-    pub fn n_samples(&self) -> usize {
-        self.inputs.len_of(Axis(0))
+    pub fn sample_size(&self) -> usize {
+        self.features.len_of(Axis(0))
     }
 
-    /// Returns the number of features per sample.
+    /// Returns the number of features per sample, the product of [`Dataset::feature_shape`].
+    pub fn feature_size(&self) -> usize {
+        self.feature_shape().iter().product()
+    }
+
+    /// The per-sample feature shape, sample axis excluded — e.g. `[features]` for tabular data,
+    /// `[channels, height, width]` for spatial data.
+    pub fn feature_shape(&self) -> &[usize] {
+        &self.features.shape()[1..]
+    }
+
+    /// A compact tag identifying this dataset's shape: `c{classes}-f{features}-n{samples}`,
+    /// the class count present only for classification targets.
+    pub fn shape_tag(&self) -> String {
+        let classes = match &self.targets {
+            Targets::ClassLabel(label) => format!("c{}-", label.class_count()),
+            Targets::Value(_) => String::new(),
+        };
+        format!("{classes}f{}-n{}", self.feature_size(), self.sample_size())
+    }
+
+    /// Returns the feature rows whose class id equals `id`, as a rank-2 array.
     ///
     /// # Panics
-    /// When the inputs are not rank-2 tabular.
-    pub fn n_features(&self) -> usize {
-        assert_eq!(self.inputs.ndim(), 2, "Inputs must be rank-2 tabular.");
-        self.inputs.len_of(Axis(1))
-    }
-
-    /// The per-sample input shape, sample axis excluded — e.g. `[features]` for tabular data,
-    /// `[channels, height, width]` for spatial data.
-    pub fn sample_shape(&self) -> &[usize] {
-        &self.inputs.shape()[1..]
+    /// When the features are not rank-2 tabular, or the targets are not `ClassLabel`.
+    pub fn features_for_class(&self, id: u32) -> Array2<f32> {
+        assert_eq!(self.features.ndim(), 2, "Features must be rank-2 tabular.");
+        let Targets::ClassLabel(label) = &self.targets else {
+            panic!("Targets must be class-label.");
+        };
+        self.features
+            .select(Axis(0), &label.indices_for(id))
+            .into_dimensionality::<Ix2>()
+            .expect("rank-2 features stay rank-2 after selecting sample rows")
     }
 
     /// Computes the minimum and maximum values for each feature in the dataset.
@@ -167,14 +187,15 @@ impl Dataset {
     /// - The second vector contains the maximum values for each feature.
     ///
     /// # Panics
-    /// When the inputs are not rank-2 tabular.
+    /// When the features are not rank-2 tabular.
     pub fn feature_range(&self) -> (Vec<f32>, Vec<f32>) {
-        let n_features = self.n_features();
+        assert_eq!(self.features.ndim(), 2, "Features must be rank-2 tabular.");
+        let feature_size = self.feature_size();
 
-        let mut mins = vec![f32::INFINITY; n_features];
-        let mut maxs = vec![f32::NEG_INFINITY; n_features];
+        let mut mins = vec![f32::INFINITY; feature_size];
+        let mut maxs = vec![f32::NEG_INFINITY; feature_size];
 
-        for (i, feature) in self.inputs.axis_iter(Axis(1)).enumerate() {
+        for (i, feature) in self.features.axis_iter(Axis(1)).enumerate() {
             for &value in feature.iter() {
                 mins[i] = mins[i].min(value);
                 maxs[i] = maxs[i].max(value);
@@ -190,16 +211,16 @@ impl Dataset {
     /// are rotated samples-last unchanged.
     pub fn to_model_dataset(&self) -> ModelDataset {
         let inputs = self
-            .inputs
+            .features
             .view()
-            .permuted_axes(rotate_axis0_last(self.inputs.ndim()));
+            .permuted_axes(rotate_axis0_last(self.features.ndim()));
 
         let targets: ArrayD<f32> = match &self.targets {
             Targets::ClassLabel(label) => {
-                let n_classes = label.n_classes();
+                let class_count = label.class_count();
                 let ids = label.ids();
-                if n_classes > 2 {
-                    let mut one_hot = Array2::zeros((n_classes, ids.len()));
+                if class_count > 2 {
+                    let mut one_hot = Array2::zeros((class_count, ids.len()));
                     for (i, &id) in ids.iter().enumerate() {
                         one_hot[[id as usize, i]] = 1.0;
                     }
@@ -222,37 +243,37 @@ impl Dataset {
         ModelDataset::new(inputs.to_owned(), targets)
     }
 
-    /// Builds a dataset from encoded `images` and their `labels`, stamped with a
+    /// Builds a dataset from encoded `images` and their `label`, stamped with a
     /// description naming the `source` they were encoded from. Samples are kept
     /// in the order they were encoded (grouped by class); shuffling is deferred
     /// to [`ModelDataset::split`], so the stored order carries no randomness.
     /// # Arguments
     /// - `source`: Name of the source the images were encoded from.
     /// - `images`: A vector of images represented as 1D arrays of pixel values.
-    /// - `labels`: The class id for each image.
-    /// - `names`: The class names, when known.
+    /// - `label`: The class id and, when known, name for each image.
+    ///
+    /// # Errors
+    /// The same as [`Dataset::tabular`].
     pub fn from_encoded(
         source: impl Into<String>,
         images: Vec<Array1<f32>>,
-        labels: Vec<u32>,
-        names: Option<Classes>,
+        label: ClassLabel,
     ) -> Result<Self, Box<dyn Error>> {
-        if images.is_empty() {
-            return Err(DatasetError::NoSamples.into());
-        }
-
+        let feature_size = images.first().map(Array1::len).unwrap_or(0);
         let features: Array2<f32> = Array2::from_shape_vec(
-            (images.len(), images[0].len()),
+            (images.len(), feature_size),
             images.into_iter().flatten().collect(),
         )?;
-
-        let targets = Targets::class_label(Array1::from(labels), names)?;
 
         let info = DatasetInfo {
             description: Some(format!("Encoded from {}", source.into())),
         };
 
-        Ok(Dataset::tabular(features, targets, Some(info))?)
+        Ok(Dataset::tabular(
+            features,
+            Targets::ClassLabel(label),
+            Some(info),
+        )?)
     }
 
     /// Shuffles the samples (seeded by `seed`) and partitions them into training,
@@ -285,16 +306,16 @@ impl Dataset {
         );
 
         let model = self.to_model_dataset();
-        let n_samples = model.n_samples();
+        let sample_size = model.n_samples();
 
-        let mut indices: Vec<usize> = (0..n_samples).collect();
+        let mut indices: Vec<usize> = (0..sample_size).collect();
         indices.shuffle(&mut StdRng::seed_from_u64(seed));
 
-        let size = |ratio: f32| (n_samples as f32 * ratio).round() as usize;
+        let size = |ratio: f32| (sample_size as f32 * ratio).round() as usize;
 
         let test_size = size(test_ratio);
         let val_size = size(val_ratio);
-        let train_size = n_samples - test_size - val_size;
+        let train_size = sample_size - test_size - val_size;
 
         ModelSplit {
             train: model.select(&indices[..train_size]),
@@ -530,8 +551,22 @@ mod tests {
     fn tabular_dynamises_a_single_column_target() {
         let dataset =
             Dataset::tabular(Array2::zeros((3, 2)), class_ids(vec![0, 1, 0]), None).unwrap();
-        assert_eq!(dataset.inputs().ndim(), 2);
-        assert_eq!(dataset.n_samples(), 3);
+        assert_eq!(dataset.features().ndim(), 2);
+        assert_eq!(dataset.sample_size(), 3);
+    }
+
+    #[test]
+    fn features_for_class_selects_matching_rows() {
+        let features = Array2::from_shape_fn((4, 2), |(i, _)| i as f32);
+        let dataset = Dataset::tabular(features, class_ids(vec![0, 1, 0, 1]), None).unwrap();
+        assert_eq!(
+            dataset.features_for_class(0),
+            Array2::from_shape_vec((2, 2), vec![0.0, 0.0, 2.0, 2.0]).unwrap()
+        );
+        assert_eq!(
+            dataset.features_for_class(1),
+            Array2::from_shape_vec((2, 2), vec![1.0, 1.0, 3.0, 3.0]).unwrap()
+        );
     }
 
     #[test]
@@ -560,7 +595,7 @@ mod tests {
         assert_eq!(
             Dataset::tabular(features, class_ids(vec![0, 1]), None).err(),
             Some(DatasetError::ShapeMismatch {
-                inputs: 3,
+                features: 3,
                 targets: 2
             })
         );
@@ -597,20 +632,11 @@ mod tests {
     }
 
     #[test]
-    fn from_encoded_rejects_empty_images() {
-        // No images → no samples, surfaced as a Result rather than a panic.
-        let err = Dataset::from_encoded("test", vec![], vec![], None)
-            .err()
-            .unwrap();
-        assert_eq!(err.to_string(), DatasetError::NoSamples.to_string());
-    }
-
-    #[test]
     fn from_encoded_rejects_inconsistent_image_sizes() {
         // Images of differing lengths cannot form a rectangular matrix → Err.
         let images = vec![array![0.0f32, 1.0], array![2.0, 3.0, 4.0]];
-        let labels = vec![0u32, 1];
-        assert!(Dataset::from_encoded("test", images, labels, None).is_err());
+        let label = ClassLabel::unnamed(Array1::from(vec![0u32, 1])).unwrap();
+        assert!(Dataset::from_encoded("test", images, label).is_err());
     }
 
     #[test]
@@ -619,10 +645,8 @@ mod tests {
         // check that there are as many labels as images — it delegates to
         // `Dataset::tabular`, which rejects the count mismatch.
         let images = vec![array![0.0f32, 1.0], array![2.0, 3.0]];
-        let labels = vec![0u32, 1, 0]; // three labels for two images
-        let err = Dataset::from_encoded("test", images, labels, None)
-            .err()
-            .unwrap();
+        let label = ClassLabel::unnamed(Array1::from(vec![0u32, 1, 0])).unwrap(); // three labels for two images
+        let err = Dataset::from_encoded("test", images, label).err().unwrap();
         assert!(
             err.to_string().contains("disagree on sample count"),
             "got: {err}"
@@ -630,14 +654,36 @@ mod tests {
     }
 
     #[test]
-    fn sample_shape_excludes_the_sample_axis() {
+    fn feature_shape_excludes_the_sample_axis() {
         let dataset = Dataset::tabular(
             array![[1.0f32, 1.0, 1.0], [2.0, 2.0, 2.0]],
             class_ids(vec![0, 1]),
             None,
         )
         .unwrap();
-        assert_eq!(dataset.sample_shape(), &[3]);
+        assert_eq!(dataset.feature_shape(), &[3]);
+    }
+
+    #[test]
+    fn shape_tag_reports_classes_features_and_samples() {
+        let dataset = Dataset::tabular(
+            array![[1.0f32, 1.0, 1.0], [2.0, 2.0, 2.0]],
+            class_ids(vec![0, 1]),
+            None,
+        )
+        .unwrap();
+        assert_eq!(dataset.shape_tag(), "c2-f3-n2");
+    }
+
+    #[test]
+    fn shape_tag_omits_the_class_segment_for_value_targets() {
+        let dataset = Dataset::tabular(
+            array![[1.0f32, 1.0], [2.0, 2.0]],
+            Targets::value(Array1::from(vec![0.5f32, 1.5]).into_dyn()).unwrap(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(dataset.shape_tag(), "f2-n2");
     }
 
     #[test]
@@ -756,15 +802,15 @@ mod tests {
     #[test]
     fn from_encoded_builds_dataset_from_images() {
         let images = vec![array![0.0f32, 1.0], array![2.0, 3.0], array![4.0, 5.0]];
-        let labels = vec![0u32, 1, 2];
+        let label = ClassLabel::unnamed(Array1::from(vec![0u32, 1, 2])).unwrap();
 
-        let dataset = Dataset::from_encoded("digits", images, labels, None).unwrap();
-        assert_eq!(dataset.inputs().shape(), &[3, 2]);
-        assert_eq!(dataset.n_samples(), 3);
+        let dataset = Dataset::from_encoded("digits", images, label).unwrap();
+        assert_eq!(dataset.features().shape(), &[3, 2]);
+        assert_eq!(dataset.sample_size(), 3);
         let Targets::ClassLabel(label) = dataset.targets() else {
             panic!("expected ClassLabel targets");
         };
-        assert_eq!(label.n_classes(), 3);
+        assert_eq!(label.class_count(), 3);
 
         // The source is stamped into the description.
         assert_eq!(
@@ -787,11 +833,11 @@ mod tests {
         );
         assert_eq!(
             DatasetError::ShapeMismatch {
-                inputs: 3,
+                features: 3,
                 targets: 2
             }
             .to_string(),
-            "inputs and targets disagree on sample count: 3 vs 2"
+            "features and targets disagree on sample count: 3 vs 2"
         );
     }
 }

@@ -8,7 +8,6 @@ use crate::data::Targets;
 use crate::evaluation_history::EvaluationHistory;
 use crate::model::Predictor;
 use crate::plot::scene::{Color, Figure, Panel, Series, add_padding};
-use ndarray::{Axis, Ix2};
 use std::error::Error;
 
 /// Fraction of each axis range added as whitespace around a figure's axes.
@@ -151,7 +150,7 @@ fn scatter_panel(
     padding_factor: f32,
     show_legend: bool,
 ) -> Result<Panel, Box<dyn Error>> {
-    if dataset.n_features() != 2 {
+    if dataset.feature_size() != 2 {
         return Err("Scatter plot requires a dataset with exactly two features".into());
     }
 
@@ -159,18 +158,14 @@ fn scatter_panel(
         return Err("Scatter plot requires a dataset with class-label targets".into());
     };
     let names = label.names();
-    let n_classes = label.n_classes();
+    let class_count = label.class_count();
 
     let (raw_mins, raw_maxs) = dataset.feature_range();
     let (mins, maxs) = add_padding(&raw_mins, &raw_maxs, padding_factor);
 
-    let mut series: Vec<Series> = (0..n_classes as u32)
+    let mut series: Vec<Series> = (0..class_count as u32)
         .map(|id| {
-            let rows = dataset
-                .inputs()
-                .select(Axis(0), &label.indices_for(id))
-                .into_dimensionality::<Ix2>()
-                .expect("rank-2 inputs stay rank-2 after selecting sample rows");
+            let rows = dataset.features_for_class(id);
             Series::Points {
                 points: rows
                     .outer_iter()
@@ -179,8 +174,8 @@ fn scatter_panel(
                 color: Color::category(id as usize),
                 label: Some(
                     names
-                        .and_then(|names| names.name_of(id as usize))
-                        .map(str::to_string)
+                        .and_then(|names| names.get(id as usize))
+                        .cloned()
                         .unwrap_or_else(|| format!("Class {id}")),
                 ),
                 radius: 2,

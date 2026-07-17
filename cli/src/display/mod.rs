@@ -10,7 +10,6 @@
 
 mod artifacts;
 mod checkpoint;
-mod classes;
 mod classification;
 mod dataset;
 mod evaluation;
@@ -18,6 +17,7 @@ mod hyperparameters;
 mod icons;
 mod instance;
 mod model;
+mod path;
 mod predictor;
 mod progress;
 mod task;
@@ -121,6 +121,10 @@ pub(crate) fn loaded<E: Named + Describe>(entity: &E) {
 
 pub(crate) fn generated<E: Named + Describe>(entity: &E) {
     reported(GEN_ICON, "GENERATED", entity);
+}
+
+pub(crate) fn encoded<E: Named + Describe>(entity: &E) {
+    reported(ENCODE_ICON, "ENCODED", entity);
 }
 
 pub(crate) fn initialized<E: Named + Describe>(entity: &E) {

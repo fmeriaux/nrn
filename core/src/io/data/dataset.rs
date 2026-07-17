@@ -10,7 +10,7 @@
 //! [`arrow.fixed_shape_tensor`]: https://arrow.apache.org/docs/format/CanonicalExtensions.html#fixed-shape-tensor
 //! [`info`]: Dataset::info
 
-use crate::data::{Classes, Dataset, DatasetInfo, Targets};
+use crate::data::{Dataset, DatasetInfo, Targets};
 use arrow::array::{Array, ArrayRef, FixedSizeListArray, Float32Array, Int64Array, RecordBatch};
 use arrow::datatypes::{DataType, Field, FieldRef, Schema};
 use ndarray::{Array1, ArrayD, IxDyn};
@@ -60,24 +60,19 @@ fn info_from_metadata(metadata: &HashMap<String, String>) -> Option<DatasetInfo>
     })
 }
 
-fn class_names_into_metadata(names: Option<&Classes>, metadata: &mut HashMap<String, String>) {
-    if let Some(names) = names {
-        let pairs: Vec<(&str, usize)> = names
-            .iter()
-            .map(|(name, &id)| (name.as_str(), id))
-            .collect();
-        if let Ok(encoded) = serde_json::to_string(&pairs) {
-            metadata.insert(CLASS_NAMES.to_string(), encoded);
-        }
+fn class_names_into_metadata(names: Option<&[String]>, metadata: &mut HashMap<String, String>) {
+    if let Some(names) = names
+        && let Ok(encoded) = serde_json::to_string(names)
+    {
+        metadata.insert(CLASS_NAMES.to_string(), encoded);
     }
 }
 
 /// Reads the dataset's class names back from its schema metadata, best-effort: a
 /// missing or malformed entry degrades to `None` rather than failing the load.
-fn class_names_from_metadata(metadata: &HashMap<String, String>) -> Option<Classes> {
+fn class_names_from_metadata(metadata: &HashMap<String, String>) -> Option<Vec<String>> {
     let encoded = metadata.get(CLASS_NAMES)?;
-    let pairs: Vec<(String, usize)> = serde_json::from_str(encoded).ok()?;
-    Some(Classes::new(pairs.into_iter().collect()))
+    serde_json::from_str(encoded).ok()
 }
 
 /// The per-sample shape carried by a tensor column's extension metadata.
@@ -156,7 +151,9 @@ fn append_class_ids(column: &dyn Array, out: &mut Vec<u32>) -> Result<()> {
         .as_any()
         .downcast_ref::<Int64Array>()
         .ok_or_else(|| invalid("label column is not i64"))?;
-    out.extend(values.values().iter().map(|&v| v as u32));
+    for &v in values.values() {
+        out.push(u32::try_from(v).map_err(|_| invalid(format!("class id {v} is out of range")))?);
+    }
     Ok(())
 }
 
@@ -173,7 +170,7 @@ impl Dataset {
     ///
     /// [`info`]: Dataset::info
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf> {
-        let (inputs_field, inputs_column) = tensor_column(INPUTS, self.inputs())?;
+        let (inputs_field, inputs_column) = tensor_column(INPUTS, self.features())?;
         let mut fields = vec![inputs_field];
         let mut columns = vec![inputs_column];
 
@@ -329,21 +326,14 @@ mod tests {
         let loaded = Dataset::load(&path).unwrap();
         cleanup(&path);
 
-        assert_eq!(dataset.inputs(), loaded.inputs());
+        assert_eq!(dataset.features(), loaded.features());
         assert_eq!(dataset.targets(), loaded.targets());
         assert_eq!(loaded.info(), None);
     }
 
     #[test]
     fn dataset_roundtrips_class_names() {
-        use crate::data::Classes;
-        use std::collections::BTreeMap;
-
-        let names = Classes::new(BTreeMap::from([
-            ("cat".to_string(), 0),
-            ("dog".to_string(), 1),
-            ("bird".to_string(), 2),
-        ]));
+        let names = vec!["cat".to_string(), "dog".to_string(), "bird".to_string()];
         let dataset = Dataset::tabular(
             Array2::from_shape_fn((5, 3), |(i, j)| (i * 3 + j) as f32 * 0.25),
             Targets::class_label(array![0u32, 1, 0, 2, 1], Some(names)).unwrap(),
@@ -390,7 +380,7 @@ mod tests {
         let loaded = Dataset::load(&path).unwrap();
         cleanup(&path);
 
-        assert_eq!(dataset.inputs(), loaded.inputs());
+        assert_eq!(dataset.features(), loaded.features());
         assert_eq!(dataset.targets(), loaded.targets());
     }
 
@@ -471,6 +461,36 @@ mod tests {
 
         let err = Dataset::load(&path).err().unwrap();
         assert!(err.to_string().contains("unexpected type"), "got: {err}");
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn load_rejects_a_class_id_outside_u32_range() {
+        use arrow::array::Int64Array;
+        use arrow::datatypes::{DataType, Field, Schema};
+        use parquet::arrow::ArrowWriter;
+        use std::sync::Arc;
+
+        let inputs = Array2::<f32>::zeros((2, 3)).into_dyn();
+        let (inputs_field, inputs_column) = super::tensor_column(super::INPUTS, &inputs).unwrap();
+        let label_field = Arc::new(Field::new(super::LABEL, DataType::Int64, false));
+        let label_column = Arc::new(Int64Array::from(vec![0i64, -1])) as ArrayRef;
+
+        let schema = Arc::new(Schema::new(vec![inputs_field, label_field]));
+        let batch =
+            RecordBatch::try_new(schema.clone(), vec![inputs_column, label_column]).unwrap();
+
+        let path = temp_path("data_bad_class_id");
+        let filepath = path.with_extension("parquet");
+        let mut buffer = Vec::new();
+        let mut writer = ArrowWriter::try_new(&mut buffer, schema, None).unwrap();
+        writer.write(&batch).unwrap();
+        writer.close().unwrap();
+        std::fs::write(&filepath, buffer).unwrap();
+
+        let err = Dataset::load(&path).err().unwrap();
+        assert!(err.to_string().contains("out of range"), "got: {err}");
 
         cleanup(&path);
     }

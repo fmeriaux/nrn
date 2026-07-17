@@ -614,14 +614,16 @@ mod tests {
 
     #[test]
     fn for_task_picks_categorical_cross_entropy_for_a_multi_class_task() {
-        let loss = LossConfig::for_task(&Task::MultiClass { n_classes: 3 });
+        let loss = LossConfig::for_task(&Task::MultiClass { class_count: 3 });
         assert_eq!(loss.kind, LossKind::CategoricalCrossEntropy);
         assert_eq!(loss.instantiate().name(), "Categorical-Cross-Entropy");
     }
 
     #[test]
     fn for_task_picks_mean_squared_error_for_a_regression_task() {
-        let loss = LossConfig::for_task(&Task::Regression { shape: vec![1] });
+        let loss = LossConfig::for_task(&Task::Regression {
+            target_shape: vec![1],
+        });
         assert_eq!(loss.kind, LossKind::MeanSquaredError);
         assert_eq!(loss.instantiate().name(), "Mean-Squared-Error");
     }
@@ -641,7 +643,7 @@ mod tests {
             100.0
         );
 
-        let categorical = accuracy_for(&Task::MultiClass { n_classes: 3 });
+        let categorical = accuracy_for(&Task::MultiClass { class_count: 3 });
         assert_eq!(
             categorical.compute(
                 array![[2.0_f32], [1.0], [0.0]].into_dyn().view(),

@@ -9,20 +9,20 @@ pub enum TaskRecord {
     /// Mirror of [`Task::Binary`].
     Binary,
     /// Mirror of [`Task::MultiClass`].
-    MultiClass { n_classes: usize },
+    MultiClass { class_count: usize },
     /// Mirror of [`Task::MultiLabel`].
-    MultiLabel { n_labels: usize },
+    MultiLabel { label_count: usize },
     /// Mirror of [`Task::Regression`].
-    Regression { shape: Vec<usize> },
+    Regression { target_shape: Vec<usize> },
 }
 
 impl From<Task> for TaskRecord {
     fn from(task: Task) -> Self {
         match task {
             Task::Binary => TaskRecord::Binary,
-            Task::MultiClass { n_classes } => TaskRecord::MultiClass { n_classes },
-            Task::MultiLabel { n_labels } => TaskRecord::MultiLabel { n_labels },
-            Task::Regression { shape } => TaskRecord::Regression { shape },
+            Task::MultiClass { class_count } => TaskRecord::MultiClass { class_count },
+            Task::MultiLabel { label_count } => TaskRecord::MultiLabel { label_count },
+            Task::Regression { target_shape } => TaskRecord::Regression { target_shape },
         }
     }
 }
@@ -31,9 +31,9 @@ impl From<TaskRecord> for Task {
     fn from(record: TaskRecord) -> Self {
         match record {
             TaskRecord::Binary => Task::Binary,
-            TaskRecord::MultiClass { n_classes } => Task::MultiClass { n_classes },
-            TaskRecord::MultiLabel { n_labels } => Task::MultiLabel { n_labels },
-            TaskRecord::Regression { shape } => Task::Regression { shape },
+            TaskRecord::MultiClass { class_count } => Task::MultiClass { class_count },
+            TaskRecord::MultiLabel { label_count } => Task::MultiLabel { label_count },
+            TaskRecord::Regression { target_shape } => Task::Regression { target_shape },
         }
     }
 }
@@ -46,11 +46,13 @@ mod tests {
     fn record_round_trips_every_task() {
         for task in [
             Task::Binary,
-            Task::MultiClass { n_classes: 4 },
-            Task::MultiLabel { n_labels: 3 },
-            Task::Regression { shape: vec![2] },
+            Task::MultiClass { class_count: 4 },
+            Task::MultiLabel { label_count: 3 },
             Task::Regression {
-                shape: vec![3, 4, 4],
+                target_shape: vec![2],
+            },
+            Task::Regression {
+                target_shape: vec![3, 4, 4],
             },
         ] {
             assert_eq!(Task::from(TaskRecord::from(task.clone())), task);
@@ -59,7 +61,7 @@ mod tests {
 
     #[test]
     fn record_serializes_tagged_by_task() {
-        let json = serde_json::to_string(&TaskRecord::MultiClass { n_classes: 4 }).unwrap();
-        assert_eq!(json, r#"{"type":"multi_class","n_classes":4}"#);
+        let json = serde_json::to_string(&TaskRecord::MultiClass { class_count: 4 }).unwrap();
+        assert_eq!(json, r#"{"type":"multi_class","class_count":4}"#);
     }
 }

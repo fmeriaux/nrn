@@ -1,9 +1,10 @@
-use crate::display::{Artifacts, Encoding, completed, saved, show};
-use crate::path::PathExt;
+use crate::display::{Artifacts, Encoding, completed, encoded, saved, warning};
 use clap::{Args, Subcommand};
+use ndarray::Array1;
 use nrn::data::vectorizers::{ImageEncoder, VectorEncoder};
-use nrn::data::{Classes, Dataset, Instance};
+use nrn::data::{ClassLabel, Dataset, Instance};
 use nrn::io::bytes::secure_read;
+use nrn::io::path::PathExt;
 use std::error::Error;
 use std::fs::read_dir;
 use std::io;
@@ -70,8 +71,7 @@ pub struct DatasetArgs {
 
 impl DatasetArgs {
     pub fn run(&self) -> Result<(), Box<dyn Error>> {
-        let classes = Classes::scan(&self.input)?;
-        show(&classes);
+        let classes = self.input.scan_dir()?;
 
         let encoder = ImageEncoder::from(&self.encoder);
 
@@ -79,11 +79,12 @@ impl DatasetArgs {
         // whole run's images with an honest end-to-end ETA.
         let categories = classes
             .iter()
-            .map(|(category, label)| {
+            .enumerate()
+            .map(|(label, category)| {
                 let entries = read_dir(self.input.join(category))?
                     .filter_map(Result::ok)
                     .collect::<Vec<_>>();
-                Ok((category, *label, entries))
+                Ok((category, label, entries))
             })
             .collect::<Result<Vec<_>, io::Error>>()?;
 
@@ -91,38 +92,46 @@ impl DatasetArgs {
 
         let mut data = Vec::new();
         let mut labels = Vec::new();
+        let mut failures = Vec::new();
 
         let progress = Encoding::new(total);
-        for (index, (category, label, entries)) in categories.iter().enumerate() {
-            progress.category(index, classes.len(), category);
+        for (category, label, entries) in &categories {
+            progress.category(*label, classes.len(), category);
 
+            let mut failed = 0usize;
             for entry in entries {
                 progress.advance();
 
                 let img = secure_read(entry.path())?;
 
-                if let Ok(img) = encoder.encode(&img) {
-                    data.push(img);
-                    labels.push(*label as u32);
+                match encoder.encode(&img) {
+                    Ok(img) => {
+                        data.push(img);
+                        labels.push(*label as u32);
+                    }
+                    Err(_) => failed += 1,
                 }
+            }
+            if failed > 0 {
+                failures.push((category, failed));
             }
         }
         progress.finish();
 
+        for (category, failed) in &failures {
+            warning!("{failed} image(s) in '{category}' failed to encode and were skipped");
+        }
+
         let source = self.input.file_stem_string();
-        let n_classes = classes.len();
-        let dataset = Dataset::from_encoded(&source, data, labels, Some(classes))?;
+        let label = ClassLabel::named(Array1::from(labels), classes)?;
+        let dataset = Dataset::from_encoded(&source, data, label)?;
 
-        completed!("Encoding completed");
+        encoded(&dataset);
 
-        let filename = self.output.clone().unwrap_or_else(|| {
-            format!(
-                "{source}-c{n_classes}-f{}-n{}",
-                dataset.n_features(),
-                dataset.n_samples()
-            )
-            .into()
-        });
+        let filename = self
+            .output
+            .clone()
+            .unwrap_or_else(|| format!("{source}-{}", dataset.shape_tag()).into());
         saved(&Artifacts::single(
             "Image Dataset",
             dataset.save(&filename)?,
