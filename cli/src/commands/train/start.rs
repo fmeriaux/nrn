@@ -2,7 +2,6 @@ use super::DivergedRun;
 use super::args::TrainArgs;
 use super::callbacks::{ConsoleMonitor, ModelSaver};
 use crate::display::{Spinner, initialized, loaded, recording, show};
-use crate::path::PathExt;
 use clap::Args;
 use nrn::activations::{IDENTITY, RELU};
 use nrn::data::Dataset;
@@ -11,6 +10,7 @@ use nrn::io::model::hyperparams::HyperParametersRecord;
 use nrn::io::model::network::NetworkConfigRecord;
 use nrn::io::model::run::{TrainingMeta, TrainingRun};
 use nrn::io::model::scalers::ScalerRecord;
+use nrn::io::path::PathExt;
 use nrn::model::{NetworkConfig, NeuralNetwork, Predictor};
 use nrn::task::Task;
 use nrn::training::Callbacks;
@@ -62,7 +62,7 @@ impl StartArgs {
                 model
             }
             None => {
-                let mut builder = NetworkConfig::builder(vec![dataset.n_features()]);
+                let mut builder = NetworkConfig::builder(dataset.feature_shape().to_vec());
                 for hidden in self.layers.clone().unwrap_or_default() {
                     builder = builder.dense(hidden, &RELU);
                 }

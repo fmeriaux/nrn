@@ -5,6 +5,7 @@ use console::Emoji;
 
 pub(crate) const LOAD_ICON: Emoji = Emoji("📥", "[L]");
 pub(crate) const GEN_ICON: Emoji = Emoji("🌱", "[G]");
+pub(crate) const ENCODE_ICON: Emoji = Emoji("🧩", "[E]");
 pub(crate) const INIT_ICON: Emoji = Emoji("🚀", "[I]");
 pub(crate) const SAVE_ICON: Emoji = Emoji("💾", "[w]");
 pub(crate) const RECORD_ICON: Emoji = Emoji("📝", "[R]");

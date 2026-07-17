@@ -384,7 +384,9 @@ mod tests {
         let model = NeuralNetwork::single(conv);
 
         let err = model
-            .validate_task(&Task::Regression { shape: vec![8] })
+            .validate_task(&Task::Regression {
+                target_shape: vec![8],
+            })
             .unwrap_err();
         assert_eq!(err.expected, vec![8]);
         assert_eq!(err.found, vec![2, 2, 2]);
@@ -403,12 +405,12 @@ mod tests {
         let model = NeuralNetwork::from_config(config, 0).unwrap();
         assert!(
             model
-                .validate_task(&Task::MultiClass { n_classes: 2 })
+                .validate_task(&Task::MultiClass { class_count: 2 })
                 .is_ok()
         );
         assert!(
             model
-                .validate_task(&Task::MultiClass { n_classes: 3 })
+                .validate_task(&Task::MultiClass { class_count: 3 })
                 .is_err()
         );
     }
@@ -433,7 +435,7 @@ mod tests {
         assert!(
             model
                 .validate_task(&Task::Regression {
-                    shape: vec![2, 2, 2]
+                    target_shape: vec![2, 2, 2]
                 })
                 .is_ok()
         );

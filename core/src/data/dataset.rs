@@ -1,13 +1,12 @@
-use crate::data::origin::DatasetOrigin;
 use crate::data::scalers::{Scaler, ScalerFeatureMismatch, ScalerKind, ScalerMethod};
+use crate::data::targets::{ClassLabel, Targets};
 use ndarray::{Array, Array1, Array2, ArrayD, ArrayViewD, Axis, Dimension, Ix2};
 use ndarray_rand::rand::Rng;
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::prelude::{SliceRandom, StdRng};
-use std::collections::{HashMap, HashSet};
 use std::error::Error;
 
-/// A dataset pairing per-sample inputs with per-sample targets.
+/// A dataset pairing per-sample features with per-sample targets.
 ///
 /// Both axes are samples-major (axis 0 indexes samples). Construction goes
 /// through [`Dataset::new`] (structural validation) or its tabular companion
@@ -15,11 +14,18 @@ use std::error::Error;
 #[derive(Clone)]
 pub struct Dataset {
     /// A samples-major array: axis 0 indexes samples, the trailing axes the features.
-    inputs: ArrayD<f32>,
-    /// A samples-major array: axis 0 indexes samples, any trailing axis the targets.
-    targets: ArrayD<f32>,
-    /// Where the dataset came from, when known.
-    origin: Option<DatasetOrigin>,
+    features: ArrayD<f32>,
+    /// The dataset's targets.
+    targets: Targets,
+    /// Free-text information about the dataset, when known.
+    info: Option<DatasetInfo>,
+}
+
+/// Free-text information about a dataset, not derivable from its data.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct DatasetInfo {
+    /// A human-readable description of the dataset.
+    pub description: Option<String>,
 }
 
 pub struct ModelDataset {
@@ -42,15 +48,15 @@ pub struct ModelSplit {
     pub test: ModelDataset,
 }
 
-/// Errors returned when inputs and targets cannot form a valid [`Dataset`].
+/// Errors returned when features and targets cannot form a valid [`Dataset`].
 #[derive(Debug, PartialEq, Eq)]
 pub enum DatasetError {
     /// The dataset has no features.
     NoFeatures,
     /// The dataset has no samples.
     NoSamples,
-    /// Inputs and targets disagree on the sample count.
-    ShapeMismatch { inputs: usize, targets: usize },
+    /// Features and targets disagree on the sample count.
+    ShapeMismatch { features: usize, targets: usize },
 }
 
 impl std::fmt::Display for DatasetError {
@@ -58,9 +64,9 @@ impl std::fmt::Display for DatasetError {
         match self {
             DatasetError::NoFeatures => write!(f, "dataset has no features"),
             DatasetError::NoSamples => write!(f, "dataset has no samples"),
-            DatasetError::ShapeMismatch { inputs, targets } => write!(
+            DatasetError::ShapeMismatch { features, targets } => write!(
                 f,
-                "inputs and targets disagree on sample count: {inputs} vs {targets}"
+                "features and targets disagree on sample count: {features} vs {targets}"
             ),
         }
     }
@@ -69,137 +75,98 @@ impl std::fmt::Display for DatasetError {
 impl Error for DatasetError {}
 
 impl Dataset {
-    /// Builds a dataset from samples-major `inputs` and `targets`, validating their
-    /// structure: the sample axes align and neither is empty.
+    /// Builds a dataset from samples-major `features` and `targets`, validating that
+    /// the sample axes align and neither is empty.
     ///
     /// # Errors
-    /// - [`DatasetError::ShapeMismatch`] when inputs and targets disagree on the
+    /// - [`DatasetError::ShapeMismatch`] when features and targets disagree on the
     ///   sample count (their leading axis).
     /// - [`DatasetError::NoSamples`] when the dataset has zero samples.
     /// - [`DatasetError::NoFeatures`] when the dataset has zero features.
     pub fn new(
-        inputs: ArrayD<f32>,
-        targets: ArrayD<f32>,
-        origin: Option<DatasetOrigin>,
+        features: ArrayD<f32>,
+        targets: Targets,
+        info: Option<DatasetInfo>,
     ) -> Result<Self, DatasetError> {
-        let n_inputs = inputs.len_of(Axis(0));
-        let n_targets = targets.len_of(Axis(0));
-        if n_inputs != n_targets {
+        let sample_size = features.len_of(Axis(0));
+        let target_size = targets.sample_size();
+        if sample_size != target_size {
             return Err(DatasetError::ShapeMismatch {
-                inputs: n_inputs,
-                targets: n_targets,
+                features: sample_size,
+                targets: target_size,
             });
         }
-        if n_inputs == 0 {
+        if sample_size == 0 {
             return Err(DatasetError::NoSamples);
         }
-        if inputs.is_empty() {
+        if features.is_empty() {
             return Err(DatasetError::NoFeatures);
         }
 
         Ok(Self {
-            inputs,
+            features,
             targets,
-            origin,
+            info,
         })
     }
 
-    /// Builds a tabular dataset from rank-2 `inputs` (rows = samples, columns =
-    /// features) and rank-1 `targets`, dynamising both and delegating to
-    /// [`Dataset::new`].
+    /// Builds a tabular dataset from rank-2 `features` (rows = samples, columns =
+    /// features), dynamising them and delegating to [`Dataset::new`].
     ///
     /// # Errors
     /// The same structural errors as [`Dataset::new`].
     pub fn tabular(
-        inputs: Array2<f32>,
-        targets: Array1<f32>,
-        origin: Option<DatasetOrigin>,
+        features: Array2<f32>,
+        targets: Targets,
+        info: Option<DatasetInfo>,
     ) -> Result<Self, DatasetError> {
-        Self::new(inputs.into_dyn(), targets.into_dyn(), origin)
+        Self::new(features.into_dyn(), targets, info)
     }
 
-    /// Returns the dataset's recorded origin, if any.
-    pub fn origin(&self) -> Option<&DatasetOrigin> {
-        self.origin.as_ref()
+    /// Returns the dataset's recorded information, if any.
+    pub fn info(&self) -> Option<&DatasetInfo> {
+        self.info.as_ref()
     }
 
-    /// A deterministic identifier for this dataset, pairing its origin with its
-    /// shape (classes, features, samples). Two datasets reproduced from the same
-    /// origin share it; datasets with no recorded origin fall back to a neutral
-    /// prefix.
-    pub fn id(&self) -> String {
-        let origin = self
-            .origin
-            .as_ref()
-            .map(DatasetOrigin::label)
-            .unwrap_or_else(|| "dataset".to_string());
-        format!(
-            "{origin}-c{}-f{}-n{}",
-            self.n_classes(),
-            self.n_features(),
-            self.n_samples()
-        )
-    }
-
-    /// Returns the inputs, samples-major (axis 0 indexes samples).
-    pub fn inputs(&self) -> &ArrayD<f32> {
-        &self.inputs
+    /// Returns the features, samples-major (axis 0 indexes samples).
+    pub fn features(&self) -> &ArrayD<f32> {
+        &self.features
     }
 
     /// Returns the targets, samples-major (axis 0 indexes samples).
-    pub fn targets(&self) -> &ArrayD<f32> {
+    pub fn targets(&self) -> &Targets {
         &self.targets
     }
 
     /// Returns the number of samples in the dataset.
-    pub fn n_samples(&self) -> usize {
-        self.inputs.len_of(Axis(0))
+    pub fn sample_size(&self) -> usize {
+        self.features.len_of(Axis(0))
     }
 
-    /// Returns the number of features per sample.
-    ///
-    /// # Panics
-    /// When the inputs are not rank-2 tabular.
-    pub fn n_features(&self) -> usize {
-        assert_eq!(self.inputs.ndim(), 2, "Inputs must be rank-2 tabular.");
-        self.inputs.len_of(Axis(1))
+    /// Returns the number of features per sample, the product of [`Dataset::feature_shape`].
+    pub fn feature_size(&self) -> usize {
+        self.feature_shape().iter().product()
     }
 
-    /// The per-sample input shape, sample axis excluded — e.g. `[features]` for tabular data,
+    /// The per-sample feature shape, sample axis excluded — e.g. `[features]` for tabular data,
     /// `[channels, height, width]` for spatial data.
-    pub fn sample_shape(&self) -> &[usize] {
-        &self.inputs.shape()[1..]
+    pub fn feature_shape(&self) -> &[usize] {
+        &self.features.shape()[1..]
     }
 
-    /// Returns the number of unique classes (labels) in the dataset.
-    pub fn n_classes(&self) -> usize {
-        self.unique_labels().len()
+    /// A compact tag identifying this dataset's shape: `c{classes}-f{features}-n{samples}`,
+    /// the class count present only for classification targets.
+    pub fn shape_tag(&self) -> String {
+        let classes = match &self.targets {
+            Targets::ClassLabel(label) => format!("c{}-", label.class_count()),
+            Targets::Value(_) => String::new(),
+        };
+        format!("{classes}f{}-n{}", self.feature_size(), self.sample_size())
     }
 
-    /// Returns the unique target values present in the dataset, in no particular order.
-    pub fn unique_labels(&self) -> Vec<f32> {
-        let set: HashSet<u32> = self.targets.iter().map(|&label| label.to_bits()).collect();
-
-        set.into_iter().map(f32::from_bits).collect()
-    }
-
-    /// Returns the feature rows whose target equals `label`, as a rank-2 array.
-    ///
-    /// # Panics
-    /// When the inputs are not rank-2 tabular.
-    pub fn get_features_for_label(&self, label: f32) -> Array2<f32> {
-        assert_eq!(self.inputs.ndim(), 2, "Inputs must be rank-2 tabular.");
-        let indices: Vec<usize> = self
-            .targets
-            .iter()
-            .enumerate()
-            .filter_map(|(i, &l)| if l == label { Some(i) } else { None })
-            .collect();
-
-        self.inputs
-            .select(Axis(0), &indices)
-            .into_dimensionality::<Ix2>()
-            .expect("rank-2 inputs stay rank-2 after selecting sample rows")
+    /// Returns the feature rows whose class id equals `id`.
+    pub fn features_for_class(&self, label: &ClassLabel, id: u32) -> ArrayD<f32> {
+        self.features.select(Axis(0), &label.indices_for(id))
     }
 
     /// Computes the minimum and maximum values for each feature in the dataset.
@@ -210,14 +177,15 @@ impl Dataset {
     /// - The second vector contains the maximum values for each feature.
     ///
     /// # Panics
-    /// When the inputs are not rank-2 tabular.
+    /// When the features are not rank-2 tabular.
     pub fn feature_range(&self) -> (Vec<f32>, Vec<f32>) {
-        let n_features = self.n_features();
+        assert_eq!(self.features.ndim(), 2, "Features must be rank-2 tabular.");
+        let feature_size = self.feature_size();
 
-        let mut mins = vec![f32::INFINITY; n_features];
-        let mut maxs = vec![f32::NEG_INFINITY; n_features];
+        let mut mins = vec![f32::INFINITY; feature_size];
+        let mut maxs = vec![f32::NEG_INFINITY; feature_size];
 
-        for (i, feature) in self.inputs.axis_iter(Axis(1)).enumerate() {
+        for (i, feature) in self.features.axis_iter(Axis(1)).enumerate() {
             for &value in feature.iter() {
                 mins[i] = mins[i].min(value);
                 maxs[i] = maxs[i].max(value);
@@ -228,83 +196,74 @@ impl Dataset {
     }
 
     /// Transforms the dataset into a samples-last [`ModelDataset`]: inputs are
-    /// rotated so the sample axis trails, and rank-1 class-id targets are remapped
-    /// through a sorted vocabulary, then one-hot encoded (multi-class) or kept as a
-    /// single 0/1 row (binary), while rank-2 targets are rotated samples-last
-    /// unchanged.
+    /// rotated so the sample axis trails; `ClassLabel` targets become one-hot
+    /// rows (multi-class) or a single 0/1 row (binary), while `Value` targets
+    /// are rotated samples-last unchanged.
     pub fn to_model_dataset(&self) -> ModelDataset {
         let inputs = self
-            .inputs
+            .features
             .view()
-            .permuted_axes(rotate_axis0_last(self.inputs.ndim()));
+            .permuted_axes(rotate_axis0_last(self.features.ndim()));
 
-        let targets: ArrayD<f32> = if self.targets.ndim() == 1 {
-            // A sorted vocabulary maps arbitrary label values to dense 0-indexed rows,
-            // so gaps (e.g. {1, 2}) neither misalign the one-hot rows nor panic.
-            let mut sorted_labels = self.unique_labels();
-            sorted_labels.sort_by(f32::total_cmp);
-            let vocab: HashMap<u32, usize> = sorted_labels
-                .iter()
-                .enumerate()
-                .map(|(index, label)| (label.to_bits(), index))
-                .collect();
-            let n_classes = vocab.len();
-
-            if n_classes > 2 {
-                let mut one_hot = Array2::zeros((n_classes, self.n_samples()));
-                for (i, &label) in self.targets.iter().enumerate() {
-                    one_hot[[vocab[&label.to_bits()], i]] = 1.0;
+        let targets: ArrayD<f32> = match &self.targets {
+            Targets::ClassLabel(label) => {
+                let class_count = label.class_count();
+                let ids = label.ids();
+                if class_count > 2 {
+                    let mut one_hot = Array2::zeros((class_count, ids.len()));
+                    for (i, &id) in ids.iter().enumerate() {
+                        one_hot[[id as usize, i]] = 1.0;
+                    }
+                    one_hot.into_dyn()
+                } else {
+                    Array1::from_iter(ids.iter().map(|&id| id as f32))
+                        .insert_axis(Axis(0))
+                        .into_dyn()
                 }
-                one_hot.into_dyn()
-            } else {
-                Array1::from_iter(
-                    self.targets
-                        .iter()
-                        .map(|&label| vocab[&label.to_bits()] as f32),
-                )
-                .insert_axis(Axis(0))
-                .into_dyn()
             }
-        } else {
-            self.targets
-                .view()
-                .permuted_axes(rotate_axis0_last(self.targets.ndim()))
-                .to_owned()
+            Targets::Value(values) => {
+                let values = values.as_array();
+                values
+                    .view()
+                    .permuted_axes(rotate_axis0_last(values.ndim()))
+                    .to_owned()
+            }
         };
 
         ModelDataset::new(inputs.to_owned(), targets)
     }
 
-    /// Builds a dataset from encoded `images` and their `labels`, stamped with
-    /// [`DatasetOrigin::Encoded`] provenance. Samples are kept in the order they
-    /// were encoded (grouped by class); shuffling is deferred to
-    /// [`ModelDataset::split`], so the stored order carries no randomness.
+    /// Builds a dataset from encoded `images` and their `label`, stamped with a
+    /// description naming the `source` they were encoded from. Samples are kept
+    /// in the order they were encoded (grouped by class); shuffling is deferred
+    /// to [`ModelDataset::split`], so the stored order carries no randomness.
     /// # Arguments
     /// - `source`: Name of the source the images were encoded from.
     /// - `images`: A vector of images represented as 1D arrays of pixel values.
-    /// - `labels`: A vector of labels corresponding to each image.
+    /// - `label`: The class id and, when known, name for each image.
+    ///
+    /// # Errors
+    /// The same as [`Dataset::tabular`].
     pub fn from_encoded(
         source: impl Into<String>,
         images: Vec<Array1<f32>>,
-        labels: Vec<usize>,
+        label: ClassLabel,
     ) -> Result<Self, Box<dyn Error>> {
-        if images.is_empty() {
-            return Err(DatasetError::NoSamples.into());
-        }
-
+        let feature_size = images.first().map(Array1::len).unwrap_or(0);
         let features: Array2<f32> = Array2::from_shape_vec(
-            (images.len(), images[0].len()),
+            (images.len(), feature_size),
             images.into_iter().flatten().collect(),
         )?;
 
-        let labels: Array1<f32> =
-            Array1::from(labels.into_iter().map(|x| x as f32).collect::<Vec<_>>());
-
-        let origin = DatasetOrigin::Encoded {
-            source: source.into(),
+        let info = DatasetInfo {
+            description: Some(format!("Encoded from {}", source.into())),
         };
 
-        Ok(Dataset::tabular(features, labels, Some(origin))?)
+        Ok(Dataset::tabular(
+            features,
+            Targets::ClassLabel(label),
+            Some(info),
+        )?)
     }
 
     /// Shuffles the samples (seeded by `seed`) and partitions them into training,
@@ -337,16 +296,16 @@ impl Dataset {
         );
 
         let model = self.to_model_dataset();
-        let n_samples = model.n_samples();
+        let sample_size = model.n_samples();
 
-        let mut indices: Vec<usize> = (0..n_samples).collect();
+        let mut indices: Vec<usize> = (0..sample_size).collect();
         indices.shuffle(&mut StdRng::seed_from_u64(seed));
 
-        let size = |ratio: f32| (n_samples as f32 * ratio).round() as usize;
+        let size = |ratio: f32| (sample_size as f32 * ratio).round() as usize;
 
         let test_size = size(test_ratio);
         let val_size = size(val_ratio);
-        let train_size = n_samples - test_size - val_size;
+        let train_size = sample_size - test_size - val_size;
 
         ModelSplit {
             train: model.select(&indices[..train_size]),
@@ -502,11 +461,15 @@ mod tests {
     use super::*;
     use ndarray::{Array1, Array2, array};
 
+    /// A `ClassLabel` target with the given (contiguous) ids and no names.
+    fn class_ids(ids: Vec<u32>) -> Targets {
+        Targets::class_ids(Array1::from(ids)).unwrap()
+    }
+
     #[test]
     fn valid_multiclass_labels_produce_correct_one_hot() {
         let features = Array2::zeros((3, 2));
-        let labels = array![0.0f32, 1.0, 2.0];
-        let dataset = Dataset::tabular(features, labels, None).unwrap();
+        let dataset = Dataset::tabular(features, class_ids(vec![0, 1, 2]), None).unwrap();
         let model_dataset = dataset.to_model_dataset();
         // targets shape: (n_classes=3, n_samples=3)
         assert_eq!(model_dataset.targets.shape(), &[3, 3]);
@@ -517,29 +480,12 @@ mod tests {
     }
 
     #[test]
-    fn gapped_multiclass_labels_one_hot_via_sorted_vocab() {
-        // Labels {1, 2, 5} are non-contiguous: the sorted vocabulary maps them to
-        // rows 0, 1, 2 in ascending order rather than by raw value.
+    fn binary_labels_produce_single_row_targets() {
         let features = Array2::zeros((3, 2));
-        let labels = array![1.0f32, 2.0, 5.0];
-        let model_dataset = Dataset::tabular(features, labels, None)
+        let model_dataset = Dataset::tabular(features, class_ids(vec![0, 1, 0]), None)
             .unwrap()
             .to_model_dataset();
-        assert_eq!(model_dataset.targets.shape(), &[3, 3]);
-        for i in 0..3 {
-            assert_eq!(model_dataset.targets[[i, i]], 1.0);
-        }
-    }
-
-    #[test]
-    fn gapped_binary_labels_remap_to_zero_one() {
-        // Labels {1, 2}: the sorted vocabulary remaps the smaller value to 0 and
-        // the larger to 1, rather than passing the raw values through.
-        let features = Array2::zeros((3, 2));
-        let labels = array![1.0f32, 2.0, 1.0];
-        let model_dataset = Dataset::tabular(features, labels, None)
-            .unwrap()
-            .to_model_dataset();
+        // Binary labels stay as a single (1, n_samples) row, not one-hot encoded.
         assert_eq!(model_dataset.targets.shape(), &[1, 3]);
         assert_eq!(
             model_dataset
@@ -567,31 +513,11 @@ mod tests {
     }
 
     #[test]
-    fn binary_labels_produce_single_row_targets() {
-        let features = Array2::zeros((3, 2));
-        let labels = array![0.0f32, 1.0, 0.0];
-        let model_dataset = Dataset::tabular(features, labels, None)
-            .unwrap()
-            .to_model_dataset();
-        // Binary labels stay as a single (1, n_samples) row, not one-hot encoded.
-        assert_eq!(model_dataset.targets.shape(), &[1, 3]);
-        assert_eq!(
-            model_dataset
-                .targets
-                .index_axis(Axis(0), 0)
-                .iter()
-                .copied()
-                .collect::<Vec<f32>>(),
-            vec![0.0, 1.0, 0.0]
-        );
-    }
-
-    #[test]
     fn to_model_dataset_rotates_rank4_inputs_samples_last() {
         // (samples=6, channels=1, height=2, width=2) → samples-last (1, 2, 2, 6).
         let inputs =
             Array::from_shape_fn((6, 1, 2, 2), |(s, _, h, w)| (h + w + s) as f32).into_dyn();
-        let targets = Array1::from_shape_fn(6, |s| (s % 2) as f32).into_dyn();
+        let targets = class_ids((0..6).map(|s| s % 2).collect());
         let model = Dataset::new(inputs, targets, None)
             .unwrap()
             .to_model_dataset();
@@ -600,11 +526,11 @@ mod tests {
     }
 
     #[test]
-    fn to_model_dataset_rotates_rank2_targets_samples_last() {
-        // A rank-2 target (samples=4, width=2) is rotated to (2, 4), not one-hot re-encoded.
+    fn to_model_dataset_rotates_rank2_real_valued_targets_samples_last() {
+        // A rank-2 real-valued target (samples=4, width=2) is rotated to (2, 4).
         let inputs = Array2::zeros((4, 3)).into_dyn();
         let targets = Array2::from_shape_fn((4, 2), |(s, k)| (s + k) as f32).into_dyn();
-        let model = Dataset::new(inputs, targets, None)
+        let model = Dataset::new(inputs, Targets::value(targets).unwrap(), None)
             .unwrap()
             .to_model_dataset();
         assert_eq!(model.inputs().shape(), &[3, 4]);
@@ -612,58 +538,47 @@ mod tests {
     }
 
     #[test]
-    fn new_accepts_non_contiguous_class_ids() {
-        // Structural validation no longer rejects class-id gaps; {1, 2} is accepted.
-        let features = Array2::zeros((2, 2)).into_dyn();
-        let labels = array![1.0f32, 2.0].into_dyn();
-        let dataset = Dataset::new(features, labels, None).unwrap();
-        assert_eq!(dataset.n_classes(), 2);
-    }
-
-    #[test]
     fn tabular_dynamises_a_single_column_target() {
         let dataset =
-            Dataset::tabular(Array2::zeros((3, 2)), array![0.0f32, 1.0, 0.0], None).unwrap();
-        assert_eq!(dataset.inputs().ndim(), 2);
-        assert_eq!(dataset.targets().shape(), &[3]);
+            Dataset::tabular(Array2::zeros((3, 2)), class_ids(vec![0, 1, 0]), None).unwrap();
+        assert_eq!(dataset.features().ndim(), 2);
+        assert_eq!(dataset.sample_size(), 3);
     }
 
     #[test]
-    fn id_pairs_origin_label_with_shape() {
-        let features = Array2::zeros((4, 2));
-        let labels = array![0.0f32, 1.0, 0.0, 1.0];
-        let origin = DatasetOrigin::Synthetic {
-            distribution: "spiral".to_string(),
-            seed: 42,
-        };
-        let dataset = Dataset::tabular(features, labels, Some(origin)).unwrap();
-        assert_eq!(dataset.id(), "spiral-seed42-c2-f2-n4");
-    }
-
-    #[test]
-    fn id_falls_back_to_a_neutral_prefix_without_origin() {
-        let features = Array2::zeros((4, 2));
-        let labels = array![0.0f32, 1.0, 0.0, 1.0];
-        let dataset = Dataset::tabular(features, labels, None).unwrap();
-        assert_eq!(dataset.id(), "dataset-c2-f2-n4");
+    fn features_for_class_selects_matching_rows() {
+        let features = Array2::from_shape_fn((4, 2), |(i, _)| i as f32);
+        let label = ClassLabel::unnamed(Array1::from(vec![0u32, 1, 0, 1])).unwrap();
+        let dataset = Dataset::tabular(features, Targets::ClassLabel(label.clone()), None).unwrap();
+        assert_eq!(
+            dataset.features_for_class(&label, 0),
+            Array2::from_shape_vec((2, 2), vec![0.0, 0.0, 2.0, 2.0])
+                .unwrap()
+                .into_dyn()
+        );
+        assert_eq!(
+            dataset.features_for_class(&label, 1),
+            Array2::from_shape_vec((2, 2), vec![1.0, 1.0, 3.0, 3.0])
+                .unwrap()
+                .into_dyn()
+        );
     }
 
     #[test]
     fn new_rejects_dataset_without_features() {
         let features = Array2::zeros((3, 0));
-        let labels = array![0.0f32, 1.0, 0.0];
         assert_eq!(
-            Dataset::tabular(features, labels, None).err(),
+            Dataset::tabular(features, class_ids(vec![0, 1, 0]), None).err(),
             Some(DatasetError::NoFeatures)
         );
     }
 
     #[test]
     fn new_rejects_empty_dataset() {
-        let features = Array2::zeros((0, 2));
-        let labels = Array1::zeros(0);
+        let features = Array2::<f32>::zeros((0, 2));
+        let targets = Targets::value(Array1::<f32>::zeros(0).into_dyn()).unwrap();
         assert_eq!(
-            Dataset::tabular(features, labels, None).err(),
+            Dataset::tabular(features, targets, None).err(),
             Some(DatasetError::NoSamples)
         );
     }
@@ -672,11 +587,10 @@ mod tests {
     fn new_rejects_shape_mismatch() {
         // 3 feature rows but only 2 labels.
         let features = Array2::zeros((3, 2));
-        let labels = array![0.0f32, 1.0];
         assert_eq!(
-            Dataset::tabular(features, labels, None).err(),
+            Dataset::tabular(features, class_ids(vec![0, 1]), None).err(),
             Some(DatasetError::ShapeMismatch {
-                inputs: 3,
+                features: 3,
                 targets: 2
             })
         );
@@ -686,8 +600,8 @@ mod tests {
     fn split_ratios_produce_correct_sizes() {
         // 100 samples, 20% test, 10% val → 70 train / 10 val / 20 test
         let features = Array2::zeros((100, 2));
-        let labels = Array1::from_shape_fn(100, |i| (i % 2) as f32);
-        let dataset = Dataset::tabular(features, labels, None).unwrap();
+        let targets = class_ids((0..100).map(|i| i % 2).collect());
+        let dataset = Dataset::tabular(features, targets, None).unwrap();
         let split = dataset.split(0.1, 0.2, 0);
         assert_eq!(split.train_size(), 70);
         assert_eq!(split.validation_size(), 10);
@@ -698,8 +612,8 @@ mod tests {
     fn split_without_validation_yields_no_validation_set() {
         // val_ratio 0.0 → the validation split is None.
         let features = Array2::from_shape_fn((100, 2), |(i, _)| i as f32);
-        let labels = Array1::from_shape_fn(100, |i| (i % 2) as f32);
-        let mut split = Dataset::tabular(features, labels, None)
+        let targets = class_ids((0..100).map(|i| i % 2).collect());
+        let mut split = Dataset::tabular(features, targets, None)
             .unwrap()
             .split(0.0, 0.2, 0);
         assert!(split.validation.is_none());
@@ -713,18 +627,11 @@ mod tests {
     }
 
     #[test]
-    fn from_encoded_rejects_empty_images() {
-        // No images → no samples, surfaced as a Result rather than a panic.
-        let err = Dataset::from_encoded("test", vec![], vec![]).err().unwrap();
-        assert_eq!(err.to_string(), DatasetError::NoSamples.to_string());
-    }
-
-    #[test]
     fn from_encoded_rejects_inconsistent_image_sizes() {
         // Images of differing lengths cannot form a rectangular matrix → Err.
         let images = vec![array![0.0f32, 1.0], array![2.0, 3.0, 4.0]];
-        let labels = vec![0usize, 1];
-        assert!(Dataset::from_encoded("test", images, labels).is_err());
+        let label = ClassLabel::unnamed(Array1::from(vec![0u32, 1])).unwrap();
+        assert!(Dataset::from_encoded("test", images, label).is_err());
     }
 
     #[test]
@@ -733,8 +640,8 @@ mod tests {
         // check that there are as many labels as images — it delegates to
         // `Dataset::tabular`, which rejects the count mismatch.
         let images = vec![array![0.0f32, 1.0], array![2.0, 3.0]];
-        let labels = vec![0usize]; // one label for two images
-        let err = Dataset::from_encoded("test", images, labels).err().unwrap();
+        let label = ClassLabel::unnamed(Array1::from(vec![0u32, 1, 0])).unwrap(); // three labels for two images
+        let err = Dataset::from_encoded("test", images, label).err().unwrap();
         assert!(
             err.to_string().contains("disagree on sample count"),
             "got: {err}"
@@ -742,33 +649,43 @@ mod tests {
     }
 
     #[test]
-    fn unique_labels_deduplicates_values() {
-        let dataset =
-            Dataset::tabular(Array2::zeros((4, 1)), array![0.0f32, 1.0, 1.0, 2.0], None).unwrap();
-        let mut unique = dataset.unique_labels();
-        unique.sort_by(f32::total_cmp);
-        assert_eq!(unique, vec![0.0, 1.0, 2.0]);
-    }
-
-    #[test]
-    fn get_features_for_label_selects_matching_rows() {
+    fn feature_shape_excludes_the_sample_axis() {
         let dataset = Dataset::tabular(
-            array![[1.0f32, 1.0], [2.0, 2.0], [3.0, 3.0]],
-            array![0.0f32, 1.0, 0.0],
+            array![[1.0f32, 1.0, 1.0], [2.0, 2.0, 2.0]],
+            class_ids(vec![0, 1]),
             None,
         )
         .unwrap();
-        let rows = dataset.get_features_for_label(0.0);
-        assert_eq!(rows.shape(), &[2, 2]);
-        assert_eq!(rows.row(0).to_vec(), vec![1.0, 1.0]);
-        assert_eq!(rows.row(1).to_vec(), vec![3.0, 3.0]);
+        assert_eq!(dataset.feature_shape(), &[3]);
+    }
+
+    #[test]
+    fn shape_tag_reports_classes_features_and_samples() {
+        let dataset = Dataset::tabular(
+            array![[1.0f32, 1.0, 1.0], [2.0, 2.0, 2.0]],
+            class_ids(vec![0, 1]),
+            None,
+        )
+        .unwrap();
+        assert_eq!(dataset.shape_tag(), "c2-f3-n2");
+    }
+
+    #[test]
+    fn shape_tag_omits_the_class_segment_for_value_targets() {
+        let dataset = Dataset::tabular(
+            array![[1.0f32, 1.0], [2.0, 2.0]],
+            Targets::value(Array1::from(vec![0.5f32, 1.5]).into_dyn()).unwrap(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(dataset.shape_tag(), "f2-n2");
     }
 
     #[test]
     fn feature_range_returns_per_feature_min_max() {
         let dataset = Dataset::tabular(
             array![[1.0f32, 10.0], [3.0, 5.0], [-2.0, 8.0]],
-            array![0.0f32, 1.0, 0.0],
+            class_ids(vec![0, 1, 0]),
             None,
         )
         .unwrap();
@@ -781,7 +698,7 @@ mod tests {
     fn fit_scaler_then_scale_inplace_normalizes_model_inputs() {
         let dataset = Dataset::tabular(
             array![[0.0f32, 0.0], [10.0, 20.0]],
-            array![0.0f32, 1.0],
+            class_ids(vec![0, 1]),
             None,
         )
         .unwrap();
@@ -806,8 +723,8 @@ mod tests {
         let features = Array2::from_shape_fn((10, 2), |(i, j)| {
             (i as f32) * if j == 0 { 1.0 } else { 5.0 }
         });
-        let labels = Array1::from_shape_fn(10, |i| (i % 2) as f32);
-        let dataset = Dataset::tabular(features, labels, None).unwrap();
+        let targets = class_ids((0..10).map(|i| i % 2).collect());
+        let dataset = Dataset::tabular(features, targets, None).unwrap();
 
         let mut split = dataset.split(0.2, 0.2, 0);
         let scaler = split.train.fit_scaler(ScalerKind::MinMax);
@@ -880,20 +797,18 @@ mod tests {
     #[test]
     fn from_encoded_builds_dataset_from_images() {
         let images = vec![array![0.0f32, 1.0], array![2.0, 3.0], array![4.0, 5.0]];
-        let labels = vec![0usize, 1, 2];
+        let label = ClassLabel::unnamed(Array1::from(vec![0u32, 1, 2])).unwrap();
+        assert_eq!(label.class_count(), 3);
 
-        let dataset = Dataset::from_encoded("digits", images, labels).unwrap();
-        assert_eq!(dataset.inputs().shape(), &[3, 2]);
-        assert_eq!(dataset.targets().len(), 3);
-        let mut unique = dataset.unique_labels();
-        unique.sort_by(f32::total_cmp);
-        assert_eq!(unique, vec![0.0, 1.0, 2.0]);
+        let dataset = Dataset::from_encoded("digits", images, label).unwrap();
+        assert_eq!(dataset.features().shape(), &[3, 2]);
+        assert_eq!(dataset.sample_size(), 3);
 
-        // The source is stamped into the origin.
+        // The source is stamped into the description.
         assert_eq!(
-            dataset.origin(),
-            Some(&DatasetOrigin::Encoded {
-                source: "digits".to_string(),
+            dataset.info(),
+            Some(&DatasetInfo {
+                description: Some("Encoded from digits".to_string()),
             })
         );
     }
@@ -910,11 +825,11 @@ mod tests {
         );
         assert_eq!(
             DatasetError::ShapeMismatch {
-                inputs: 3,
+                features: 3,
                 targets: 2
             }
             .to_string(),
-            "inputs and targets disagree on sample count: 3 vs 2"
+            "features and targets disagree on sample count: 3 vs 2"
         );
     }
 }

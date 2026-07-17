@@ -1,5 +1,4 @@
-use super::{Describe, Named, column_width, theme};
-use crate::path::PathExt;
+use super::{Describe, Named, column_width, path::PathExt, theme};
 use std::path::PathBuf;
 
 /// The files a command wrote to disk, each a `(label, path)` pair.

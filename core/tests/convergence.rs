@@ -1,6 +1,6 @@
 use ndarray::array;
 use nrn::activations::{IDENTITY, SIGMOID};
-use nrn::data::Dataset;
+use nrn::data::{Dataset, Targets};
 use nrn::loss_functions::Reduction;
 use nrn::model::{NetworkConfig, NeuralNetwork};
 use nrn::task::Task;
@@ -27,7 +27,7 @@ fn xor_converges_to_low_loss() {
                 [1.0, 0.0],
                 [1.0, 1.0]
             ], // (8 samples = 4 XOR points ×2, 2 features)
-            array![0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0],
+            Targets::class_ids(array![0u32, 1, 1, 0, 0, 1, 1, 0]).unwrap(),
             None,
         )
         .unwrap()
@@ -92,7 +92,7 @@ fn xor_converges_with_mini_batch() {
                 [1.0, 0.0],
                 [1.0, 1.0]
             ],
-            array![0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0],
+            Targets::class_ids(array![0u32, 1, 1, 0, 0, 1, 1, 0]).unwrap(),
             None,
         )
         .unwrap()
@@ -157,7 +157,7 @@ fn three_class_converges_to_low_loss() {
                 [1.0, 0.0],
                 [0.0, 1.0]
             ], // (6 samples, 2 features)
-            array![0.0, 1.0, 2.0, 0.0, 1.0, 2.0],
+            Targets::class_ids(array![0u32, 1, 2, 0, 1, 2]).unwrap(),
             None,
         )
         .unwrap()
@@ -196,7 +196,7 @@ fn three_class_converges_to_low_loss() {
     let report = hyperparameters
         .build(
             NeuralNetwork::from_config(config, 42).unwrap(),
-            Task::MultiClass { n_classes: 3 },
+            Task::MultiClass { class_count: 3 },
             data,
             Callbacks::new(vec![]),
         )

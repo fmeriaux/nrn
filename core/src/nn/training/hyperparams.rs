@@ -614,14 +614,16 @@ mod tests {
 
     #[test]
     fn for_task_picks_categorical_cross_entropy_for_a_multi_class_task() {
-        let loss = LossConfig::for_task(&Task::MultiClass { n_classes: 3 });
+        let loss = LossConfig::for_task(&Task::MultiClass { class_count: 3 });
         assert_eq!(loss.kind, LossKind::CategoricalCrossEntropy);
         assert_eq!(loss.instantiate().name(), "Categorical-Cross-Entropy");
     }
 
     #[test]
     fn for_task_picks_mean_squared_error_for_a_regression_task() {
-        let loss = LossConfig::for_task(&Task::Regression { shape: vec![1] });
+        let loss = LossConfig::for_task(&Task::Regression {
+            target_shape: vec![1],
+        });
         assert_eq!(loss.kind, LossKind::MeanSquaredError);
         assert_eq!(loss.instantiate().name(), "Mean-Squared-Error");
     }
@@ -641,7 +643,7 @@ mod tests {
             100.0
         );
 
-        let categorical = accuracy_for(&Task::MultiClass { n_classes: 3 });
+        let categorical = accuracy_for(&Task::MultiClass { class_count: 3 });
         assert_eq!(
             categorical.compute(
                 array![[2.0_f32], [1.0], [0.0]].into_dyn().view(),
@@ -871,10 +873,11 @@ mod tests {
     /// A two-feature dataset whose values grow with the sample index, so MinMax
     /// scaling has a non-trivial effect.
     fn ramp_dataset() -> Dataset {
+        use crate::data::Targets;
         use ndarray::{Array1, Array2};
         let features = Array2::from_shape_fn((10, 2), |(i, _)| i as f32);
-        let labels = Array1::from_shape_fn(10, |i| (i % 2) as f32);
-        Dataset::tabular(features, labels, None).unwrap()
+        let labels = Array1::from_shape_fn(10, |i| i as u32 % 2);
+        Dataset::tabular(features, Targets::class_ids(labels).unwrap(), None).unwrap()
     }
 
     fn spec_with_scaler(scaler: Option<ScalerKind>) -> HyperParameters {

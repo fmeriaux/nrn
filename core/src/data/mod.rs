@@ -1,13 +1,11 @@
-mod classes;
 mod dataset;
 mod instance;
-mod origin;
 mod preprocessors;
+mod targets;
 
-pub use classes::*;
 pub use dataset::*;
 pub use instance::*;
-pub use origin::*;
 pub use preprocessors::*;
+pub use targets::*;
 
 pub mod synth;

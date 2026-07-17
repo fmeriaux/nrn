@@ -83,9 +83,15 @@ of the scikit-learn convention). `Dataset` (row-major, `(samples, features)`) co
 
 ### Data (`core/src/data/`)
 
-- **`dataset.rs`** — `Dataset` (raw) → `ModelDataset` (column-major). `batches()` shuffles and chunks
-  for mini-batch SGD; `split()` shuffles (seeded) then partitions into `ModelSplit` (train/val/test),
-  so producers store data in natural order and the run seed governs the partition.
+- **`dataset.rs`** — `Dataset` pairs samples-major `inputs` with typed `targets` (`targets.rs`) and
+  an optional `DatasetInfo`; converts to `ModelDataset` (column-major) via `to_model_dataset()`.
+  `batches()` shuffles and chunks for mini-batch SGD; `split()` shuffles (seeded) then partitions
+  into `ModelSplit` (train/val/test), so producers store data in natural order and the run seed
+  governs the partition.
+- **`targets.rs`** — `Targets::ClassLabel(ClassLabel)` / `Targets::Value(Values)` give a dataset's
+  targets a dtype instead of a bare array; `ClassLabel` pairs ids with optional `Classes` names.
+- **`classes.rs`** — `Classes`, a name → 0-indexed label mapping; `Classes::scan` (behind `io`)
+  builds one from a directory's subfolders.
 - **`preprocessors/scalers/`** — `Scaler` trait (`MinMax`, `ZScore`); `ScalerKind` names the method,
   `ScalerKind::fit` turns it into a fitted `ScalerMethod` (the dispatch enum carrying parameters).
   Params serialized to JSON for reuse at prediction time.
@@ -126,12 +132,15 @@ A backend-neutral figure IR with feature-gated renderers, in three stages:
 
 ### I/O (`core/src/io/`, behind `io` feature)
 
-[safetensors](https://github.com/huggingface/safetensors) is the primary format for datasets, models,
-and checkpoints (`f32` tensors plus a `__metadata__` string map); scalers and run hyperparameters are
-JSON. The guiding rule: **core runtime types stay serde-free**, so `io` owns their serializable mirrors
-— `HyperParametersRecord` for `HyperParameters`, plus the optimizer/scheduler `*State` round-trips.
-`io/tensors.rs` holds the shared `View` adapter; the activation-name → `Arc<dyn Activation>` round-trip
-goes through `ActivationProvider::get_by_name`.
+Persistence is split by artifact: models, checkpoints, and optimizer/scheduler state use
+[safetensors](https://github.com/huggingface/safetensors) (`f32` tensors plus a `__metadata__`
+string map); datasets use Parquet, storing samples-major arrays as the canonical
+`arrow.fixed_shape_tensor` extension and rank-1 targets as a scalar `label` column (`Int64` for
+`ClassLabel`, `Float32` for `Value`); instances, scalers, and run hyperparameters are JSON. The
+guiding rule: **core runtime types stay serde-free**, so `io` owns their serializable mirrors —
+`HyperParametersRecord` for `HyperParameters`, plus the optimizer/scheduler `*State` round-trips.
+`io/model/tensors.rs` holds the shared `View` adapter; the activation-name → `Arc<dyn Activation>`
+round-trip goes through `ActivationProvider::get_by_name`.
 
 A run lives in a directory managed by `TrainingRun`: `create`/`open` persist run-level `TrainingMeta`
 (`meta.json` — dataset, final-model name, hyperparameters) alongside the model blueprint

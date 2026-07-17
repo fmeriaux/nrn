@@ -248,7 +248,7 @@ mod tests {
     };
     use super::*;
     use crate::activations::SIGMOID;
-    use crate::data::Dataset;
+    use crate::data::{Dataset, Targets};
     use crate::layers::Dense;
     use crate::loss_functions::Reduction;
     use crate::optimizers::Optimizer;
@@ -276,7 +276,7 @@ mod tests {
                 [0.3, 0.4],
                 [0.7, 0.6]
             ],
-            array![1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0],
+            Targets::class_ids(array![1u32, 0, 1, 0, 1, 0, 1, 0, 1, 0]).unwrap(),
             None,
         )
         .unwrap()

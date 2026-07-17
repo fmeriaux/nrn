@@ -9,9 +9,9 @@ impl Describe for Task {
     fn describe(&self) -> String {
         let detail = match self {
             Task::Binary => "classification (binary)".to_string(),
-            Task::MultiClass { n_classes } => format!("classification ({n_classes} classes)"),
-            Task::MultiLabel { n_labels } => format!("classification ({n_labels} labels)"),
-            Task::Regression { shape } => format!("regression (shape {shape:?})"),
+            Task::MultiClass { class_count } => format!("classification ({class_count} classes)"),
+            Task::MultiLabel { label_count } => format!("classification ({label_count} labels)"),
+            Task::Regression { target_shape } => format!("regression (shape {target_shape:?})"),
         };
         theme::value(detail)
     }
@@ -26,7 +26,7 @@ mod tests {
     fn describes_binary_and_multi_class() {
         assert!(Task::Binary.describe().contains("classification (binary)"));
         assert!(
-            Task::MultiClass { n_classes: 5 }
+            Task::MultiClass { class_count: 5 }
                 .describe()
                 .contains("classification (5 classes)")
         );
