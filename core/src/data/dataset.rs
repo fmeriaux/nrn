@@ -89,7 +89,7 @@ impl Dataset {
         info: Option<DatasetInfo>,
     ) -> Result<Self, DatasetError> {
         let sample_size = features.len_of(Axis(0));
-        let target_size = targets.size();
+        let target_size = targets.sample_size();
         if sample_size != target_size {
             return Err(DatasetError::ShapeMismatch {
                 features: sample_size,
@@ -164,19 +164,9 @@ impl Dataset {
         format!("{classes}f{}-n{}", self.feature_size(), self.sample_size())
     }
 
-    /// Returns the feature rows whose class id equals `id`, as a rank-2 array.
-    ///
-    /// # Panics
-    /// When the features are not rank-2 tabular, or the targets are not `ClassLabel`.
-    pub fn features_for_class(&self, id: u32) -> Array2<f32> {
-        assert_eq!(self.features.ndim(), 2, "Features must be rank-2 tabular.");
-        let Targets::ClassLabel(label) = &self.targets else {
-            panic!("Targets must be class-label.");
-        };
-        self.features
-            .select(Axis(0), &label.indices_for(id))
-            .into_dimensionality::<Ix2>()
-            .expect("rank-2 features stay rank-2 after selecting sample rows")
+    /// Returns the feature rows whose class id equals `id`.
+    pub fn features_for_class(&self, label: &ClassLabel, id: u32) -> ArrayD<f32> {
+        self.features.select(Axis(0), &label.indices_for(id))
     }
 
     /// Computes the minimum and maximum values for each feature in the dataset.
@@ -473,7 +463,7 @@ mod tests {
 
     /// A `ClassLabel` target with the given (contiguous) ids and no names.
     fn class_ids(ids: Vec<u32>) -> Targets {
-        Targets::class_label(Array1::from(ids), None).unwrap()
+        Targets::class_ids(Array1::from(ids)).unwrap()
     }
 
     #[test]
@@ -558,14 +548,19 @@ mod tests {
     #[test]
     fn features_for_class_selects_matching_rows() {
         let features = Array2::from_shape_fn((4, 2), |(i, _)| i as f32);
-        let dataset = Dataset::tabular(features, class_ids(vec![0, 1, 0, 1]), None).unwrap();
+        let label = ClassLabel::unnamed(Array1::from(vec![0u32, 1, 0, 1])).unwrap();
+        let dataset = Dataset::tabular(features, Targets::ClassLabel(label.clone()), None).unwrap();
         assert_eq!(
-            dataset.features_for_class(0),
-            Array2::from_shape_vec((2, 2), vec![0.0, 0.0, 2.0, 2.0]).unwrap()
+            dataset.features_for_class(&label, 0),
+            Array2::from_shape_vec((2, 2), vec![0.0, 0.0, 2.0, 2.0])
+                .unwrap()
+                .into_dyn()
         );
         assert_eq!(
-            dataset.features_for_class(1),
-            Array2::from_shape_vec((2, 2), vec![1.0, 1.0, 3.0, 3.0]).unwrap()
+            dataset.features_for_class(&label, 1),
+            Array2::from_shape_vec((2, 2), vec![1.0, 1.0, 3.0, 3.0])
+                .unwrap()
+                .into_dyn()
         );
     }
 
@@ -803,14 +798,11 @@ mod tests {
     fn from_encoded_builds_dataset_from_images() {
         let images = vec![array![0.0f32, 1.0], array![2.0, 3.0], array![4.0, 5.0]];
         let label = ClassLabel::unnamed(Array1::from(vec![0u32, 1, 2])).unwrap();
+        assert_eq!(label.class_count(), 3);
 
         let dataset = Dataset::from_encoded("digits", images, label).unwrap();
         assert_eq!(dataset.features().shape(), &[3, 2]);
         assert_eq!(dataset.sample_size(), 3);
-        let Targets::ClassLabel(label) = dataset.targets() else {
-            panic!("expected ClassLabel targets");
-        };
-        assert_eq!(label.class_count(), 3);
 
         // The source is stamped into the description.
         assert_eq!(

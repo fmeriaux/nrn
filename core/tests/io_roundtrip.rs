@@ -61,7 +61,7 @@ fn full_pipeline_roundtrips_every_artifact() {
     // --- Dataset --------------------------------------------------------
     let dataset = Dataset::tabular(
         array![[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]],
-        Targets::class_label(array![0u32, 1, 1, 0], None).unwrap(),
+        Targets::class_ids(array![0u32, 1, 1, 0]).unwrap(),
         None,
     )
     .unwrap();

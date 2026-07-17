@@ -191,7 +191,7 @@ mod tests {
     /// A two-feature dataset carrying `ids` as contiguous `ClassLabel` targets.
     fn classification_dataset(ids: Vec<u32>) -> Dataset {
         let inputs = Array2::from_shape_fn((ids.len(), 2), |(i, _)| i as f32);
-        let targets = Targets::class_label(Array1::from(ids), None).unwrap();
+        let targets = Targets::class_ids(Array1::from(ids)).unwrap();
         Dataset::new(inputs.into_dyn(), targets, None).unwrap()
     }
 

@@ -276,7 +276,7 @@ mod tests {
                 [0.3, 0.4],
                 [0.7, 0.6]
             ],
-            Targets::class_label(array![1u32, 0, 1, 0, 1, 0, 1, 0, 1, 0], None).unwrap(),
+            Targets::class_ids(array![1u32, 0, 1, 0, 1, 0, 1, 0, 1, 0]).unwrap(),
             None,
         )
         .unwrap()

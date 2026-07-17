@@ -244,7 +244,7 @@ impl SynthDataset {
         }
 
         let targets =
-            Targets::class_label(ids, None).expect("synthetic ids are contiguous by construction");
+            Targets::class_ids(ids).expect("synthetic ids are contiguous by construction");
         let info = DatasetInfo {
             description: Some(format!("Synthetic ({}, seed {seed})", self.distribution)),
         };

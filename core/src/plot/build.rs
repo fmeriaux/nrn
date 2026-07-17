@@ -8,6 +8,7 @@ use crate::data::Targets;
 use crate::evaluation_history::EvaluationHistory;
 use crate::model::Predictor;
 use crate::plot::scene::{Color, Figure, Panel, Series, add_padding};
+use ndarray::Ix2;
 use std::error::Error;
 
 /// Fraction of each axis range added as whitespace around a figure's axes.
@@ -150,7 +151,7 @@ fn scatter_panel(
     padding_factor: f32,
     show_legend: bool,
 ) -> Result<Panel, Box<dyn Error>> {
-    if dataset.feature_size() != 2 {
+    if dataset.feature_shape() != [2] {
         return Err("Scatter plot requires a dataset with exactly two features".into());
     }
 
@@ -165,7 +166,10 @@ fn scatter_panel(
 
     let mut series: Vec<Series> = (0..class_count as u32)
         .map(|id| {
-            let rows = dataset.features_for_class(id);
+            let rows = dataset
+                .features_for_class(label, id)
+                .into_dimensionality::<Ix2>()
+                .expect("feature_shape() == [2] guarantees rank-2 features");
             Series::Points {
                 points: rows
                     .outer_iter()
@@ -240,7 +244,7 @@ mod tests {
     fn two_feature_dataset() -> Dataset {
         Dataset::tabular(
             array![[0.0, 0.0], [1.0, 1.0], [0.0, 1.0], [1.0, 0.0]],
-            Targets::class_label(array![0u32, 1, 0, 1], None).unwrap(),
+            Targets::class_ids(array![0u32, 1, 0, 1]).unwrap(),
             None,
         )
         .unwrap()
@@ -250,7 +254,7 @@ mod tests {
     fn one_feature_dataset() -> Dataset {
         Dataset::tabular(
             array![[0.0], [1.0], [0.0], [1.0]],
-            Targets::class_label(array![0u32, 1, 0, 1], None).unwrap(),
+            Targets::class_ids(array![0u32, 1, 0, 1]).unwrap(),
             None,
         )
         .unwrap()

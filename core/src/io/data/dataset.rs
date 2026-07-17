@@ -311,7 +311,7 @@ mod tests {
     fn dataset_with(info: Option<DatasetInfo>) -> Dataset {
         Dataset::tabular(
             Array2::from_shape_fn((5, 3), |(i, j)| (i * 3 + j) as f32 * 0.25),
-            Targets::class_label(array![0u32, 1, 0, 2, 1], None).unwrap(),
+            Targets::class_ids(array![0u32, 1, 0, 2, 1]).unwrap(),
             info,
         )
         .unwrap()

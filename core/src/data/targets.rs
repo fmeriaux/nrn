@@ -198,6 +198,15 @@ impl Targets {
         Ok(Targets::ClassLabel(ClassLabel::new(ids, names)?))
     }
 
+    /// Builds `ClassLabel` targets from `ids` without names — shorthand for
+    /// `class_label(ids, None)`.
+    ///
+    /// # Errors
+    /// The same errors as [`ClassLabel::new`].
+    pub fn class_ids(ids: Array1<u32>) -> Result<Self, ClassLabelError> {
+        Ok(Targets::ClassLabel(ClassLabel::unnamed(ids)?))
+    }
+
     /// Builds `Value` targets from `values`.
     ///
     /// # Errors
@@ -207,7 +216,7 @@ impl Targets {
     }
 
     /// The number of samples (the leading axis).
-    pub fn size(&self) -> usize {
+    pub fn sample_size(&self) -> usize {
         match self {
             Targets::ClassLabel(label) => label.ids.len(),
             Targets::Value(values) => values.as_array().len_of(Axis(0)),
@@ -311,7 +320,7 @@ mod tests {
     #[test]
     fn class_label_reports_size_and_shape() {
         let targets = Targets::class_label(array![0u32, 1, 2, 1], None).unwrap();
-        assert_eq!(targets.size(), 4);
+        assert_eq!(targets.sample_size(), 4);
         assert_eq!(targets.shape(), &[] as &[usize]);
         assert_eq!(targets.kind(), TargetKind::ClassLabel);
     }
@@ -319,7 +328,7 @@ mod tests {
     #[test]
     fn value_reports_size_and_shape() {
         let targets = Targets::value(Array2::<f32>::zeros((5, 3)).into_dyn()).unwrap();
-        assert_eq!(targets.size(), 5);
+        assert_eq!(targets.sample_size(), 5);
         assert_eq!(targets.shape(), &[3]);
         assert_eq!(targets.kind(), TargetKind::Value);
     }

@@ -27,7 +27,7 @@ fn xor_converges_to_low_loss() {
                 [1.0, 0.0],
                 [1.0, 1.0]
             ], // (8 samples = 4 XOR points ×2, 2 features)
-            Targets::class_label(array![0u32, 1, 1, 0, 0, 1, 1, 0], None).unwrap(),
+            Targets::class_ids(array![0u32, 1, 1, 0, 0, 1, 1, 0]).unwrap(),
             None,
         )
         .unwrap()
@@ -92,7 +92,7 @@ fn xor_converges_with_mini_batch() {
                 [1.0, 0.0],
                 [1.0, 1.0]
             ],
-            Targets::class_label(array![0u32, 1, 1, 0, 0, 1, 1, 0], None).unwrap(),
+            Targets::class_ids(array![0u32, 1, 1, 0, 0, 1, 1, 0]).unwrap(),
             None,
         )
         .unwrap()
@@ -157,7 +157,7 @@ fn three_class_converges_to_low_loss() {
                 [1.0, 0.0],
                 [0.0, 1.0]
             ], // (6 samples, 2 features)
-            Targets::class_label(array![0u32, 1, 2, 0, 1, 2], None).unwrap(),
+            Targets::class_ids(array![0u32, 1, 2, 0, 1, 2]).unwrap(),
             None,
         )
         .unwrap()

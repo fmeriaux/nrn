@@ -33,7 +33,7 @@ mod tests {
         // 4 samples (rows), 2 features, 2 classes.
         Dataset::tabular(
             Array2::zeros((4, 2)),
-            Targets::class_label(array![0u32, 1, 0, 1], None).unwrap(),
+            Targets::class_ids(array![0u32, 1, 0, 1]).unwrap(),
             info,
         )
         .unwrap()
