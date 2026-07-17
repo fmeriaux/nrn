@@ -83,6 +83,16 @@ impl Task {
     pub fn output_size(&self) -> usize {
         self.output_shape().iter().product()
     }
+
+    /// The per-sample target shape this task implies: identical to
+    /// [`output_shape`](Self::output_shape), except for [`MultiClass`](Task::MultiClass), whose
+    /// targets are a single class id rather than one output per class.
+    pub fn target_shape(&self) -> Vec<usize> {
+        match self {
+            Task::MultiClass { .. } => vec![1],
+            _ => self.output_shape(),
+        }
+    }
 }
 
 /// Checks that `targets` are `ClassLabel` spanning exactly `expected` classes.
@@ -300,6 +310,20 @@ mod tests {
             .output_size(),
             48
         );
+    }
+
+    #[test]
+    fn target_shape_matches_output_shape_except_for_multi_class() {
+        assert_eq!(Task::Binary.target_shape(), Task::Binary.output_shape());
+        assert_eq!(Task::MultiClass { class_count: 4 }.target_shape(), vec![1]);
+        assert_eq!(
+            Task::MultiLabel { label_count: 3 }.target_shape(),
+            Task::MultiLabel { label_count: 3 }.output_shape()
+        );
+        let regression = Task::Regression {
+            target_shape: vec![3, 4, 4],
+        };
+        assert_eq!(regression.target_shape(), regression.output_shape());
     }
 
     #[test]

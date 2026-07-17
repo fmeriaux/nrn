@@ -2,13 +2,14 @@ use super::callbacks::Callbacks;
 use super::early_stopping::{EarlyStoppingConfig, EarlyStoppingConfigError};
 use super::preprocessing::TrainingData;
 use super::trainer::Trainer;
-use crate::accuracies::{Accuracy, BINARY_ACCURACY, CATEGORICAL_ACCURACY};
-use crate::data::Dataset;
+use crate::accuracies::{Accuracy, BINARY_ACCURACY, SPARSE_CATEGORICAL_ACCURACY};
 use crate::data::scalers::{ScalerFeatureMismatch, ScalerKind, ScalerMethod};
+use crate::data::{Dataset, ModelDataset};
 use crate::gradients::{GradientClipping, GradientClippingError};
 use crate::learning_rate::{LearningRate, LearningRateError};
 use crate::loss_functions::{
     BinaryCrossEntropy, CategoricalCrossEntropy, LossFunction, MeanSquaredError, Reduction,
+    SparseCategoricalCrossEntropy,
 };
 use crate::model::{InputShapeMismatch, NeuralNetwork, OutputShapeMismatch};
 use crate::optimizers::{Adam, Optimizer, StochasticGradientDescent};
@@ -61,8 +62,12 @@ pub struct LossConfig {
 pub enum LossKind {
     /// Binary cross-entropy from logits, for a single-logit task (binary or multi-label).
     BinaryCrossEntropy,
-    /// Categorical cross-entropy from softmax logits, for a multi-class task.
+    /// Categorical cross-entropy from softmax logits against one-hot targets, for a
+    /// multi-class task.
     CategoricalCrossEntropy,
+    /// Categorical cross-entropy from softmax logits against class-id targets, for a
+    /// multi-class task.
+    SparseCategoricalCrossEntropy,
     /// Mean squared error, for a regression task.
     MeanSquaredError,
 }
@@ -108,12 +113,12 @@ impl SchedulerConfig {
 
 impl LossConfig {
     /// The loss that fits `task`, with the default [`Mean`](Reduction::Mean) reduction: binary
-    /// cross-entropy for a single-logit task (binary or multi-label), categorical cross-entropy
-    /// for multi-class, mean squared error for regression.
+    /// cross-entropy for a single-logit task (binary or multi-label), sparse categorical
+    /// cross-entropy for multi-class, mean squared error for regression.
     pub fn for_task(task: &Task) -> Self {
         let kind = match task {
             Task::Binary | Task::MultiLabel { .. } => LossKind::BinaryCrossEntropy,
-            Task::MultiClass { .. } => LossKind::CategoricalCrossEntropy,
+            Task::MultiClass { .. } => LossKind::SparseCategoricalCrossEntropy,
             Task::Regression { .. } => LossKind::MeanSquaredError,
         };
         LossConfig {
@@ -129,19 +134,22 @@ impl LossConfig {
             LossKind::CategoricalCrossEntropy => {
                 Arc::new(CategoricalCrossEntropy::new(self.reduction))
             }
+            LossKind::SparseCategoricalCrossEntropy => {
+                Arc::new(SparseCategoricalCrossEntropy::new(self.reduction))
+            }
             LossKind::MeanSquaredError => Arc::new(MeanSquaredError::new(self.reduction)),
         }
     }
 }
 
 /// Selects the accuracy metric for `task`: binary accuracy for a single-logit task
-/// (binary or multi-label), categorical (argmax) accuracy for multi-class.
+/// (binary or multi-label), sparse categorical (argmax) accuracy for multi-class.
 /// # Panics
 /// When `task` is [`Regression`](Task::Regression), which has no accuracy metric.
 fn accuracy_for(task: &Task) -> Arc<dyn Accuracy> {
     match task {
         Task::Binary | Task::MultiLabel { .. } => BINARY_ACCURACY.clone(),
-        Task::MultiClass { .. } => CATEGORICAL_ACCURACY.clone(),
+        Task::MultiClass { .. } => SPARSE_CATEGORICAL_ACCURACY.clone(),
         Task::Regression { .. } => {
             panic!("Accuracy does not apply to a regression task.")
         }
@@ -494,10 +502,11 @@ impl HyperParameters {
     /// # Errors
     /// [`BuildError::InputShape`] when `model`'s input size does not match the dataset's
     /// feature count; [`BuildError::OutputShape`] when `model`'s output shape does not match
+    /// `task`'s; [`BuildError::TargetShape`] when `data`'s target shape does not match
     /// `task`'s. `model`, `task`, and `data` are supplied separately (e.g. resuming a run with
     /// a fresh dataset), so this is the one place their compatibility is checked; once past
     /// it, every forward pass over the split is guaranteed to fit and to produce a
-    /// `task`-shaped output.
+    /// `task`-shaped output, matched by the split's targets.
     pub fn build(
         self,
         model: NeuralNetwork,
@@ -507,6 +516,7 @@ impl HyperParameters {
     ) -> Result<Trainer, BuildError> {
         model.validate_inputs(data.split.train.inputs().view())?;
         model.validate_task(&task)?;
+        validate_target_shape(&task, &data.split.train)?;
 
         let optimizer = self.optimizer.instantiate(self.lr, self.weight_decay);
         let scheduler = self
@@ -543,6 +553,8 @@ pub enum BuildError {
     InputShape(InputShapeMismatch),
     /// `model`'s output shape does not match the task's.
     OutputShape(OutputShapeMismatch),
+    /// `data`'s target shape does not match the task's.
+    TargetShape(TargetShapeMismatch),
 }
 
 impl fmt::Display for BuildError {
@@ -550,6 +562,7 @@ impl fmt::Display for BuildError {
         match self {
             BuildError::InputShape(e) => write!(f, "{e}"),
             BuildError::OutputShape(e) => write!(f, "{e}"),
+            BuildError::TargetShape(e) => write!(f, "{e}"),
         }
     }
 }
@@ -565,6 +578,51 @@ impl From<InputShapeMismatch> for BuildError {
 impl From<OutputShapeMismatch> for BuildError {
     fn from(error: OutputShapeMismatch) -> Self {
         BuildError::OutputShape(error)
+    }
+}
+
+impl From<TargetShapeMismatch> for BuildError {
+    fn from(error: TargetShapeMismatch) -> Self {
+        BuildError::TargetShape(error)
+    }
+}
+
+/// A dataset's per-sample target shape did not match what a task expects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetShapeMismatch {
+    /// The per-sample target shape the task expects.
+    pub expected: Vec<usize>,
+    /// The per-sample target shape the dataset carries.
+    pub found: Vec<usize>,
+}
+
+impl fmt::Display for TargetShapeMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "dataset targets have shape {:?} but the task expects {:?}",
+            self.found, self.expected
+        )
+    }
+}
+
+impl std::error::Error for TargetShapeMismatch {}
+
+/// Checks that `data`'s per-sample target shape matches `task`'s.
+///
+/// # Errors
+/// [`TargetShapeMismatch`] when `data`'s target shape does not match
+/// [`Task::target_shape`].
+fn validate_target_shape(task: &Task, data: &ModelDataset) -> Result<(), TargetShapeMismatch> {
+    let expected = task.target_shape();
+    let found = data.target_shape();
+    if found == expected.as_slice() {
+        Ok(())
+    } else {
+        Err(TargetShapeMismatch {
+            expected,
+            found: found.to_vec(),
+        })
     }
 }
 
@@ -613,10 +671,13 @@ mod tests {
     }
 
     #[test]
-    fn for_task_picks_categorical_cross_entropy_for_a_multi_class_task() {
+    fn for_task_picks_sparse_categorical_cross_entropy_for_a_multi_class_task() {
         let loss = LossConfig::for_task(&Task::MultiClass { class_count: 3 });
-        assert_eq!(loss.kind, LossKind::CategoricalCrossEntropy);
-        assert_eq!(loss.instantiate().name(), "Categorical-Cross-Entropy");
+        assert_eq!(loss.kind, LossKind::SparseCategoricalCrossEntropy);
+        assert_eq!(
+            loss.instantiate().name(),
+            "Sparse-Categorical-Cross-Entropy"
+        );
     }
 
     #[test]
@@ -629,7 +690,7 @@ mod tests {
     }
 
     #[test]
-    fn accuracy_for_selects_binary_and_categorical_by_task() {
+    fn accuracy_for_selects_binary_and_sparse_categorical_by_task() {
         // The two reachable classification task pick the matching metric; the selection
         // mirrors the loss resolution above.
         use ndarray::array;
@@ -647,7 +708,7 @@ mod tests {
         assert_eq!(
             categorical.compute(
                 array![[2.0_f32], [1.0], [0.0]].into_dyn().view(),
-                array![[1.0_f32], [0.0], [0.0]].into_dyn().view()
+                array![[0.0_f32]].into_dyn().view()
             ),
             100.0
         );
@@ -965,6 +1026,57 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "model outputs shape [3] but shape [1] was expected"
+        );
+    }
+
+    #[test]
+    fn build_rejects_a_dataset_target_shape_that_does_not_match_the_task() {
+        use crate::activations::SIGMOID;
+        use crate::data::ModelSplit;
+        use crate::layers::Dense;
+        use ndarray::{Array1, Array2};
+
+        // A model whose output matches Task::MultiClass{class_count: 3}...
+        let model = NeuralNetwork::single(Dense::new(
+            Array2::from_elem((3, 2), 0.1),
+            Array1::zeros(3),
+            SIGMOID.clone(),
+        ));
+
+        // ...but a one-hot-shaped (3, samples) target, as if a stale caller bypassed
+        // `to_model_dataset`'s pure class-id rotation. MultiClass now expects a single
+        // class-id row.
+        let inputs = Array2::from_shape_fn((2, 4), |(i, _)| i as f32);
+        let one_hot_targets = Array2::<f32>::zeros((3, 4));
+        let train = ModelDataset::new(inputs.clone(), one_hot_targets.clone());
+        let test = ModelDataset::new(inputs, one_hot_targets);
+        let split = ModelSplit {
+            train,
+            validation: None,
+            test,
+        };
+        let data = TrainingData::new(split, None).unwrap();
+
+        let hp = spec_with_scaler(None);
+        let err = hp
+            .build(
+                model,
+                Task::MultiClass { class_count: 3 },
+                data,
+                Callbacks::empty(),
+            )
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(
+            err,
+            BuildError::TargetShape(TargetShapeMismatch {
+                expected: vec![1],
+                found: vec![3],
+            })
+        );
+        assert_eq!(
+            err.to_string(),
+            "dataset targets have shape [3] but the task expects [1]"
         );
     }
 

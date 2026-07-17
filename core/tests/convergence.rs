@@ -180,7 +180,7 @@ fn three_class_converges_to_low_loss() {
         SchedulerConfig::Constant,
         GradientClipping::None,
         LossConfig {
-            kind: LossKind::CategoricalCrossEntropy,
+            kind: LossKind::SparseCategoricalCrossEntropy,
             reduction: Reduction::Mean,
         },
         None,

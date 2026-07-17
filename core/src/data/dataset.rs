@@ -196,9 +196,9 @@ impl Dataset {
     }
 
     /// Transforms the dataset into a samples-last [`ModelDataset`]: inputs are
-    /// rotated so the sample axis trails; `ClassLabel` targets become one-hot
-    /// rows (multi-class) or a single 0/1 row (binary), while `Value` targets
-    /// are rotated samples-last unchanged.
+    /// rotated so the sample axis trails; `ClassLabel` targets become a single
+    /// class-id row, binary and multi-class alike, while `Value` targets are
+    /// rotated samples-last unchanged.
     pub fn to_model_dataset(&self) -> ModelDataset {
         let inputs = self
             .features
@@ -207,19 +207,9 @@ impl Dataset {
 
         let targets: ArrayD<f32> = match &self.targets {
             Targets::ClassLabel(label) => {
-                let class_count = label.class_count();
-                let ids = label.ids();
-                if class_count > 2 {
-                    let mut one_hot = Array2::zeros((class_count, ids.len()));
-                    for (i, &id) in ids.iter().enumerate() {
-                        one_hot[[id as usize, i]] = 1.0;
-                    }
-                    one_hot.into_dyn()
-                } else {
-                    Array1::from_iter(ids.iter().map(|&id| id as f32))
-                        .insert_axis(Axis(0))
-                        .into_dyn()
-                }
+                Array1::from_iter(label.ids().iter().map(|&id| id as f32))
+                    .insert_axis(Axis(0))
+                    .into_dyn()
             }
             Targets::Value(values) => {
                 let values = values.as_array();
@@ -369,6 +359,11 @@ impl ModelDataset {
         self.inputs.shape()[self.inputs.ndim() - 1]
     }
 
+    /// The per-sample target shape: the targets' axes excluding the trailing sample axis.
+    pub fn target_shape(&self) -> &[usize] {
+        &self.targets.shape()[..self.targets.ndim() - 1]
+    }
+
     /// Gathers the samples at `indices` — along the trailing sample axis of both inputs
     /// and targets — into a fresh owned dataset.
     fn select(&self, indices: &[usize]) -> ModelDataset {
@@ -467,16 +462,21 @@ mod tests {
     }
 
     #[test]
-    fn valid_multiclass_labels_produce_correct_one_hot() {
+    fn multiclass_labels_produce_a_single_class_id_row() {
         let features = Array2::zeros((3, 2));
         let dataset = Dataset::tabular(features, class_ids(vec![0, 1, 2]), None).unwrap();
         let model_dataset = dataset.to_model_dataset();
-        // targets shape: (n_classes=3, n_samples=3)
-        assert_eq!(model_dataset.targets.shape(), &[3, 3]);
-        // Each column is one-hot: column i has 1.0 at row i
-        for i in 0..3 {
-            assert_eq!(model_dataset.targets[[i, i]], 1.0);
-        }
+        // Multi-class labels stay as a single (1, n_samples) class-id row, not one-hot encoded.
+        assert_eq!(model_dataset.targets.shape(), &[1, 3]);
+        assert_eq!(
+            model_dataset
+                .targets
+                .index_axis(Axis(0), 0)
+                .iter()
+                .copied()
+                .collect::<Vec<f32>>(),
+            vec![0.0, 1.0, 2.0]
+        );
     }
 
     #[test]
