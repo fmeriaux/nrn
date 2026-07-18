@@ -32,9 +32,8 @@ impl ResumeArgs {
         let dataset = Dataset::load(&meta.dataset)?;
         loaded(&dataset);
 
-        let task = config.task().clone();
-        task.validate_dataset(&dataset)?;
-        show(&task);
+        config.task().validate_dataset(&dataset)?;
+        show(config.task());
 
         let previous = HyperParameters::try_from(meta.hyperparams.clone())?;
         let scaler = run.scaler().cloned().map(Into::into);
@@ -82,7 +81,7 @@ impl ResumeArgs {
             ))
             .with_opt(recorder);
 
-        let mut trainer = hyperparameters.build(model, task, data, callbacks)?;
+        let mut trainer = hyperparameters.build(model, config.task().clone(), data, callbacks)?;
         trainer.restore(from_epoch, optimizer_state, scheduler_state)?;
         trainer.train()?.into_result().map_err(DivergedRun::from)?;
 

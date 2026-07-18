@@ -2,9 +2,8 @@
 
 use crate::data::Targets;
 
-/// A name vocabulary for a task's classes or multi-label positions, indexed by id
-/// (`labels.get(id)` is that id's name).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A name vocabulary for a task's classes or multi-label positions, indexed by id.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Labels(Box<[String]>);
 
 impl Labels {
@@ -31,14 +30,17 @@ impl Labels {
         self.0.is_empty()
     }
 
-    /// The name at `id`, when it exists.
-    pub fn get(&self, id: u32) -> Option<&str> {
-        self.0.get(id as usize).map(String::as_str)
-    }
-
     /// The full vocabulary, indexed by id.
     pub fn names(&self) -> &[String] {
         &self.0
+    }
+
+    /// The name at `id`, or `"Class {id}"` when it doesn't exist.
+    pub fn get_or_default(&self, id: usize) -> String {
+        self.0
+            .get(id)
+            .cloned()
+            .unwrap_or_else(|| format!("Class {id}"))
     }
 }
 
@@ -67,16 +69,21 @@ mod tests {
     }
 
     #[test]
-    fn get_reads_the_name_at_its_id() {
+    fn get_or_default_reads_the_name_at_its_id() {
         let labels = Labels::new(vec!["cat".to_string(), "dog".to_string()]);
-        assert_eq!(labels.get(0), Some("cat"));
-        assert_eq!(labels.get(1), Some("dog"));
+        assert_eq!(labels.get_or_default(0), "cat");
+        assert_eq!(labels.get_or_default(1), "dog");
     }
 
     #[test]
-    fn get_is_none_past_the_last_id() {
+    fn get_or_default_falls_back_past_the_last_id() {
         let labels = Labels::new(vec!["cat".to_string()]);
-        assert_eq!(labels.get(1), None);
+        assert_eq!(labels.get_or_default(1), "Class 1");
+    }
+
+    #[test]
+    fn default_is_an_empty_vocabulary() {
+        assert_eq!(Labels::default(), Labels::new(vec![]));
     }
 
     #[test]

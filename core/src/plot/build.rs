@@ -6,7 +6,7 @@
 use crate::data::Dataset;
 use crate::data::Targets;
 use crate::evaluation_history::EvaluationHistory;
-use crate::model::Predictor;
+use crate::model::{Labels, Predictor};
 use crate::plot::scene::{Color, Figure, Panel, Series, add_padding};
 use ndarray::Ix2;
 use std::error::Error;
@@ -158,7 +158,7 @@ fn scatter_panel(
     let Targets::ClassLabel(label) = dataset.targets() else {
         return Err("Scatter plot requires a dataset with class-label targets".into());
     };
-    let names = label.names();
+    let labels = Labels::from_targets(dataset.targets()).unwrap_or_default();
     let class_count = label.class_count();
 
     let (raw_mins, raw_maxs) = dataset.feature_range();
@@ -176,12 +176,7 @@ fn scatter_panel(
                     .map(|point| (point[0], point[1]))
                     .collect(),
                 color: Color::category(id as usize),
-                label: Some(
-                    names
-                        .and_then(|names| names.get(id as usize))
-                        .cloned()
-                        .unwrap_or_else(|| format!("Class {id}")),
-                ),
+                label: Some(labels.get_or_default(id as usize)),
                 radius: 2,
             }
         })

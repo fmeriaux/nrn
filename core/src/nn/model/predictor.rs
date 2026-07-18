@@ -101,10 +101,10 @@ impl Predictor {
 pub enum Inference {
     /// A binary or multi-class task's output.
     Classification {
-        /// The finalized activations the ranking was read from.
+        /// The finalized activations the rankings were read from.
         activations: Activations,
-        /// Class ids ranked by descending probability.
-        ranking: Vec<(usize, f32)>,
+        /// Class ids ranked by descending probability, one ranking per sample.
+        rankings: Vec<Ranking>,
         /// The label naming each class id, when known.
         labels: Option<Labels>,
     },
@@ -115,16 +115,17 @@ pub enum Inference {
 impl Inference {
     /// Ranks `activations`' output by descending probability, naming classes with `labels` when
     /// known. A single sigmoid output is expanded into the two complementary class probabilities.
+    /// One ranking is produced per sample.
     fn classification(activations: Activations, labels: Option<Labels>) -> Self {
         let outputs = activations
             .output()
             .into_dimensionality::<Ix2>()
             .expect("a classification ranks a flat class vector, not a spatial output");
-        let ranking = rank(outputs.column(0));
+        let rankings = outputs.axis_iter(Axis(1)).map(Ranking::new).collect();
 
         Inference::Classification {
             activations,
-            ranking,
+            rankings,
             labels,
         }
     }
@@ -148,18 +149,55 @@ impl Inference {
     }
 }
 
-/// Ranks `probabilities` by descending value. A single probability is read as the positive
-/// class's, expanded into `[(0, 1 - p), (1, p)]`; otherwise each entry is the probability of its
-/// own class index.
-fn rank(probabilities: ArrayView1<f32>) -> Vec<(usize, f32)> {
-    let mut ranking: Vec<(usize, f32)> = if probabilities.len() == 1 {
-        vec![(0, 1.0 - probabilities[0]), (1, probabilities[0])]
-    } else {
-        probabilities.iter().copied().enumerate().collect()
-    };
+/// A class id's descending-probability position within a [`Ranking`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Rank {
+    /// The class id this rank belongs to.
+    pub class_id: usize,
+    /// The class's predicted probability.
+    pub score: f32,
+}
 
-    ranking.sort_by(|(_, a), (_, b)| b.partial_cmp(a).unwrap_or(Equal));
-    ranking
+/// One sample's class ids, ranked by descending probability.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ranking(Vec<Rank>);
+
+impl Ranking {
+    /// Ranks `probabilities` by descending value. A single probability is read as the positive
+    /// class's, expanded into two complementary classes; otherwise each entry is the probability
+    /// of its own class index.
+    fn new(probabilities: ArrayView1<f32>) -> Self {
+        let mut ranks: Vec<Rank> = if probabilities.len() == 1 {
+            vec![
+                Rank {
+                    class_id: 0,
+                    score: 1.0 - probabilities[0],
+                },
+                Rank {
+                    class_id: 1,
+                    score: probabilities[0],
+                },
+            ]
+        } else {
+            probabilities
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(class_id, score)| Rank { class_id, score })
+                .collect()
+        };
+
+        ranks.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Equal));
+        Self(ranks)
+    }
+}
+
+impl std::ops::Deref for Ranking {
+    type Target = [Rank];
+
+    fn deref(&self) -> &[Rank] {
+        &self.0
+    }
 }
 
 /// A [`Predictor`] rejected an instance: either its scaler or its network found the
@@ -244,44 +282,68 @@ mod tests {
         let inference = predictor
             .infer_instance(array![0.3_f32, 0.7].view())
             .unwrap();
-        let Inference::Classification { ranking, .. } = inference else {
+        let Inference::Classification { rankings, .. } = inference else {
             panic!("a binary task must yield Inference::Classification");
         };
+        let ranking = &rankings[0];
 
         // A binary network yields the two complementary class probabilities, ranked by
         // descending probability and summing to one.
         assert_eq!(ranking.len(), 2);
-        assert!(ranking[0].1 >= ranking[1].1);
-        let sum: f32 = ranking.iter().map(|(_, p)| p).sum();
+        assert!(ranking[0].score >= ranking[1].score);
+        let sum: f32 = ranking.iter().map(|r| r.score).sum();
         assert!((sum - 1.0).abs() < 1e-6);
     }
 
     #[test]
+    fn infer_ranks_every_sample_in_a_batch_independently() {
+        let predictor = Predictor::binary();
+
+        // Two samples with opposite-signed logits, so each picks a different winning class.
+        let inputs = array![[0.7_f32, -0.7], [0.0, 0.0]];
+        let inference = predictor.infer(inputs.view()).unwrap();
+        let Inference::Classification { rankings, .. } = inference else {
+            panic!("a binary task must yield Inference::Classification");
+        };
+
+        assert_eq!(rankings.len(), 2);
+        assert_eq!(rankings[0][0].class_id, 1);
+        assert_eq!(rankings[1][0].class_id, 0);
+        assert_ne!(rankings[0], rankings[1]);
+    }
+
+    #[test]
     fn rank_expands_a_single_probability_into_two_complementary_classes() {
-        let ranking = rank(array![0.7].view());
+        let ranking = Ranking::new(array![0.7].view());
 
         assert_eq!(ranking.len(), 2);
         // Sorted desc: positive class (0.7) first, then its complement (0.3).
-        assert_eq!(ranking[0], (1, 0.7));
-        let (class, probability) = ranking[1];
-        assert_eq!(class, 0);
-        assert!((probability - 0.3).abs() < 1e-6);
+        assert_eq!(
+            ranking[0],
+            Rank {
+                class_id: 1,
+                score: 0.7
+            }
+        );
+        let Rank { class_id, score } = ranking[1];
+        assert_eq!(class_id, 0);
+        assert!((score - 0.3).abs() < 1e-6);
     }
 
     #[test]
     fn rank_puts_the_negative_class_first_below_half() {
-        let ranking = rank(array![0.2].view());
+        let ranking = Ranking::new(array![0.2].view());
 
-        assert_eq!(ranking[0].0, 0);
-        assert!((ranking[0].1 - 0.8).abs() < 1e-6);
+        assert_eq!(ranking[0].class_id, 0);
+        assert!((ranking[0].score - 0.8).abs() < 1e-6);
     }
 
     #[test]
     fn rank_keeps_class_indices_and_sorts_multiclass_outputs_desc() {
-        let ranking = rank(array![0.1, 0.6, 0.3].view());
+        let ranking = Ranking::new(array![0.1, 0.6, 0.3].view());
 
         assert_eq!(
-            ranking.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
+            ranking.iter().map(|r| r.class_id).collect::<Vec<_>>(),
             vec![1, 2, 0]
         );
     }
@@ -412,15 +474,12 @@ mod tests {
         // matches the first column of the batch probabilities.
         let instance = inputs.slice(s![.., .., .., 0]).to_owned();
         let inference = predictor.infer_instance(instance.view()).unwrap();
-        let Inference::Classification {
-            ranking: single, ..
-        } = inference
-        else {
+        let Inference::Classification { rankings, .. } = inference else {
             panic!("a binary task must yield Inference::Classification");
         };
         let batch = via_predictor.into_dimensionality::<Ix2>().unwrap();
-        let expected = rank(batch.column(0));
-        assert_eq!(single, expected);
+        let expected = Ranking::new(batch.column(0));
+        assert_eq!(rankings[0], expected);
     }
 
     #[test]
