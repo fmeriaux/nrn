@@ -4,60 +4,11 @@
 //! fatal (unrecovered) divergence. The happy paths and plotting live in
 //! `train_plot.rs`.
 
-use assert_cmd::Command;
+mod common;
+
+use common::{checkpoint_count, run, synth_ring};
 use predicates::str::contains;
 use std::fs;
-use std::path::Path;
-
-/// Runs `nrn` with the given args from `dir`.
-fn nrn(dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
-    Command::cargo_bin("nrn")
-        .unwrap()
-        .current_dir(dir)
-        .args(args)
-        .assert()
-}
-
-/// Generates a small 2-class ring dataset in `dir` over the `[0, 10]` feature
-/// range, returning its filename.
-fn synth_ring(dir: &Path, seed: &str, samples: &str) -> String {
-    nrn(
-        dir,
-        &[
-            "synth",
-            "--min",
-            "0",
-            "--max",
-            "10",
-            "--seed",
-            seed,
-            "--distribution",
-            "ring",
-            "--clusters",
-            "2",
-            "--samples",
-            samples,
-        ],
-    )
-    .success();
-    format!("ring-seed{seed}-c2-f2-n{samples}")
-}
-
-fn checkpoint_count(run_dir: &Path) -> usize {
-    fs::read_dir(run_dir)
-        .map(|rd| {
-            rd.filter_map(Result::ok)
-                .filter(|e| {
-                    e.file_name()
-                        .to_str()
-                        .map(|n| n.starts_with("checkpoint-"))
-                        .unwrap_or(false)
-                        && e.path().is_dir()
-                })
-                .count()
-        })
-        .unwrap_or(0)
-}
 
 #[test]
 fn rejects_zero_neuron_hidden_layer() {
@@ -65,7 +16,7 @@ fn rejects_zero_neuron_hidden_layer() {
     let dir = tmp.path();
     let ds = synth_ring(dir, "1", "20");
 
-    nrn(
+    run(
         dir,
         &["train", "start", &ds, "--epochs", "2", "--layers", "4,0"],
     )
@@ -80,7 +31,7 @@ fn continues_from_saved_model_without_checkpoints() {
     let ds = synth_ring(dir, "5", "20");
 
     // First run saves the model-<ds>/ directory holding model.safetensors.
-    nrn(
+    run(
         dir,
         &[
             "train",
@@ -103,7 +54,7 @@ fn continues_from_saved_model_without_checkpoints() {
     );
 
     // Continue from that model with checkpoints disabled (interval 0 → no recorder).
-    nrn(
+    run(
         dir,
         &[
             "train",
@@ -131,7 +82,7 @@ fn scaling_persists_a_sidecar_and_survives_resume() {
     let ds = synth_ring(dir, "11", "20");
     let run_arg = format!("training-model-{ds}");
 
-    nrn(
+    run(
         dir,
         &[
             "train",
@@ -160,7 +111,7 @@ fn scaling_persists_a_sidecar_and_survives_resume() {
     assert!(run_scaler.contains("MinMax"));
 
     // Resume reuses the scaler from the run's preprocessor.json (no refit) and completes.
-    nrn(dir, &["train", "resume", &run_arg, "--epochs", "1"]).success();
+    run(dir, &["train", "resume", &run_arg, "--epochs", "1"]).success();
 }
 
 #[test]
@@ -183,7 +134,7 @@ fn overwrite_required_to_replace_existing_run() {
             "--no-clip",
         ];
         args.extend_from_slice(extra);
-        nrn(dir, &args)
+        run(dir, &args)
     };
 
     start(&[]).success();
@@ -202,7 +153,7 @@ fn resume_from_epoch_trims_later_checkpoints() {
     let run_dir = dir.join(&run_arg);
 
     // interval=1, 4 epochs → initial + 4 = 5 checkpoints.
-    nrn(
+    run(
         dir,
         &[
             "train",
@@ -222,7 +173,7 @@ fn resume_from_epoch_trims_later_checkpoints() {
 
     // Resuming from epoch 0 rewinds the trajectory: the later checkpoints are
     // trimmed before training forward again.
-    nrn(
+    run(
         dir,
         &["train", "resume", &run_arg, "--from", "0", "--epochs", "3"],
     )
@@ -240,7 +191,7 @@ fn resume_with_no_checkpoints_fails() {
     let run_arg = format!("training-model-{ds}");
     let run_dir = dir.join(&run_arg);
 
-    nrn(
+    run(
         dir,
         &[
             "train",
@@ -268,7 +219,7 @@ fn resume_with_no_checkpoints_fails() {
         }
     }
 
-    nrn(dir, &["train", "resume", &run_arg, "--epochs", "3"])
+    run(dir, &["train", "resume", &run_arg, "--epochs", "3"])
         .failure()
         .stderr(contains("no checkpoints found"));
 }
@@ -280,7 +231,7 @@ fn resume_from_unknown_epoch_fails() {
     let ds = synth_ring(dir, "8", "20");
     let run_arg = format!("training-model-{ds}");
 
-    nrn(
+    run(
         dir,
         &[
             "train",
@@ -297,7 +248,7 @@ fn resume_from_unknown_epoch_fails() {
     )
     .success();
 
-    nrn(
+    run(
         dir,
         &[
             "train", "resume", &run_arg, "--from", "999", "--epochs", "3",
@@ -315,7 +266,7 @@ fn fatal_divergence_without_early_stopping_errors() {
     let dir = tmp.path();
     let ds = synth_ring(dir, "42", "40");
 
-    nrn(
+    run(
         dir,
         &[
             "train",
