@@ -249,7 +249,7 @@ mod tests {
     use crate::activations::IDENTITY;
     use crate::data::scalers::{MinMaxScaler, ScalerMethod};
     use crate::layers::Dense;
-    use crate::model::NeuralNetwork;
+    use crate::model::{ModelConfig, NeuralNetwork};
     use crate::task::Task;
     use ndarray::array;
 
@@ -282,7 +282,7 @@ mod tests {
                 array![0.0],
                 IDENTITY.clone(),
             )),
-            Task::Binary,
+            ModelConfig::unlabeled(Task::Binary),
             None,
         )
     }
@@ -296,7 +296,7 @@ mod tests {
                 array![0.0, 0.0, -10.0],
                 IDENTITY.clone(),
             )),
-            Task::MultiClass { class_count: 3 },
+            ModelConfig::unlabeled(Task::MultiClass { class_count: 3 }),
             None,
         )
     }
@@ -331,7 +331,7 @@ mod tests {
         let scaler = ScalerMethod::MinMax(
             MinMaxScaler::default().fit(array![[0.0, 2.0], [0.0, 2.0]].view()),
         );
-        let predictor = Predictor::new(network, Task::Binary, Some(scaler));
+        let predictor = Predictor::new(network, ModelConfig::unlabeled(Task::Binary), Some(scaler));
 
         // Grid x0 ∈ {-1, 0, 1, 2, 3}; the boundary sits on raw x0 == 1.0.
         let boundary = predictor.decision_boundary(&[-1.0, -1.0], &[3.0, 3.0], 5);

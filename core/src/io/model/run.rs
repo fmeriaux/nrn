@@ -176,6 +176,7 @@ mod tests {
         ModelConfigRecord {
             network: sample_network(),
             task: TaskRecord::Binary,
+            labels: None,
         }
     }
 

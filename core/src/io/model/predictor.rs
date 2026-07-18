@@ -19,11 +19,8 @@ impl Predictor {
     pub fn save<P: AsRef<Path>>(&self, dir: P) -> Result<PathBuf> {
         let dir = dir.as_ref();
         self.network.save_weights(dir.join(MODEL_STEM))?;
-        ModelConfigRecord {
-            network: NetworkConfigRecord::from(&self.network),
-            task: self.task.clone().into(),
-        }
-        .save(dir.join(CONFIG_STEM))?;
+        ModelConfigRecord::from_parts(NetworkConfigRecord::from(&self.network), &self.config)
+            .save(dir.join(CONFIG_STEM))?;
         if let Some(scaler) = &self.scaler {
             ScalerRecord::from(scaler.clone()).save(dir.join(PREPROCESSOR_STEM))?;
         }
@@ -34,9 +31,9 @@ impl Predictor {
     /// when a `preprocessor.json` sidecar exists.
     pub fn load<P: AsRef<Path>>(dir: P) -> Result<Self> {
         let dir = dir.as_ref();
-        let config = ModelConfigRecord::load(dir.join(CONFIG_STEM))?;
-        let network = NeuralNetwork::load_weights(dir.join(MODEL_STEM), &config.network)?;
-        let task = config.task.into();
+        let record = ModelConfigRecord::load(dir.join(CONFIG_STEM))?;
+        let network = NeuralNetwork::load_weights(dir.join(MODEL_STEM), &record.network)?;
+        let config = record.to_model_config()?;
 
         let scaler = dir
             .join(PREPROCESSOR_STEM)
@@ -47,7 +44,7 @@ impl Predictor {
 
         Ok(Predictor {
             network,
-            task,
+            config,
             scaler,
         })
     }
@@ -59,7 +56,7 @@ mod tests {
     use crate::activations::{IDENTITY, RELU};
     use crate::data::scalers::{MinMaxScaler, ScalerMethod};
     use crate::io::model::config::{CONFIG_STEM, ModelConfigRecord};
-    use crate::model::{NetworkConfig, NeuralNetwork, Predictor};
+    use crate::model::{Labels, ModelConfig, NetworkConfig, NeuralNetwork, Predictor};
     use crate::task::Task;
     use ndarray::{Array2, array};
 
@@ -80,7 +77,7 @@ mod tests {
     #[test]
     fn save_load_roundtrip_outputs_are_identical() {
         let (network, inputs) = model_and_inputs();
-        let predictor = Predictor::new(network, Task::Binary, None);
+        let predictor = Predictor::new(network, ModelConfig::unlabeled(Task::Binary), None);
         let outputs_before = predictor.output(inputs.view()).unwrap();
 
         let dir = temp_dir("plain");
@@ -102,7 +99,7 @@ mod tests {
             max: array![1.0, 2.0, 0.5],
             range: (0.0, 1.0),
         });
-        let predictor = Predictor::new(network, Task::Binary, Some(scaler));
+        let predictor = Predictor::new(network, ModelConfig::unlabeled(Task::Binary), Some(scaler));
         let outputs_before = predictor.output(inputs.view()).unwrap();
 
         let dir = temp_dir("scaled");
@@ -117,11 +114,33 @@ mod tests {
     }
 
     #[test]
+    fn save_load_roundtrip_preserves_labels() {
+        let (network, _) = model_and_inputs();
+        let config = ModelConfig::new(
+            Task::Binary,
+            Some(Labels::new(vec!["cat".to_string(), "dog".to_string()])),
+        )
+        .unwrap();
+        let predictor = Predictor::new(network, config, None);
+
+        let dir = temp_dir("labels");
+        predictor.save(&dir).unwrap();
+        let loaded = Predictor::load(&dir).unwrap();
+
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(
+            loaded.config.labels().map(Labels::names),
+            Some(["cat".to_string(), "dog".to_string()].as_slice())
+        );
+    }
+
+    #[test]
     fn config_carries_the_network_architecture() {
         use crate::io::model::network::LayerConfigRecord;
 
         let (network, _) = model_and_inputs();
-        let predictor = Predictor::new(network, Task::Binary, None);
+        let predictor = Predictor::new(network, ModelConfig::unlabeled(Task::Binary), None);
 
         let dir = temp_dir("config");
         predictor.save(&dir).unwrap();
@@ -142,7 +161,7 @@ mod tests {
     #[test]
     fn model_file_holds_weights_only() {
         let (network, _) = model_and_inputs();
-        let predictor = Predictor::new(network, Task::Binary, None);
+        let predictor = Predictor::new(network, ModelConfig::unlabeled(Task::Binary), None);
 
         let dir = temp_dir("weights_only");
         predictor.save(&dir).unwrap();

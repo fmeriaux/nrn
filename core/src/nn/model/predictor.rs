@@ -3,29 +3,29 @@
 
 use crate::activations::{Activation, IDENTITY, SIGMOID, SOFTMAX};
 use crate::data::scalers::{Scaler, ScalerFeatureMismatch, ScalerMethod};
-use crate::model::{Activations, InputShapeMismatch, NeuralNetwork};
+use crate::model::{Activations, InputShapeMismatch, ModelConfig, NeuralNetwork};
 use crate::task::Task;
 use ndarray::{ArrayD, ArrayView, Axis, Dimension};
 use std::fmt;
 
-/// A trained [`NeuralNetwork`] paired with the [`Task`] it was trained for and the
+/// A trained [`NeuralNetwork`] paired with the [`ModelConfig`] it was trained for and the
 /// scaler fitted alongside it.
 #[derive(Clone, Debug)]
 pub struct Predictor {
     /// The trained network.
     pub network: NeuralNetwork,
-    /// The learning task the network was trained for; drives how its logits are read as outputs.
-    pub task: Task,
+    /// The task the network was trained for, and its labels when known.
+    pub config: ModelConfig,
     /// The scaler applied to raw inputs before prediction, when one is present.
     pub scaler: Option<ScalerMethod>,
 }
 
 impl Predictor {
-    /// Pairs a network and its task with an optional scaler.
-    pub fn new(network: NeuralNetwork, task: Task, scaler: Option<ScalerMethod>) -> Self {
+    /// Pairs a network and its config with an optional scaler.
+    pub fn new(network: NeuralNetwork, config: ModelConfig, scaler: Option<ScalerMethod>) -> Self {
         Self {
             network,
-            task,
+            config,
             scaler,
         }
     }
@@ -49,7 +49,7 @@ impl Predictor {
             None => self.network.forward(inputs)?,
         };
 
-        activations.finalize(output_activation(&self.task));
+        activations.finalize(output_activation(self.config.task()));
         Ok(activations)
     }
 
@@ -139,7 +139,7 @@ mod tests {
             .build();
         let predictor = Predictor::new(
             NeuralNetwork::from_config(config, 0).unwrap(),
-            Task::Binary,
+            ModelConfig::unlabeled(Task::Binary),
             None,
         );
 
@@ -164,7 +164,7 @@ mod tests {
             .build();
         let predictor = Predictor::new(
             NeuralNetwork::from_config(config, 0).unwrap(),
-            Task::Binary,
+            ModelConfig::unlabeled(Task::Binary),
             None,
         );
 

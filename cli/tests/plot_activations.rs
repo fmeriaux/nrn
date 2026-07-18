@@ -9,7 +9,7 @@
 
 use assert_cmd::Command;
 use nrn::activations::{IDENTITY, RELU};
-use nrn::model::{NetworkConfig, NeuralNetwork, Predictor};
+use nrn::model::{ModelConfig, NetworkConfig, NeuralNetwork, Predictor};
 use nrn::task::Task;
 use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
@@ -28,7 +28,7 @@ fn write_predictor(dir: &Path) {
         .dense(1, &IDENTITY)
         .build();
     let network = NeuralNetwork::from_config(config, 7).unwrap();
-    Predictor::new(network, Task::Binary, None)
+    Predictor::new(network, ModelConfig::unlabeled(Task::Binary), None)
         .save(dir.join("model"))
         .unwrap();
 }

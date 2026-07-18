@@ -55,7 +55,7 @@ mod tests {
     use super::*;
     use crate::activations::{IDENTITY, RELU};
     use crate::data::scalers::{Scaler, ScalerKind};
-    use crate::model::{NetworkConfig, NeuralNetwork, PredictionError, Predictor};
+    use crate::model::{ModelConfig, NetworkConfig, NeuralNetwork, PredictionError, Predictor};
     use crate::task::Task;
     use ndarray::{Array, Array4, ArrayD, IxDyn, array, s};
 
@@ -67,7 +67,7 @@ mod tests {
             .build();
         let predictor = Predictor::new(
             NeuralNetwork::from_config(config, 0).unwrap(),
-            Task::Binary,
+            ModelConfig::unlabeled(Task::Binary),
             None,
         );
 
@@ -132,7 +132,7 @@ mod tests {
         let inputs = Array::from_shape_fn(IxDyn(&[1, 4, 4, 3]), |idx| {
             ((idx[1] + idx[2] + idx[3]) as f32).sin()
         });
-        let output = Predictor::new(model, Task::Binary, None)
+        let output = Predictor::new(model, ModelConfig::unlabeled(Task::Binary), None)
             .output(inputs.view())
             .unwrap();
         assert_eq!(output.shape(), &[1, 3]); // (classes, samples)
@@ -157,14 +157,18 @@ mod tests {
             (f as f32 + 1.0) * 10.0 * (h + w + s) as f32
         });
         let scaler = ScalerKind::MinMax.fit(inputs.view());
-        let predictor = Predictor::new(network(1), Task::Binary, Some(scaler.clone()));
+        let predictor = Predictor::new(
+            network(1),
+            ModelConfig::unlabeled(Task::Binary),
+            Some(scaler.clone()),
+        );
 
         // The predictor scales the rank-4 batch per feature before the network: its
         // output matches the bare network run on the manually scaled inputs.
         let via_predictor = predictor.output(inputs.view()).unwrap();
         let mut scaled = inputs.clone().into_dyn();
         scaler.apply_inplace(scaled.view_mut()).unwrap();
-        let via_network = Predictor::new(network(1), Task::Binary, None)
+        let via_network = Predictor::new(network(1), ModelConfig::unlabeled(Task::Binary), None)
             .output(scaled.view())
             .unwrap();
         assert_eq!(via_predictor, via_network);
@@ -190,7 +194,7 @@ mod tests {
         let network = NeuralNetwork::from_config(config, 0).unwrap();
         let fit_batch = Array::from_shape_fn(IxDyn(&[2, 4]), |d| (d[0] + d[1]) as f32);
         let scaler = ScalerKind::MinMax.fit(fit_batch.view());
-        let predictor = Predictor::new(network, Task::Binary, Some(scaler));
+        let predictor = Predictor::new(network, ModelConfig::unlabeled(Task::Binary), Some(scaler));
 
         let wrong = ArrayD::<f32>::ones(IxDyn(&[3, 2, 2, 5]));
         let error = predictor.output(wrong.view()).unwrap_err();
@@ -214,7 +218,7 @@ mod tests {
             [100.0, -100.0],
             [100.0, -100.0]
         ];
-        let output = Predictor::new(model, Task::Binary, None)
+        let output = Predictor::new(model, ModelConfig::unlabeled(Task::Binary), None)
             .output(inputs.view())
             .unwrap();
         for &v in output.iter() {

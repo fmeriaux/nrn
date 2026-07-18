@@ -369,6 +369,7 @@ mod tests {
             &ModelConfigRecord {
                 network: sample_config(),
                 task: TaskRecord::Binary,
+                labels: None,
             },
             None,
             overwrite,

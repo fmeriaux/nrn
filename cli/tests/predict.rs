@@ -11,7 +11,7 @@ use ndarray::{Array1, array};
 use nrn::activations::{IDENTITY, RELU};
 use nrn::data::Instance;
 use nrn::data::scalers::{MinMaxScaler, ScalerMethod};
-use nrn::model::{NetworkConfig, NeuralNetwork, Predictor};
+use nrn::model::{ModelConfig, NetworkConfig, NeuralNetwork, Predictor};
 use nrn::task::Task;
 use predicates::str::contains;
 use std::path::Path;
@@ -30,7 +30,7 @@ fn write_predictor(dir: &Path, n_features: usize, scaler: Option<ScalerMethod>) 
         .dense(1, &IDENTITY)
         .build();
     let network = NeuralNetwork::from_config(config, 7).unwrap();
-    Predictor::new(network, Task::Binary, scaler)
+    Predictor::new(network, ModelConfig::unlabeled(Task::Binary), scaler)
         .save(dir.join("model"))
         .unwrap();
 }

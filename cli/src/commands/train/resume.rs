@@ -5,7 +5,6 @@ use crate::display::{Spinner, loaded, recording, show, warning};
 use clap::Args;
 use nrn::data::Dataset;
 use nrn::io::model::run::TrainingRun;
-use nrn::task::Task;
 use nrn::training::{Callbacks, HyperParameters};
 use std::error::Error;
 use std::path::Path;
@@ -28,12 +27,12 @@ impl ResumeArgs {
         let run_dir = Path::new(&self.run_dir);
         let run = TrainingRun::open(run_dir)?;
         let meta = run.meta();
-        let config = run.config();
+        let config = run.config().to_model_config()?;
 
         let dataset = Dataset::load(&meta.dataset)?;
         loaded(&dataset);
 
-        let task = Task::from(config.task.clone());
+        let task = config.task().clone();
         task.validate_dataset(&dataset)?;
         show(&task);
 
@@ -78,7 +77,7 @@ impl ResumeArgs {
             .with(ModelSaver::new(
                 run_dir,
                 &meta.model,
-                task.clone(),
+                config.clone(),
                 data.scaler().cloned(),
             ))
             .with_opt(recorder);

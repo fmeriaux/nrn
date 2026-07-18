@@ -236,7 +236,7 @@ mod tests {
     use crate::evaluation::{Evaluation, EvaluationSet};
     use crate::evaluation_history::{EpochEvaluation, EvaluationHistory};
     use crate::layers::Dense;
-    use crate::model::NeuralNetwork;
+    use crate::model::{ModelConfig, NeuralNetwork};
     use crate::task::Task;
     use ndarray::array;
 
@@ -268,7 +268,7 @@ mod tests {
                 array![0.0],
                 IDENTITY.clone(),
             )),
-            Task::Binary,
+            ModelConfig::unlabeled(Task::Binary),
             None,
         )
     }
