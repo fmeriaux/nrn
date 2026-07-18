@@ -42,9 +42,12 @@ impl ActivationsArgs {
         let image_path = self.image_path();
         let instance = acquire_instance(self.instance, predictor.network.input_size())?;
 
-        let activations = predictor.infer_instance(instance.view())?;
-        let diagram =
-            ActivationDiagram::from_activations(&predictor.network, &activations, &options);
+        let inference = predictor.infer_instance(instance.view())?;
+        let diagram = ActivationDiagram::from_activations(
+            &predictor.network,
+            inference.activations(),
+            &options,
+        );
 
         match self.format {
             Format::Console => println!("{}", diagram.to_console()),

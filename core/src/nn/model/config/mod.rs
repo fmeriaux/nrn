@@ -50,11 +50,6 @@ impl ModelConfig {
         Ok(Self { task, labels })
     }
 
-    /// Pairs `task` with no labels.
-    pub fn unlabeled(task: Task) -> Self {
-        Self { task, labels: None }
-    }
-
     /// The learning task.
     pub fn task(&self) -> &Task {
         &self.task
@@ -118,13 +113,6 @@ mod tests {
             )
             .is_ok()
         );
-    }
-
-    #[test]
-    fn unlabeled_pairs_the_task_with_no_labels() {
-        let config = ModelConfig::unlabeled(Task::Binary);
-        assert_eq!(config.task(), &Task::Binary);
-        assert_eq!(config.labels(), None);
     }
 
     #[test]

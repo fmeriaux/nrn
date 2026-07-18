@@ -249,7 +249,7 @@ mod tests {
     use crate::activations::IDENTITY;
     use crate::data::scalers::{MinMaxScaler, ScalerMethod};
     use crate::layers::Dense;
-    use crate::model::{ModelConfig, NeuralNetwork};
+    use crate::model::NeuralNetwork;
     use crate::task::Task;
     use ndarray::array;
 
@@ -272,39 +272,11 @@ mod tests {
         assert_eq!(inputs.shape(), &[2, 9]);
     }
 
-    /// A 2-input → 1-output binary predictor. With a linear output of weights [1, 0] and zero
-    /// bias the logit is `x0`, so the predicted probability is `sigmoid(x0)`, which equals
-    /// exactly 0.5 when x0 == 0.
-    fn binary_model() -> Predictor {
-        Predictor::new(
-            NeuralNetwork::single(Dense::new(
-                array![[1.0, 0.0]],
-                array![0.0],
-                IDENTITY.clone(),
-            )),
-            ModelConfig::unlabeled(Task::Binary),
-            None,
-        )
-    }
-
-    /// A 2-input → 3-output predictor with a linear output and symmetric weights for two of
-    /// the classes, so a tie (equal top-two softmax probabilities) occurs along x0 == 0.
-    fn multiclass_model() -> Predictor {
-        Predictor::new(
-            NeuralNetwork::single(Dense::new(
-                array![[1.0, 0.0], [-1.0, 0.0], [0.0, 0.0]],
-                array![0.0, 0.0, -10.0],
-                IDENTITY.clone(),
-            )),
-            ModelConfig::unlabeled(Task::MultiClass { class_count: 3 }),
-            None,
-        )
-    }
-
     #[test]
     fn binary_boundary_returns_points_near_threshold() {
         // Odd resolution includes x0 == 0, where sigmoid(x0) == 0.5 exactly.
-        let boundary = binary_model().decision_boundary(&[-1.0, -1.0], &[1.0, 1.0], 5);
+        // Predictor::binary()'s logit is x0, zero bias: sigmoid(x0) == 0.5 exactly at x0 == 0.
+        let boundary = Predictor::binary().decision_boundary(&[-1.0, -1.0], &[1.0, 1.0], 5);
         assert!(boundary.nrows() > 0);
         assert_eq!(boundary.ncols(), 2);
         // Every returned point sits on the x0 == 0 line.
@@ -313,7 +285,7 @@ mod tests {
 
     #[test]
     fn multiclass_boundary_returns_points_on_the_tie_line() {
-        let boundary = multiclass_model().decision_boundary(&[-2.0, -2.0], &[2.0, 2.0], 5);
+        let boundary = Predictor::multiclass().decision_boundary(&[-2.0, -2.0], &[2.0, 2.0], 5);
         assert!(boundary.nrows() > 0);
         assert_eq!(boundary.ncols(), 2);
         assert!(boundary.column(0).iter().all(|&x| x.abs() < 1e-5));
@@ -331,7 +303,7 @@ mod tests {
         let scaler = ScalerMethod::MinMax(
             MinMaxScaler::default().fit(array![[0.0, 2.0], [0.0, 2.0]].view()),
         );
-        let predictor = Predictor::new(network, ModelConfig::unlabeled(Task::Binary), Some(scaler));
+        let predictor = Predictor::unlabeled(network, Task::Binary, Some(scaler));
 
         // Grid x0 ∈ {-1, 0, 1, 2, 3}; the boundary sits on raw x0 == 1.0.
         let boundary = predictor.decision_boundary(&[-1.0, -1.0], &[3.0, 3.0], 5);
@@ -341,25 +313,25 @@ mod tests {
 
     #[test]
     fn empty_bounds_return_empty_array() {
-        let boundary = binary_model().decision_boundary(&[], &[], 5);
+        let boundary = Predictor::binary().decision_boundary(&[], &[], 5);
         assert_eq!(boundary.shape(), &[0, 0]);
     }
 
     #[test]
     #[should_panic(expected = "Resolution must be at least 2")]
     fn resolution_below_two_panics() {
-        binary_model().decision_boundary(&[0.0], &[1.0], 1);
+        Predictor::binary().decision_boundary(&[0.0], &[1.0], 1);
     }
 
     #[test]
     #[should_panic(expected = "Mins and maxs must have the same length")]
     fn mismatched_bounds_length_panics() {
-        binary_model().decision_boundary(&[0.0, 0.0], &[1.0], 3);
+        Predictor::binary().decision_boundary(&[0.0, 0.0], &[1.0], 3);
     }
 
     #[test]
     #[should_panic(expected = "Each min value must be less than")]
     fn min_not_below_max_panics() {
-        binary_model().decision_boundary(&[1.0, 0.0], &[1.0, 1.0], 3);
+        Predictor::binary().decision_boundary(&[1.0, 0.0], &[1.0, 1.0], 3);
     }
 }

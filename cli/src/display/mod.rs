@@ -10,11 +10,11 @@
 
 mod artifacts;
 mod checkpoint;
-mod classification;
 mod dataset;
 mod evaluation;
 mod hyperparameters;
 mod icons;
+mod inference;
 mod instance;
 mod model;
 mod path;

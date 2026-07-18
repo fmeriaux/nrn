@@ -53,31 +53,21 @@ impl Predictor {
 #[cfg(test)]
 mod tests {
     use super::MODEL_STEM;
-    use crate::activations::{IDENTITY, RELU};
     use crate::data::scalers::{MinMaxScaler, ScalerMethod};
     use crate::io::model::config::{CONFIG_STEM, ModelConfigRecord};
-    use crate::model::{Labels, ModelConfig, NetworkConfig, NeuralNetwork, Predictor};
+    use crate::model::{Labels, ModelConfig, NeuralNetwork, Predictor};
     use crate::task::Task;
-    use ndarray::{Array2, array};
+    use crate::testing::sample_batch;
+    use ndarray::array;
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
         std::path::PathBuf::from(format!("target/nrn_predictor_{tag}_{}", std::process::id()))
     }
 
-    fn model_and_inputs() -> (NeuralNetwork, Array2<f32>) {
-        let config = NetworkConfig::builder(vec![3])
-            .dense(4, &RELU)
-            .dense(1, &IDENTITY)
-            .build();
-        let model = NeuralNetwork::from_config(config, 0).unwrap();
-        let inputs = Array2::from_shape_fn((3, 5), |(i, j)| (i * 5 + j) as f32 * 0.1);
-        (model, inputs)
-    }
-
     #[test]
     fn save_load_roundtrip_outputs_are_identical() {
-        let (network, inputs) = model_and_inputs();
-        let predictor = Predictor::new(network, ModelConfig::unlabeled(Task::Binary), None);
+        let inputs = sample_batch();
+        let predictor = Predictor::hidden_dense_regression();
         let outputs_before = predictor.output(inputs.view()).unwrap();
 
         let dir = temp_dir("plain");
@@ -93,13 +83,17 @@ mod tests {
 
     #[test]
     fn save_load_roundtrip_preserves_the_scaler() {
-        let (network, inputs) = model_and_inputs();
+        let inputs = sample_batch();
         let scaler = ScalerMethod::MinMax(MinMaxScaler {
             min: array![0.0, 0.0, 0.0],
             max: array![1.0, 2.0, 0.5],
             range: (0.0, 1.0),
         });
-        let predictor = Predictor::new(network, ModelConfig::unlabeled(Task::Binary), Some(scaler));
+        let predictor = Predictor::unlabeled(
+            NeuralNetwork::hidden_dense_regression(),
+            Task::Binary,
+            Some(scaler),
+        );
         let outputs_before = predictor.output(inputs.view()).unwrap();
 
         let dir = temp_dir("scaled");
@@ -115,13 +109,12 @@ mod tests {
 
     #[test]
     fn save_load_roundtrip_preserves_labels() {
-        let (network, _) = model_and_inputs();
         let config = ModelConfig::new(
             Task::Binary,
             Some(Labels::new(vec!["cat".to_string(), "dog".to_string()])),
         )
         .unwrap();
-        let predictor = Predictor::new(network, config, None);
+        let predictor = Predictor::new(NeuralNetwork::hidden_dense_regression(), config, None);
 
         let dir = temp_dir("labels");
         predictor.save(&dir).unwrap();
@@ -139,8 +132,7 @@ mod tests {
     fn config_carries_the_network_architecture() {
         use crate::io::model::network::LayerConfigRecord;
 
-        let (network, _) = model_and_inputs();
-        let predictor = Predictor::new(network, ModelConfig::unlabeled(Task::Binary), None);
+        let predictor = Predictor::hidden_dense_regression();
 
         let dir = temp_dir("config");
         predictor.save(&dir).unwrap();
@@ -160,8 +152,7 @@ mod tests {
 
     #[test]
     fn model_file_holds_weights_only() {
-        let (network, _) = model_and_inputs();
-        let predictor = Predictor::new(network, ModelConfig::unlabeled(Task::Binary), None);
+        let predictor = Predictor::hidden_dense_regression();
 
         let dir = temp_dir("weights_only");
         predictor.save(&dir).unwrap();

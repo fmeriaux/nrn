@@ -7,43 +7,16 @@
 //! crate directory, so both this process and the `nrn` subprocess resolve them
 //! within the path-safety boundary (paths outside the cwd are rejected).
 
-use assert_cmd::Command;
-use nrn::activations::{IDENTITY, RELU};
-use nrn::model::{ModelConfig, NetworkConfig, NeuralNetwork, Predictor};
-use nrn::task::Task;
+mod common;
+
+use common::{nrn, workspace, write_predictor};
 use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
-use std::path::Path;
-use tempfile::TempDir;
-
-/// A temp dir under the crate directory (within the path-safety boundary).
-fn workspace() -> TempDir {
-    TempDir::new_in(".").unwrap()
-}
-
-/// Writes a binary two-input predictor to `dir/model`.
-fn write_predictor(dir: &Path) {
-    let config = NetworkConfig::builder(vec![2])
-        .dense(4, &RELU)
-        .dense(1, &IDENTITY)
-        .build();
-    let network = NeuralNetwork::from_config(config, 7).unwrap();
-    Predictor::new(network, ModelConfig::unlabeled(Task::Binary), None)
-        .save(dir.join("model"))
-        .unwrap();
-}
-
-/// A fresh `nrn` invocation rooted at `dir`.
-fn nrn(dir: &Path) -> Command {
-    let mut cmd = Command::cargo_bin("nrn").unwrap();
-    cmd.current_dir(dir);
-    cmd
-}
 
 #[test]
 fn console_prints_the_diagram_without_the_ranked_decision() {
     let tmp = workspace();
-    write_predictor(tmp.path());
+    write_predictor(tmp.path(), None);
 
     nrn(tmp.path())
         .args(["plot", "activations", "model"])
@@ -51,14 +24,14 @@ fn console_prints_the_diagram_without_the_ranked_decision() {
         .assert()
         .success()
         .stdout(contains("Input (2 features)"))
-        // A figure, not a report: the classification ranking belongs to `predict`.
-        .stdout(contains("CLASSIFICATION").not());
+        // A figure, not a report: the ranked prediction belongs to `predict`.
+        .stdout(contains("PREDICTION").not());
 }
 
 #[test]
 fn image_format_writes_a_png() {
     let tmp = workspace();
-    write_predictor(tmp.path());
+    write_predictor(tmp.path(), None);
 
     nrn(tmp.path())
         .args([

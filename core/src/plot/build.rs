@@ -231,13 +231,9 @@ fn line_series(epochs: &[usize], series: [(Vec<f32>, Color, &str); 3]) -> Vec<Se
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activations::IDENTITY;
     use crate::data::Dataset;
     use crate::evaluation::{Evaluation, EvaluationSet};
     use crate::evaluation_history::{EpochEvaluation, EvaluationHistory};
-    use crate::layers::Dense;
-    use crate::model::{ModelConfig, NeuralNetwork};
-    use crate::task::Task;
     use ndarray::array;
 
     /// A two-feature, two-class dataset.
@@ -258,19 +254,6 @@ mod tests {
             None,
         )
         .unwrap()
-    }
-
-    /// A 2-input → 1-output binary predictor with an identity (logits) output.
-    fn binary_predictor() -> Predictor {
-        Predictor::new(
-            NeuralNetwork::single(Dense::new(
-                array![[1.0, 0.0]],
-                array![0.0],
-                IDENTITY.clone(),
-            )),
-            ModelConfig::unlabeled(Task::Binary),
-            None,
-        )
     }
 
     fn checkpoint(epoch: usize) -> EpochEvaluation {
@@ -332,7 +315,7 @@ mod tests {
         // aspect is preserved; loss/accuracy over epochs is an aspect-free chart.
         assert!(two_feature_dataset().figure().unwrap().preserve_aspect);
         assert!(
-            binary_predictor()
+            Predictor::binary()
                 .boundary_figure(&two_feature_dataset(), 10)
                 .unwrap()
                 .preserve_aspect
@@ -359,7 +342,7 @@ mod tests {
     #[test]
     fn boundary_figure_adds_an_unlabeled_overlay_without_a_legend() {
         let dataset = two_feature_dataset();
-        let figure = binary_predictor().boundary_figure(&dataset, 10).unwrap();
+        let figure = Predictor::binary().boundary_figure(&dataset, 10).unwrap();
         let panel = &figure.panels[0];
         assert!(!panel.show_legend);
         // Two class series plus the boundary overlay.
@@ -378,7 +361,7 @@ mod tests {
     #[test]
     fn boundary_figure_rejects_non_two_feature_data() {
         let dataset = one_feature_dataset();
-        let error = binary_predictor()
+        let error = Predictor::binary()
             .boundary_figure(&dataset, 10)
             .unwrap_err();
         assert!(error.to_string().contains("exactly two features"));

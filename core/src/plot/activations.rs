@@ -382,12 +382,7 @@ mod tests {
         // Row 1's negative pre-activation is clamped to zero by ReLU. Tested on a
         // hidden layer, whose intensity is peak-normalized (an output layer's
         // intensity tracks its probability instead).
-        let net = NeuralNetwork::single(Dense::new(
-            array![[1.0, 0.0], [-1.0, 0.0], [2.0, 0.0]],
-            array![0.0, 0.0, 0.0],
-            RELU.clone(),
-        ))
-        .with_layer(Dense::new(
+        let net = NeuralNetwork::single(Dense::dead_relu_hidden_layer()).with_layer(Dense::new(
             array![[1.0, 0.0, 0.0]],
             array![0.0],
             RELU.clone(),

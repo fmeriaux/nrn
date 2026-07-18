@@ -355,7 +355,6 @@ fn spread(i: usize, count: usize, start: i32, end: i32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activations::RELU;
     use crate::layers::Dense;
     use crate::model::NeuralNetwork;
     use crate::plot::activations::DiagramOptions;
@@ -366,11 +365,7 @@ mod tests {
     }
 
     fn diagram() -> ActivationDiagram {
-        let net = NeuralNetwork::single(Dense::new(
-            array![[1.0, 0.0], [-1.0, 0.0], [2.0, 0.0]],
-            array![0.0, 0.0, 0.0],
-            RELU.clone(),
-        ));
+        let net = NeuralNetwork::single(Dense::dead_relu_hidden_layer());
         let input = array![1.0, 1.0];
         let activations = net.forward(input.view().insert_axis(Axis(1))).unwrap();
         ActivationDiagram::from_activations(&net, &activations, &DiagramOptions::default())

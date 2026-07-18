@@ -53,7 +53,11 @@ of the scikit-learn convention). `Dataset` (row-major, `(samples, features)`) co
 - **`model/`** — `NetworkConfig` (weight-free architecture, assembled via `NetworkConfigBuilder`)
   and the `NeuralNetwork` it builds. `forward()` returns all intermediate activations; `predict()`
   returns only the last. Task-folded output width (binary → 1 neuron, multi-class → `n_classes`)
-  is sourced by the CLI from `Task::output_size()`, not baked into the builder.
+  is sourced by the CLI from `Task::output_size()`, not baked into the builder. `ModelConfig` pairs
+  a `Task` with the `Labels` naming its classes, when known; `Predictor` pairs a `NeuralNetwork`
+  with its `ModelConfig` and an optional fitted scaler. `Predictor::infer`/`infer_instance` return
+  an `Inference`, split by task into a ranked `Classification` (`Binary`/`MultiClass`) or bare
+  `Values` (`MultiLabel`/`Regression`) — resolving class ids to names stays with the CLI.
 - **`training/`** — the training stack, built around a **declarative spec → runtime trainer** split.
   `HyperParameters` is the single source of truth for a run: plain config, no trait objects, cross-field
   invariants validated on construction. Its `build(model, dataset, callbacks)` is the one place
@@ -116,12 +120,12 @@ A backend-neutral figure IR with feature-gated renderers, in three stages:
   the default padding lives here). `n_features != 2` becomes an `Err`.
 - **`activations.rs`** (always compiled) — a *separate* IR from `Figure`, for a single instance's
   forward pass rather than a chart: `ActivationDiagram` (per-layer `DiagramLayer`s of colored `Unit`s
-  and weighted `Edge`s, plus the `Classification`). `NeuralNetwork::activation_diagram` /
+  and weighted `Edge`s). `NeuralNetwork::activation_diagram` /
   `Predictor::activation_diagram` (the latter scales the input first) build it, applying
   `DiagramOptions` to cap the units shown per layer (`max_units`) and prune weak edges by contribution
   (`min_edge_magnitude`). Output `Unit`s carry the class they represent, so both renderers read them as
   class probabilities. The diagram deliberately does *not* render the ranked decision — that stays with
-  the CLI's `evaluated` presenter (via `Describe for Classification`), so the ranking has one home.
+  the CLI's `evaluated` presenter (via `Describe for Inference`), so the ranking has one home.
 - **`image/`** (`raster`, `plotters`) and **`console/`** (`console`, `textplots`) — the two renderers,
   each a folder split by IR: `mod.rs` owns the shared config (`ImageConfig` / `ConsoleConfig`) and
   color helpers, `figure.rs` renders `Figure`, `diagram.rs` renders `ActivationDiagram`. `Figure` becomes
