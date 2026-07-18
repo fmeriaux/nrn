@@ -10,11 +10,11 @@
 
 mod artifacts;
 mod checkpoint;
-mod classification;
 mod dataset;
 mod evaluation;
 mod hyperparameters;
 mod icons;
+mod inference;
 mod instance;
 mod model;
 mod path;
@@ -51,12 +51,12 @@ pub(crate) trait Named {
 }
 
 /// One dotted-leader row per `(label, value)`, aligned to the widest label.
-fn rows(entries: &[(&str, String)]) -> String {
-    let width = column_width(entries.iter().map(|(label, _)| *label));
+fn rows<L: AsRef<str>, V: AsRef<str>>(entries: &[(L, V)]) -> String {
+    let width = column_width(entries.iter().map(|(label, _)| label.as_ref()));
 
     entries
         .iter()
-        .map(|(label, value)| row(label, value, width, None))
+        .map(|(label, value)| row(label.as_ref(), value.as_ref(), width, None))
         .collect::<Vec<_>>()
         .join("\n")
 }

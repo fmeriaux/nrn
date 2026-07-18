@@ -5,35 +5,12 @@
 //! exercises early-stopping checkpoint flushing and optimizer-state restoration
 //! on resume. The lifecycle and error paths live in `train_lifecycle.rs`.
 
-use assert_cmd::Command;
+mod common;
+
+use common::{checkpoint_count, nrn, run};
 use predicates::str::contains;
 use std::fs;
 use std::path::Path;
-
-fn checkpoint_count(run_dir: &std::path::Path) -> usize {
-    fs::read_dir(run_dir)
-        .map(|rd| {
-            rd.filter_map(Result::ok)
-                .filter(|e| {
-                    let name = e.file_name();
-                    name.to_str()
-                        .map(|n| n.starts_with("checkpoint-"))
-                        .unwrap_or(false)
-                        && e.path().is_dir()
-                })
-                .count()
-        })
-        .unwrap_or(0)
-}
-
-/// Runs `nrn` with the given args from `dir`.
-fn nrn(dir: &std::path::Path, args: &[&str]) -> assert_cmd::assert::Assert {
-    Command::cargo_bin("nrn")
-        .unwrap()
-        .current_dir(dir)
-        .args(args)
-        .assert()
-}
 
 #[test]
 fn train_creates_run_dir_and_plot_generates_png_and_gif() {
@@ -41,7 +18,7 @@ fn train_creates_run_dir_and_plot_generates_png_and_gif() {
     let dir = tmp.path();
 
     // Generate a 2-class, 2-feature ring dataset (20 samples for speed).
-    nrn(
+    run(
         dir,
         &[
             "synth",
@@ -65,7 +42,7 @@ fn train_creates_run_dir_and_plot_generates_png_and_gif() {
     let ds_name = "ring-seed42-c2-f2-n20";
 
     // Train with checkpoints every 5 epochs (20 epochs total → ≥ 5 checkpoints).
-    nrn(
+    run(
         dir,
         &[
             "train",
@@ -95,7 +72,7 @@ fn train_creates_run_dir_and_plot_generates_png_and_gif() {
     // `plot run --format image --animate` emits the training curves (PNG) and,
     // for the 2D dataset recorded in the run's meta.json, the decision boundary
     // animation (GIF). Artifacts land beside the run directory.
-    nrn(
+    run(
         dir,
         &["plot", "run", &run_arg, "--format", "image", "--animate"],
     )
@@ -113,7 +90,7 @@ fn plot_run_still_image_emits_two_pngs_and_no_gif() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    nrn(
+    run(
         dir,
         &[
             "synth",
@@ -134,7 +111,7 @@ fn plot_run_still_image_emits_two_pngs_and_no_gif() {
     .success();
 
     let ds_name = "ring-seed42-c2-f2-n20";
-    nrn(
+    run(
         dir,
         &[
             "train",
@@ -154,7 +131,7 @@ fn plot_run_still_image_emits_two_pngs_and_no_gif() {
     let run_arg = format!("training-model-{ds_name}");
 
     // No --animate: a still boundary PNG, no GIF.
-    nrn(dir, &["plot", "run", &run_arg, "--format", "image"]).success();
+    run(dir, &["plot", "run", &run_arg, "--format", "image"]).success();
 
     assert!(
         dir.join(format!("curves-training-model-{ds_name}.png"))
@@ -178,7 +155,7 @@ fn plot_run_console_prints_curves_and_boundary_without_files() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    nrn(
+    run(
         dir,
         &[
             "synth",
@@ -199,7 +176,7 @@ fn plot_run_console_prints_curves_and_boundary_without_files() {
     .success();
 
     let ds_name = "ring-seed42-c2-f2-n20";
-    nrn(
+    run(
         dir,
         &[
             "train",
@@ -218,12 +195,7 @@ fn plot_run_console_prints_curves_and_boundary_without_files() {
 
     let run_arg = format!("training-model-{ds_name}");
 
-    let out = Command::cargo_bin("nrn")
-        .unwrap()
-        .current_dir(dir)
-        .args(["plot", "run", &run_arg])
-        .output()
-        .unwrap();
+    let out = nrn(dir).args(["plot", "run", &run_arg]).output().unwrap();
     assert!(out.status.success());
 
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -247,7 +219,7 @@ fn plot_run_console_animation_replays_the_boundary_frames() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    nrn(
+    run(
         dir,
         &[
             "synth",
@@ -268,7 +240,7 @@ fn plot_run_console_animation_replays_the_boundary_frames() {
     .success();
 
     let ds_name = "ring-seed42-c2-f2-n20";
-    nrn(
+    run(
         dir,
         &[
             "train",
@@ -290,9 +262,7 @@ fn plot_run_console_animation_replays_the_boundary_frames() {
     // Console + --animate: each frame is a full boundary scatter redrawn in place,
     // so the title prints once per frame. A small frame count and delay keep it
     // fast. Seeing it more than once is what separates the animation from a still.
-    let out = Command::cargo_bin("nrn")
-        .unwrap()
-        .current_dir(dir)
+    let out = nrn(dir)
         .args([
             "plot",
             "run",
@@ -325,7 +295,7 @@ fn plot_dataset_renders_console_and_image() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    nrn(
+    run(
         dir,
         &[
             "synth",
@@ -348,9 +318,7 @@ fn plot_dataset_renders_console_and_image() {
     let ds_name = "ring-seed42-c2-f2-n20";
 
     // Console: an inline scatter on stdout, no file.
-    let out = Command::cargo_bin("nrn")
-        .unwrap()
-        .current_dir(dir)
+    let out = nrn(dir)
         .args(["plot", "dataset", ds_name])
         .output()
         .unwrap();
@@ -362,7 +330,7 @@ fn plot_dataset_renders_console_and_image() {
     );
 
     // Image: a PNG beside the dataset.
-    nrn(dir, &["plot", "dataset", ds_name, "--format", "image"]).success();
+    run(dir, &["plot", "dataset", ds_name, "--format", "image"]).success();
     assert!(
         dir.join(format!("{ds_name}.png")).exists(),
         "expected a scatter PNG beside the dataset"
@@ -376,7 +344,7 @@ fn plot_run_skips_the_boundary_silently_for_non_2d_data() {
 
     // A 3-feature dataset: the curves still plot, but the decision boundary
     // (a 2D-only bonus) cannot.
-    nrn(
+    run(
         dir,
         &[
             "synth",
@@ -399,7 +367,7 @@ fn plot_run_skips_the_boundary_silently_for_non_2d_data() {
     .success();
 
     let ds_name = "ring-seed42-c2-f3-n30";
-    nrn(
+    run(
         dir,
         &[
             "train",
@@ -419,12 +387,7 @@ fn plot_run_skips_the_boundary_silently_for_non_2d_data() {
     let run_arg = format!("training-model-{ds_name}");
 
     // Without --animate: curves only, and no nag about the unavailable boundary.
-    let out = Command::cargo_bin("nrn")
-        .unwrap()
-        .current_dir(dir)
-        .args(["plot", "run", &run_arg])
-        .output()
-        .unwrap();
+    let out = nrn(dir).args(["plot", "run", &run_arg]).output().unwrap();
     assert!(out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -433,9 +396,7 @@ fn plot_run_skips_the_boundary_silently_for_non_2d_data() {
     );
 
     // With --animate: the explicit request can't be honored, so it warns.
-    let out = Command::cargo_bin("nrn")
-        .unwrap()
-        .current_dir(dir)
+    let out = nrn(dir)
         .args(["plot", "run", &run_arg, "--animate"])
         .output()
         .unwrap();
@@ -452,7 +413,7 @@ fn plot_run_succeeds_at_the_two_checkpoint_minimum() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    nrn(
+    run(
         dir,
         &[
             "synth",
@@ -476,7 +437,7 @@ fn plot_run_succeeds_at_the_two_checkpoint_minimum() {
 
     // interval=100 with epochs=2 → the initial and final checkpoints only: the
     // two-point minimum a run plot needs.
-    nrn(
+    run(
         dir,
         &[
             "train",
@@ -493,7 +454,7 @@ fn plot_run_succeeds_at_the_two_checkpoint_minimum() {
     .success();
 
     let run_arg = format!("training-model-{ds_name}");
-    nrn(dir, &["plot", "run", &run_arg])
+    run(dir, &["plot", "run", &run_arg])
         .success()
         .stdout(contains("Training Loss Over Epochs"));
 }
@@ -504,7 +465,7 @@ fn plot_run_rejects_a_single_checkpoint() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    nrn(
+    run(
         dir,
         &[
             "synth",
@@ -525,7 +486,7 @@ fn plot_run_rejects_a_single_checkpoint() {
     .success();
 
     let ds_name = "ring-seed13-c2-f2-n20";
-    nrn(
+    run(
         dir,
         &[
             "train",
@@ -561,7 +522,7 @@ fn plot_run_rejects_a_single_checkpoint() {
         fs::remove_dir_all(path).unwrap();
     }
 
-    nrn(dir, &["plot", "run", &run_arg])
+    run(dir, &["plot", "run", &run_arg])
         .failure()
         .stderr(contains("at least two checkpoints"));
 }
@@ -572,7 +533,7 @@ fn early_stopping_writes_final_checkpoint() {
     let dir = tmp.path();
 
     // 40 samples → 4 validation samples with default val_ratio=0.1.
-    nrn(
+    run(
         dir,
         &[
             "synth",
@@ -597,9 +558,7 @@ fn early_stopping_writes_final_checkpoint() {
     // interval=1000 >> epochs=30: only initial + final-epoch checkpoint would be
     // written without early stopping. With patience=1 this fires quickly and
     // the fix must write a checkpoint at the stopped epoch.
-    let out = Command::cargo_bin("nrn")
-        .unwrap()
-        .current_dir(dir)
+    let out = nrn(dir)
         .args([
             "train",
             "start",
@@ -643,7 +602,7 @@ fn no_duplicate_checkpoint_when_early_stop_fires_on_interval_boundary() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    nrn(
+    run(
         dir,
         &[
             "synth",
@@ -665,9 +624,7 @@ fn no_duplicate_checkpoint_when_early_stop_fires_on_interval_boundary() {
 
     let ds_name = "ring-seed42-c2-f2-n100";
 
-    let out = Command::cargo_bin("nrn")
-        .unwrap()
-        .current_dir(dir)
+    let out = nrn(dir)
         .args([
             "train",
             "start",
@@ -725,7 +682,7 @@ fn start_prints_recap_without_overrides() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    nrn(
+    run(
         dir,
         &[
             "synth",
@@ -747,9 +704,7 @@ fn start_prints_recap_without_overrides() {
 
     let ds_name = "ring-seed1-c2-f2-n20";
 
-    let out = Command::cargo_bin("nrn")
-        .unwrap()
-        .current_dir(dir)
+    let out = nrn(dir)
         .args([
             "train",
             "start",
@@ -810,7 +765,7 @@ fn resume_with_lr_override_shows_marker_on_optimizer_line() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    nrn(
+    run(
         dir,
         &[
             "synth",
@@ -832,7 +787,7 @@ fn resume_with_lr_override_shows_marker_on_optimizer_line() {
 
     let ds_name = "ring-seed2-c2-f2-n20";
 
-    nrn(
+    run(
         dir,
         &[
             "train",
@@ -853,9 +808,7 @@ fn resume_with_lr_override_shows_marker_on_optimizer_line() {
 
     let run_arg = format!("training-model-{ds_name}");
 
-    let out = Command::cargo_bin("nrn")
-        .unwrap()
-        .current_dir(dir)
+    let out = nrn(dir)
         .args(["train", "resume", &run_arg, "--epochs", "3", "--lr", "0.01"])
         .output()
         .unwrap();
@@ -877,7 +830,7 @@ fn resume_restores_adam_optimizer_state() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    nrn(
+    run(
         dir,
         &[
             "synth",
@@ -899,7 +852,7 @@ fn resume_restores_adam_optimizer_state() {
 
     let ds_name = "ring-seed2-c2-f2-n20";
 
-    nrn(
+    run(
         dir,
         &[
             "train",
@@ -920,7 +873,7 @@ fn resume_restores_adam_optimizer_state() {
 
     let run_arg = format!("training-model-{ds_name}");
 
-    nrn(dir, &["train", "resume", &run_arg, "--epochs", "3"])
+    run(dir, &["train", "resume", &run_arg, "--epochs", "3"])
         .success()
         .stdout(contains("Restored Adam optimizer state"));
 }
@@ -930,7 +883,7 @@ fn resume_rejects_val_ratio_override() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    nrn(
+    run(
         dir,
         &[
             "synth",
@@ -952,7 +905,7 @@ fn resume_rejects_val_ratio_override() {
 
     let ds_name = "ring-seed3-c2-f2-n20";
 
-    nrn(
+    run(
         dir,
         &[
             "train",
@@ -971,7 +924,7 @@ fn resume_rejects_val_ratio_override() {
 
     let run_arg = format!("training-model-{ds_name}");
 
-    nrn(dir, &["train", "resume", &run_arg, "--val-ratio", "0.2"])
+    run(dir, &["train", "resume", &run_arg, "--val-ratio", "0.2"])
         .failure()
         .stderr(contains("unexpected argument"));
 }
@@ -984,7 +937,7 @@ fn divergence_with_early_stopping_recovers_best_model() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    nrn(
+    run(
         dir,
         &[
             "synth",
@@ -1005,9 +958,7 @@ fn divergence_with_early_stopping_recovers_best_model() {
     .success();
 
     let ds_name = "ring-seed42-c2-f2-n40";
-    let out = Command::cargo_bin("nrn")
-        .unwrap()
-        .current_dir(dir)
+    let out = nrn(dir)
         .args([
             "train",
             "start",
@@ -1051,9 +1002,7 @@ fn synth_warns_on_uneven_clusters_and_plots_scatter() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    let out = Command::cargo_bin("nrn")
-        .unwrap()
-        .current_dir(dir)
+    let out = nrn(dir)
         .args([
             "synth",
             "--min",
@@ -1100,7 +1049,7 @@ fn resume_restores_stateful_scheduler() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    nrn(
+    run(
         dir,
         &[
             "synth",
@@ -1122,7 +1071,7 @@ fn resume_restores_stateful_scheduler() {
 
     let ds_name = "ring-seed5-c2-f2-n20";
 
-    nrn(
+    run(
         dir,
         &[
             "train",
@@ -1145,7 +1094,7 @@ fn resume_restores_stateful_scheduler() {
 
     let run_arg = format!("training-model-{ds_name}");
 
-    nrn(dir, &["train", "resume", &run_arg, "--epochs", "2"])
+    run(dir, &["train", "resume", &run_arg, "--epochs", "2"])
         .success()
         .stdout(contains("Restored Step Decay scheduler state"));
 }
@@ -1157,7 +1106,7 @@ fn resume_with_checkpoints_disabled_writes_no_new_checkpoints() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    nrn(
+    run(
         dir,
         &[
             "synth",
@@ -1181,7 +1130,7 @@ fn resume_with_checkpoints_disabled_writes_no_new_checkpoints() {
     let run_arg = format!("training-model-{ds_name}");
     let run_dir = dir.join(&run_arg);
 
-    nrn(
+    run(
         dir,
         &[
             "train",
@@ -1199,7 +1148,7 @@ fn resume_with_checkpoints_disabled_writes_no_new_checkpoints() {
     .success();
     let before = checkpoint_count(&run_dir);
 
-    nrn(
+    run(
         dir,
         &[
             "train",

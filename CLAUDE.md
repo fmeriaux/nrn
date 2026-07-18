@@ -53,7 +53,11 @@ of the scikit-learn convention). `Dataset` (row-major, `(samples, features)`) co
 - **`model/`** — `NetworkConfig` (weight-free architecture, assembled via `NetworkConfigBuilder`)
   and the `NeuralNetwork` it builds. `forward()` returns all intermediate activations; `predict()`
   returns only the last. Task-folded output width (binary → 1 neuron, multi-class → `n_classes`)
-  is sourced by the CLI from `Task::output_size()`, not baked into the builder.
+  is sourced by the CLI from `Task::output_size()`, not baked into the builder. `ModelConfig` pairs
+  a `Task` with the `Labels` naming its classes, when known; `Predictor` pairs a `NeuralNetwork`
+  with its `ModelConfig` and an optional fitted scaler. `Predictor::infer`/`infer_instance` return
+  an `Inference`, split by task into a ranked `Classification` (`Binary`/`MultiClass`) or bare
+  `Values` (`MultiLabel`/`Regression`) — resolving class ids to names stays with the CLI.
 - **`training/`** — the training stack, built around a **declarative spec → runtime trainer** split.
   `HyperParameters` is the single source of truth for a run: plain config, no trait objects, cross-field
   invariants validated on construction. Its `build(model, dataset, callbacks)` is the one place
@@ -116,12 +120,12 @@ A backend-neutral figure IR with feature-gated renderers, in three stages:
   the default padding lives here). `n_features != 2` becomes an `Err`.
 - **`activations.rs`** (always compiled) — a *separate* IR from `Figure`, for a single instance's
   forward pass rather than a chart: `ActivationDiagram` (per-layer `DiagramLayer`s of colored `Unit`s
-  and weighted `Edge`s, plus the `Classification`). `NeuralNetwork::activation_diagram` /
+  and weighted `Edge`s). `NeuralNetwork::activation_diagram` /
   `Predictor::activation_diagram` (the latter scales the input first) build it, applying
   `DiagramOptions` to cap the units shown per layer (`max_units`) and prune weak edges by contribution
   (`min_edge_magnitude`). Output `Unit`s carry the class they represent, so both renderers read them as
   class probabilities. The diagram deliberately does *not* render the ranked decision — that stays with
-  the CLI's `evaluated` presenter (via `Describe for Classification`), so the ranking has one home.
+  the CLI's `evaluated` presenter (via `Describe for Inference`), so the ranking has one home.
 - **`image/`** (`raster`, `plotters`) and **`console/`** (`console`, `textplots`) — the two renderers,
   each a folder split by IR: `mod.rs` owns the shared config (`ImageConfig` / `ConsoleConfig`) and
   color helpers, `figure.rs` renders `Figure`, `diagram.rs` renders `ActivationDiagram`. `Figure` becomes
@@ -176,3 +180,42 @@ reads it back. Each `checkpoint-{epoch:06}/` is written by a `CheckpointRecorder
   `Artifacts`, and `terminal.rs` (figure `preview` and `play_frames` console animation, sized to the
   terminal). Loading/saving goes through core `.load()` / `.save()` methods on the types
   (`Dataset::load`, `Predictor::load`, `dataset.save`, …).
+
+<!-- code-review-graph MCP tools -->
+## MCP Tools: code-review-graph
+
+**IMPORTANT: This project has a knowledge graph. ALWAYS use the
+code-review-graph MCP tools BEFORE using Grep/Glob/Read to explore
+the codebase.** The graph is faster, cheaper (fewer tokens), and gives
+you structural context (callers, dependents, test coverage) that file
+scanning cannot.
+
+### When to use graph tools FIRST
+
+- **Exploring code**: `semantic_search_nodes_tool` or `query_graph_tool` instead of Grep
+- **Understanding impact**: `get_impact_radius_tool` instead of manually tracing imports
+- **Code review**: `detect_changes_tool` + `get_review_context_tool` instead of reading entire files
+- **Finding relationships**: `query_graph_tool` with callers_of/callees_of/imports_of/tests_for
+- **Architecture questions**: `get_architecture_overview_tool` + `list_communities_tool`
+
+Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
+
+### Key Tools
+
+| Tool | Use when |
+| ------ | ---------- |
+| `detect_changes_tool` | Reviewing code changes — gives risk-scored analysis |
+| `get_review_context_tool` | Need source snippets for review — token-efficient |
+| `get_impact_radius_tool` | Understanding blast radius of a change |
+| `get_affected_flows_tool` | Finding which execution paths are impacted |
+| `query_graph_tool` | Tracing callers, callees, imports, tests, dependencies |
+| `semantic_search_nodes_tool` | Finding functions/classes by name or keyword |
+| `get_architecture_overview_tool` | Understanding high-level codebase structure |
+| `refactor_tool` | Planning renames, finding dead code |
+
+### Workflow
+
+1. The graph auto-updates on file changes (via hooks).
+2. Use `detect_changes_tool` for code review.
+3. Use `get_affected_flows_tool` to understand impact.
+4. Use `query_graph_tool` pattern="tests_for" to check coverage.

@@ -223,7 +223,7 @@ fn read_layer_tensors(st: &SafeTensors, prefix: &str) -> Result<Tensors> {
 mod tests {
     use crate::activations::{IDENTITY, RELU};
     use crate::model::{NetworkConfig, NeuralNetwork};
-    use ndarray::Array2;
+    use crate::testing::sample_batch;
     use std::path::{Path, PathBuf};
 
     fn temp_path(tag: &str) -> PathBuf {
@@ -338,14 +338,10 @@ mod tests {
     fn weights_save_load_roundtrip_predictions_are_identical() {
         use super::NetworkConfigRecord;
 
-        let config = NetworkConfig::builder(vec![3])
-            .dense(4, &RELU)
-            .dense(1, &IDENTITY)
-            .build();
-        let model = NeuralNetwork::from_config(config, 0).unwrap();
+        let model = NeuralNetwork::hidden_dense_regression();
         let record = NetworkConfigRecord::from(&model);
 
-        let inputs = Array2::from_shape_fn((3, 5), |(i, j)| (i * 5 + j) as f32 * 0.1);
+        let inputs = sample_batch();
         let predictions_before = model.output(inputs.view());
 
         let path = temp_path("weights_model");

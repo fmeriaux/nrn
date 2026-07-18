@@ -7,9 +7,8 @@ use nrn::io::model::checkpoint::CheckpointArchive;
 use nrn::io::model::run::TrainingRun;
 use nrn::io::path::PathExt;
 use nrn::io::raster::gif::GifWriter;
-use nrn::model::Predictor;
+use nrn::model::{ModelConfig, Predictor};
 use nrn::plot::{ConsoleConfig, Figure};
-use nrn::task::Task;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
@@ -65,9 +64,9 @@ impl RunArgs {
         }
 
         if dataset.feature_size() == 2 {
-            let task = Task::from(config.task.clone());
+            let config = config.to_model_config()?;
             let scaler: Option<ScalerMethod> = run.scaler().cloned().map(Into::into);
-            if let Some(path) = self.boundary(&archive, &dataset, task, &scaler)? {
+            if let Some(path) = self.boundary(&archive, &dataset, config, &scaler)? {
                 artifacts.add("Decision Boundary", path);
             }
         } else if self.animate {
@@ -88,16 +87,16 @@ impl RunArgs {
         &self,
         archive: &CheckpointArchive,
         dataset: &Dataset,
-        task: Task,
+        config: ModelConfig,
         scaler: &Option<ScalerMethod>,
     ) -> Result<Option<PathBuf>, Box<dyn Error>> {
         if self.animate {
             let indices = archive.sample(self.frames.into());
-            return self.animation(archive, dataset, task, scaler, &indices);
+            return self.animation(archive, dataset, config, scaler, &indices);
         }
 
         let last = archive.len() - 1;
-        let figure = boundary_at(archive, last, dataset, task, scaler, self.resolution())?;
+        let figure = boundary_at(archive, last, dataset, config, scaler, self.resolution())?;
         render(&figure, self.format, self.size, self.artifact("boundary"))
     }
 
@@ -107,7 +106,7 @@ impl RunArgs {
         &self,
         archive: &CheckpointArchive,
         dataset: &Dataset,
-        task: Task,
+        config: ModelConfig,
         scaler: &Option<ScalerMethod>,
         indices: &[usize],
     ) -> Result<Option<PathBuf>, Box<dyn Error>> {
@@ -122,7 +121,7 @@ impl RunArgs {
                         archive,
                         index,
                         dataset,
-                        task.clone(),
+                        config.clone(),
                         scaler,
                         resolution,
                     )?);
@@ -147,7 +146,7 @@ impl RunArgs {
                 let progress = Frames::new(indices.len(), "Rendering GIF");
                 for &index in indices {
                     let figure =
-                        boundary_at(archive, index, dataset, task.clone(), scaler, resolution)?;
+                        boundary_at(archive, index, dataset, config.clone(), scaler, resolution)?;
                     writer.write_frame(&figure.to_image(&cfg)?)?;
                     progress.advance();
                 }
@@ -188,12 +187,12 @@ fn boundary_at(
     archive: &CheckpointArchive,
     index: usize,
     dataset: &Dataset,
-    task: Task,
+    config: ModelConfig,
     scaler: &Option<ScalerMethod>,
     resolution: usize,
 ) -> Result<Figure, Box<dyn Error>> {
     let model = archive.model_at(index)?;
-    let predictor = Predictor::new(model, task, scaler.clone());
+    let predictor = Predictor::new(model, config, scaler.clone());
     predictor.boundary_figure(dataset, resolution)
 }
 

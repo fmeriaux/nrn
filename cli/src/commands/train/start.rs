@@ -11,7 +11,7 @@ use nrn::io::model::network::NetworkConfigRecord;
 use nrn::io::model::run::{TrainingMeta, TrainingRun};
 use nrn::io::model::scalers::ScalerRecord;
 use nrn::io::path::PathExt;
-use nrn::model::{NetworkConfig, NeuralNetwork, Predictor};
+use nrn::model::{Labels, ModelConfig, NetworkConfig, NeuralNetwork, Predictor};
 use nrn::task::Task;
 use nrn::training::Callbacks;
 use std::error::Error;
@@ -53,6 +53,8 @@ impl StartArgs {
         task.validate_dataset(&dataset)?;
         show(&task);
 
+        let config = ModelConfig::new(task.clone(), Labels::from_targets(dataset.targets()))?;
+
         let hyperparameters = self.hp.to_hyperparameters(&task)?;
 
         let model = match &self.model {
@@ -83,13 +85,10 @@ impl StartArgs {
                 model: model_name.clone(),
                 hyperparams: HyperParametersRecord::from(&hyperparameters),
             };
-            let config = ModelConfigRecord {
-                network: NetworkConfigRecord::from(&model),
-                task: task.clone().into(),
-            };
+            let record = ModelConfigRecord::from_parts(NetworkConfigRecord::from(&model), &config);
             let scaler = data.scaler().cloned().map(ScalerRecord::from);
             let recorder =
-                TrainingRun::create(&run_dir, &meta, &config, scaler.as_ref(), self.overwrite)
+                TrainingRun::create(&run_dir, &meta, &record, scaler.as_ref(), self.overwrite)
                     .map_err(overwrite_hint)?
                     .recorder();
             recording(&recorder);
@@ -103,7 +102,7 @@ impl StartArgs {
             .with(ModelSaver::new(
                 &run_dir,
                 &model_name,
-                task.clone(),
+                config.clone(),
                 data.scaler().cloned(),
             ))
             .with_opt(recorder);

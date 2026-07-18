@@ -3,3 +3,5 @@ secrets/
 .idea/
 .DS_Store
 .claude/
+.vscode/
+.code-review-graph/

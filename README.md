@@ -218,7 +218,7 @@ nrn predict model-uniform-seed1024-c2-f2-n500
 Feature 0 ▸ -30
 Feature 1 ▸ 60
 
-📊 CLASSIFICATION
+📊 PREDICTION
    Class 0 ... 99.22% ◀
    Class 1 ...  0.78%
 ```
@@ -265,7 +265,7 @@ closes neatly around the inner blob:
 **Peek inside the forward pass.** Add `--activations` to `predict` to see how one instance lights up the
 network: each neuron is colored by how strongly it fires — positive in blue, negative in orange, hollow when
 silent — with the concrete value and an intensity bar beside it. The output layer reads its neurons as class
-probabilities, and the ranked decision follows as the classification, its winning class arrow-marked.
+probabilities, and the ranked decision follows as the prediction, its winning class arrow-marked.
 
 ```sh
 nrn predict model-ring --activations
@@ -292,7 +292,7 @@ relu (8 units)
 sigmoid (1 unit)
   ● class 1   92.2%  ██████████████████████
 
-📊 CLASSIFICATION
+📊 PREDICTION
    Class 1 ... 92.22%  ◀
    Class 0 ...  7.78%
 ```
@@ -394,7 +394,7 @@ nrn predict model-digits --instance digit.json
 📥 PREDICTOR LOADED
    Architecture ... [784] -> [128]-relu -> [128]-relu -> [10]-identity
    Scaler ......... min-max
-📊 CLASSIFICATION
+📊 PREDICTION
    Class 7 ... 99.90%
    Class 1 ...  0.03%
    ...

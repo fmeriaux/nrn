@@ -6,7 +6,7 @@
 use crate::data::Dataset;
 use crate::data::Targets;
 use crate::evaluation_history::EvaluationHistory;
-use crate::model::Predictor;
+use crate::model::{Labels, Predictor};
 use crate::plot::scene::{Color, Figure, Panel, Series, add_padding};
 use ndarray::Ix2;
 use std::error::Error;
@@ -158,7 +158,7 @@ fn scatter_panel(
     let Targets::ClassLabel(label) = dataset.targets() else {
         return Err("Scatter plot requires a dataset with class-label targets".into());
     };
-    let names = label.names();
+    let labels = Labels::from_targets(dataset.targets()).unwrap_or_default();
     let class_count = label.class_count();
 
     let (raw_mins, raw_maxs) = dataset.feature_range();
@@ -176,12 +176,7 @@ fn scatter_panel(
                     .map(|point| (point[0], point[1]))
                     .collect(),
                 color: Color::category(id as usize),
-                label: Some(
-                    names
-                        .and_then(|names| names.get(id as usize))
-                        .cloned()
-                        .unwrap_or_else(|| format!("Class {id}")),
-                ),
+                label: Some(labels.get_or_default(id as usize)),
                 radius: 2,
             }
         })
@@ -231,13 +226,9 @@ fn line_series(epochs: &[usize], series: [(Vec<f32>, Color, &str); 3]) -> Vec<Se
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activations::IDENTITY;
     use crate::data::Dataset;
     use crate::evaluation::{Evaluation, EvaluationSet};
     use crate::evaluation_history::{EpochEvaluation, EvaluationHistory};
-    use crate::layers::Dense;
-    use crate::model::NeuralNetwork;
-    use crate::task::Task;
     use ndarray::array;
 
     /// A two-feature, two-class dataset.
@@ -258,19 +249,6 @@ mod tests {
             None,
         )
         .unwrap()
-    }
-
-    /// A 2-input → 1-output binary predictor with an identity (logits) output.
-    fn binary_predictor() -> Predictor {
-        Predictor::new(
-            NeuralNetwork::single(Dense::new(
-                array![[1.0, 0.0]],
-                array![0.0],
-                IDENTITY.clone(),
-            )),
-            Task::Binary,
-            None,
-        )
     }
 
     fn checkpoint(epoch: usize) -> EpochEvaluation {
@@ -332,7 +310,7 @@ mod tests {
         // aspect is preserved; loss/accuracy over epochs is an aspect-free chart.
         assert!(two_feature_dataset().figure().unwrap().preserve_aspect);
         assert!(
-            binary_predictor()
+            Predictor::binary()
                 .boundary_figure(&two_feature_dataset(), 10)
                 .unwrap()
                 .preserve_aspect
@@ -359,7 +337,7 @@ mod tests {
     #[test]
     fn boundary_figure_adds_an_unlabeled_overlay_without_a_legend() {
         let dataset = two_feature_dataset();
-        let figure = binary_predictor().boundary_figure(&dataset, 10).unwrap();
+        let figure = Predictor::binary().boundary_figure(&dataset, 10).unwrap();
         let panel = &figure.panels[0];
         assert!(!panel.show_legend);
         // Two class series plus the boundary overlay.
@@ -378,7 +356,7 @@ mod tests {
     #[test]
     fn boundary_figure_rejects_non_two_feature_data() {
         let dataset = one_feature_dataset();
-        let error = binary_predictor()
+        let error = Predictor::binary()
             .boundary_figure(&dataset, 10)
             .unwrap_err();
         assert!(error.to_string().contains("exactly two features"));

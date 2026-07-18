@@ -7,18 +7,14 @@
 //! directory, so both this process and the `nrn` subprocess resolve them within
 //! the path-safety boundary (paths outside the cwd are rejected).
 
-use assert_cmd::Command;
+mod common;
+
+use common::{nrn, workspace};
 use image::{Rgb, RgbImage};
 use nrn::data::{Dataset, Instance, Targets};
 use predicates::str::contains;
 use std::fs;
 use std::path::Path;
-use tempfile::TempDir;
-
-/// A temp dir under the crate directory (within the path-safety boundary).
-fn workspace() -> TempDir {
-    TempDir::new_in(".").unwrap()
-}
 
 /// Writes a 2x2 solid-color PNG at `path` (the encoder resizes, so size is moot).
 fn write_png(path: impl AsRef<Path>, color: [u8; 3]) {
@@ -38,13 +34,6 @@ fn class_dirs(root: &Path, classes: &[(&str, &[&str])]) {
             write_png(dir.join(file), [10 * i as u8, 0, 0]);
         }
     }
-}
-
-/// A fresh `nrn` invocation rooted at `dir`.
-fn nrn(dir: &Path) -> Command {
-    let mut cmd = Command::cargo_bin("nrn").unwrap();
-    cmd.current_dir(dir);
-    cmd
 }
 
 #[test]

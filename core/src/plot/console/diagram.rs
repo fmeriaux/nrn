@@ -89,12 +89,7 @@ mod tests {
     /// A hidden ReLU layer whose middle neuron dies, then a two-unit output layer
     /// with activations `[0.3, 0.4]`.
     fn diagram() -> ActivationDiagram {
-        let net = NeuralNetwork::single(Dense::new(
-            array![[1.0, 0.0], [-1.0, 0.0], [2.0, 0.0]],
-            array![0.0, 0.0, 0.0],
-            RELU.clone(),
-        ))
-        .with_layer(Dense::new(
+        let net = NeuralNetwork::single(Dense::dead_relu_hidden_layer()).with_layer(Dense::new(
             array![[0.3, 0.0, 0.0], [0.0, 0.0, 0.2]],
             array![0.0, 0.0],
             RELU.clone(),

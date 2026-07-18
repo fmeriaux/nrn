@@ -1,7 +1,6 @@
 use crate::actions::acquire_instance;
 use crate::display::{evaluated, loaded};
 use clap::Args;
-use nrn::classification::Classification;
 use nrn::model::Predictor;
 use nrn::plot::{ActivationDiagram, DiagramOptions};
 use std::error::Error;
@@ -15,7 +14,7 @@ pub struct PredictArgs {
     #[arg(short, long)]
     instance: Option<String>,
 
-    /// Print the forward-pass activation diagram before the classification
+    /// Print the forward-pass activation diagram before the prediction
     #[arg(short, long, default_value_t = false)]
     activations: bool,
 }
@@ -27,19 +26,18 @@ impl PredictArgs {
 
         let instance = acquire_instance(self.instance, predictor.network.input_size())?;
 
-        let activations = predictor.infer_instance(instance.view())?;
+        let inference = predictor.infer_instance(instance.view())?;
 
         if self.activations {
             let diagram = ActivationDiagram::from_activations(
                 &predictor.network,
-                &activations,
+                inference.activations(),
                 &DiagramOptions::default(),
             );
             println!("{}", diagram.to_console());
         }
 
-        let classification = Classification::from_activations(&activations);
-        evaluated(&classification);
+        evaluated(&inference);
 
         Ok(())
     }

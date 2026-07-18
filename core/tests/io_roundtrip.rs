@@ -111,6 +111,7 @@ fn full_pipeline_roundtrips_every_artifact() {
         &ModelConfigRecord {
             network: NetworkConfigRecord::from(&model),
             task: Task::Binary.into(),
+            labels: None,
         },
         None,
         false,
